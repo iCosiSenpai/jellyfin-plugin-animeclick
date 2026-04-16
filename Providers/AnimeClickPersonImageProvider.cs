@@ -8,6 +8,9 @@ using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Providers;
 
+using AnimeClick.Plugin.Configuration;
+using AnimeClick.Plugin.Services;
+
 namespace AnimeClick.Plugin.Providers;
 
 /// <summary>
@@ -18,10 +21,12 @@ namespace AnimeClick.Plugin.Providers;
 public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
 {
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AnimeClickClient _animeClickClient;
 
-    public AnimeClickPersonImageProvider(IHttpClientFactory httpClientFactory)
+    public AnimeClickPersonImageProvider(IHttpClientFactory httpClientFactory, AnimeClickClient animeClickClient)
     {
         _httpClientFactory = httpClientFactory;
+        _animeClickClient = animeClickClient;
     }
 
     public string Name => "AnimeClick";
@@ -46,14 +51,14 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
             return results;
         }
 
-        // We know actorId is something like "/autore/35/emanuela-pacotto"
-        var baseUrl = Plugin.Instance?.Configuration.BaseUrl ?? "https://www.animeclick.it";
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var baseUrl = configuration.BaseUrl ?? "https://www.animeclick.it";
         var fullUrl = actorId.StartsWith("http") ? actorId : baseUrl + actorId;
 
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            var response = await client.GetStringAsync(fullUrl, cancellationToken);
+            // Ethical fetching via synchronized semaphore client
+            var response = await _animeClickClient.GetStringAsync(fullUrl, configuration, cancellationToken);
 
             var doc = new HtmlAgilityPack.HtmlDocument();
             doc.LoadHtml(response);
