@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <AssemblyName>AnimeClick.Plugin</AssemblyName>
+    <RootNamespace>AnimeClick.Plugin</RootNamespace>
+    <Version>0.5.5</Version>
+    <PackageId>AnimeClick.Plugin</PackageId>
+    <Authors>Alessio Cosi</Authors>
+    <Description>Italian anime metadata provider for Jellyfin using AnimeClick with ethical scraping and cache.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Jellyfin SDK packages — exclude assets to avoid copying server DLLs into plugin output -->
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.8">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Model" Version="10.11.8">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="HtmlAgilityPack" Version="1.11.71" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Configuration\configPage.html" />
+  </ItemGroup>
+</Project>

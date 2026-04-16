@@ -1,0 +1,60 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Restore
+        run: dotnet restore AnimeClick.Plugin.csproj
+      - name: Build
+        run: dotnet build AnimeClick.Plugin.csproj -c Release --no-restore
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      CHECKSUM: ''
+      VERSION: ''
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Publish
+        run: dotnet publish AnimeClick.Plugin.csproj -c Release -o publish
+
+      - name: Package
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          cd publish
+          zip -j ../animeclick-plugin-${GITHUB_REF_NAME}.zip AnimeClick.Plugin.dll HtmlAgilityPack.dll
+          cd ..
+          echo "CHECKSUM=$(md5sum animeclick-plugin-${GITHUB_REF_NAME}.zip | cut -d ' ' -f 1 | tr 'a-f' 'A-F')" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: animeclick-plugin-${{ github.ref_name }}.zip
+          generate_release_notes: true
+          body: |
+            ## AnimeClick Metadata Plugin ${{ github.ref_name }}
+
+            **Checksum MD5:** `${{ env.CHECKSUM }}`
+
+            > ⚠️ Ricorda di aggiornare il `manifest.json` con il nuovo checksum e sourceUrl prima di rilasciare!
