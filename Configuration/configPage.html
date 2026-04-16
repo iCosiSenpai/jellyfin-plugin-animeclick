@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <title>AnimeClick Metadata</title>
+</head>
+<body>
+    <div id="AnimeClickConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+         data-require="emby-input,emby-select,emby-checkbox">
+
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="AnimeClickConfigForm">
+
+                    <div style="text-align: center; margin-bottom: 2em; margin-top: 1em;">
+                        <img src="https://raw.githubusercontent.com/iCosiSenpai/jellyfin-plugin-animeclick/main/assets/banner-plugin-interno.png" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);" alt="AnimeClick Banner" />
+                    </div>
+
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">AnimeClick Metadata</h2>
+                    </div>
+
+                    <div class="verticalSection">
+                        <p class="description">
+                            Provider di metadati anime in italiano da <a href="https://www.animeclick.it" target="_blank">AnimeClick.it</a>.
+                            Tutte le richieste sono rate-limited e i dati vengono cacheati localmente per rispettare il sito.
+                        </p>
+                    </div>
+
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <!-- METADATI -->
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">Metadati</h2>
+                    </div>
+
+                    <div class="verticalSection">
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkPreferItalianTitle" />
+                                <span>Preferisci titolo italiano</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Usa il titolo italiano come nome della serie. Se disattivato, viene usato il titolo originale giapponese.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnablePlot" />
+                                <span>Importa trama</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Importa la sinossi/trama in italiano dalla pagina dell'anime.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableGenres" />
+                                <span>Importa generi</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Importa i generi in italiano (es. Commedia, Fantascienza, Scolastico).
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableStudios" />
+                                <span>Importa studi di animazione</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Importa gli studi di produzione (es. MAPPA, ufotable, Kyoto Animation).
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableCommunityRating" />
+                                <span>Importa valutazione community</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Importa il rating medio della community di AnimeClick (scala 1-10).
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableCast" />
+                                <span>Importa cast e staff</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Importa doppiatori (JP + IT), registi, autori e compositori dalla scheda dell'anime.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableTags" />
+                                <span>Importa tag</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Importa tag come Shounen, Seinen, Mecha, Isekai dalla scheda dell'anime.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableEpisodeTitles" />
+                                <span>Importa titoli episodi in italiano</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Scarica i titoli degli episodi in italiano dalla pagina /episodi di AnimeClick.
+                                Se un titolo è generico ("Episodio X"), il plugin lo ignora e lascia che i provider inglesi (TMDB, TVDB) forniscano il titolo.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableThemeSongs" />
+                                <span>Importa sigle (OP/ED)</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Importa i nomi delle Opening ed Ending nei tag dell'anime (es. "OP1: GO!!! (FLOW)").
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableCollections" />
+                                <span>Crea collezioni automatiche (saghe)</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                ⚠️ Sperimentale — Raggruppa automaticamente sequel, prequel e spin-off nella stessa collezione.
+                                Disattivato di default perché potrebbe creare collezioni indesiderate.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <!-- RICERCA -->
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">Ricerca</h2>
+                    </div>
+
+                    <div class="verticalSection">
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtMaxSearchResults">
+                                Risultati massimi per ricerca
+                            </label>
+                            <input id="txtMaxSearchResults" type="number" is="emby-input"
+                                   min="1" max="25" step="1" />
+                            <div class="fieldDescription">
+                                Numero massimo di risultati restituiti da ogni ricerca su AnimeClick (default: 10).
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkFilterToAnimeOnly" />
+                                <span>Filtra solo anime</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Esclude automaticamente manga, novel e drama dai risultati di ricerca.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <!-- CACHE & PERFORMANCE -->
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">Cache e Performance</h2>
+                    </div>
+
+                    <div class="verticalSection">
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtCacheHours">
+                                Durata cache metadati (ore)
+                            </label>
+                            <input id="txtCacheHours" type="number" is="emby-input"
+                                   min="1" max="720" step="1" />
+                            <div class="fieldDescription">
+                                Durata in ore della cache locale per i metadati scaricati.
+                                Valori più alti riducono il traffico verso AnimeClick (default: 48).
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtNegativeCacheHours">
+                                Durata cache negativa (ore)
+                            </label>
+                            <input id="txtNegativeCacheHours" type="number" is="emby-input"
+                                   min="1" max="168" step="1" />
+                            <div class="fieldDescription">
+                                Per quanto tempo cacheare i risultati vuoti (anime non trovato).
+                                Evita richieste ripetute per titoli che non esistono su AnimeClick (default: 12).
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtRequestDelay">
+                                Delay tra richieste (ms)
+                            </label>
+                            <input id="txtRequestDelay" type="number" is="emby-input"
+                                   min="500" max="10000" step="100" />
+                            <div class="fieldDescription">
+                                Pausa in millisecondi tra ogni richiesta HTTP verso AnimeClick.
+                                Rispetta il rate limiting etico richiesto dallo staff (default: 1000).
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <!-- AVANZATE -->
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">Avanzate</h2>
+                    </div>
+
+                    <div class="verticalSection">
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtBaseUrl">
+                                URL base AnimeClick
+                            </label>
+                            <input id="txtBaseUrl" type="url" is="emby-input" />
+                            <div class="fieldDescription">
+                                URL del sito AnimeClick. Non modificare a meno che non sia strettamente necessario.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtUserAgent">
+                                User-Agent personalizzato
+                            </label>
+                            <input id="txtUserAgent" type="text" is="emby-input" />
+                            <div class="fieldDescription">
+                                Stringa User-Agent utilizzata per le richieste HTTP.
+                                Identifica il plugin verso AnimeClick per trasparenza.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <!-- BOTTONE SALVA -->
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                            <span>Salva</span>
+                        </button>
+                    </div>
+
+                </form>
+            </div>
+        </div>
+
+        <script type="text/javascript">
+            var AnimeClickPluginId = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
+
+            document.querySelector('#AnimeClickConfigPage')
+                .addEventListener('pageshow', function () {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(AnimeClickPluginId).then(function (config) {
+                        // Metadati
+                        document.querySelector('#chkPreferItalianTitle').checked = config.PreferItalianTitle;
+                        document.querySelector('#chkEnablePlot').checked = config.EnablePlot;
+                        document.querySelector('#chkEnableGenres').checked = config.EnableGenres;
+                        document.querySelector('#chkEnableStudios').checked = config.EnableStudios;
+                        document.querySelector('#chkEnableCommunityRating').checked = config.EnableCommunityRating;
+                        document.querySelector('#chkEnableCast').checked = config.EnableCast;
+                        document.querySelector('#chkEnableTags').checked = config.EnableTags;
+                        document.querySelector('#chkEnableEpisodeTitles').checked = config.EnableEpisodeTitles;
+                        document.querySelector('#chkEnableThemeSongs').checked = config.EnableThemeSongs;
+                        document.querySelector('#chkEnableCollections').checked = config.EnableCollections;
+
+                        // Ricerca
+                        document.querySelector('#txtMaxSearchResults').value = config.MaxSearchResults;
+                        document.querySelector('#chkFilterToAnimeOnly').checked = config.FilterToAnimeOnly;
+
+                        // Cache & Performance
+                        document.querySelector('#txtCacheHours').value = config.CacheHours;
+                        document.querySelector('#txtNegativeCacheHours').value = config.NegativeCacheHours;
+                        document.querySelector('#txtRequestDelay').value = config.RequestDelayMilliseconds;
+
+                        // Avanzate
+                        document.querySelector('#txtBaseUrl').value = config.BaseUrl;
+                        document.querySelector('#txtUserAgent').value = config.UserAgent;
+
+                        Dashboard.hideLoadingMsg();
+                    });
+                });
+
+            document.querySelector('#AnimeClickConfigForm')
+                .addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(AnimeClickPluginId).then(function (config) {
+                        // Metadati
+                        config.PreferItalianTitle = document.querySelector('#chkPreferItalianTitle').checked;
+                        config.EnablePlot = document.querySelector('#chkEnablePlot').checked;
+                        config.EnableGenres = document.querySelector('#chkEnableGenres').checked;
+                        config.EnableStudios = document.querySelector('#chkEnableStudios').checked;
+                        config.EnableCommunityRating = document.querySelector('#chkEnableCommunityRating').checked;
+                        config.EnableCast = document.querySelector('#chkEnableCast').checked;
+                        config.EnableTags = document.querySelector('#chkEnableTags').checked;
+                        config.EnableEpisodeTitles = document.querySelector('#chkEnableEpisodeTitles').checked;
+                        config.EnableThemeSongs = document.querySelector('#chkEnableThemeSongs').checked;
+                        config.EnableCollections = document.querySelector('#chkEnableCollections').checked;
+
+                        // Ricerca
+                        config.MaxSearchResults = parseInt(document.querySelector('#txtMaxSearchResults').value, 10);
+                        config.FilterToAnimeOnly = document.querySelector('#chkFilterToAnimeOnly').checked;
+
+                        // Cache & Performance
+                        config.CacheHours = parseInt(document.querySelector('#txtCacheHours').value, 10);
+                        config.NegativeCacheHours = parseInt(document.querySelector('#txtNegativeCacheHours').value, 10);
+                        config.RequestDelayMilliseconds = parseInt(document.querySelector('#txtRequestDelay').value, 10);
+
+                        // Avanzate
+                        config.BaseUrl = document.querySelector('#txtBaseUrl').value;
+                        config.UserAgent = document.querySelector('#txtUserAgent').value;
+
+                        ApiClient.updatePluginConfiguration(AnimeClickPluginId, config).then(function () {
+                            Dashboard.processPluginConfigurationUpdateResult();
+                            Dashboard.hideLoadingMsg();
+                        });
+                    });
+
+                    return false;
+                });
+        </script>
+    </div>
+</body>
+</html>
