@@ -9,108 +9,12 @@
     "imageUrl": "https://raw.githubusercontent.com/iCosiSenpai/jellyfin-plugin-animeclick/main/assets/banner-plugin-interno.png",
     "versions": [
       {
-        "version": "0.5.6.0",
-        "changelog": "Rimossa funzione di download immagini Serie, dedicato ora solo ai metadati di testo in italiano e cast locale. Mantenuto ImageProvider esclusivamente per le foto dei doppiatori.",
+        "version": "0.8.0.0",
+        "changelog": "Initial Public Release. Metadati testo in italiano, Provider Cast/Staff integrato, Gestione Sigle e Rate-Limiting protetto con SemaphoreSlim.",
         "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.5.6/animeclick-plugin-v0.5.6.zip",
-        "checksum": "7283821463E04224077CA6BF2BD76B14",
-        "timestamp": "2026-04-16T17:15:00Z"
-      },
-      {
-        "version": "0.5.5.0",
-        "changelog": "Rimosso completamente il provider immagini per le stagioni. Affidiamo le locandine di Season 1, Season 2 ecc. interamente a TMDB/Fanart.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.5.5/animeclick-plugin-v0.5.5.zip",
-        "checksum": "36704F5B4BAD76B11035E9A19F658E7F",
-        "timestamp": "2026-04-15T23:05:00Z"
-      },
-      {
-        "version": "0.5.4.0",
-        "changelog": "Rimosso completamente il provider delle stagioni per prevenire conflitti in Jellyfin e delegare al 100% la gestione stagioni ai provider TV inglesi.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.5.4/animeclick-plugin-v0.5.4.zip",
-        "checksum": "660880CD5FE29A19FA789FA1C3DD8BC1",
-        "timestamp": "2026-04-15T22:55:00Z"
-      },
-      {
-        "version": "0.5.3.0",
-        "changelog": "Hotfix: Risolto bug per cui le Stagioni 2+ ereditavano l'immagine e l'ID della Stagione 1. Ora le stagioni multiple usano correttamente i metadati dei provider inglesi.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.5.3/animeclick-plugin-v0.5.3.zip",
-        "checksum": "9685ADC0BB98E4F2AD3D9C31549E02FC",
-        "timestamp": "2026-04-15T22:45:00Z"
-      },
-      {
-        "version": "0.5.2.0",
-        "changelog": "Hotfix: Risolto caricamento infinito durante l'identificazione (loop di fetch episodi su show con unica pagina).",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.5.2/animeclick-plugin-v0.5.2.zip",
-        "checksum": "12DF48EA43F4FE11502DAEFCB0B7CAB0",
-        "timestamp": "2026-04-15T22:38:00Z"
-      },
-      {
-        "version": "0.5.1.0",
-        "changelog": "Hotfix: Corretta identificazione manuale tramite ID quando inserito nel campo AnimeClick specifico di Jellyfin.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.5.1/animeclick-plugin-v0.5.1.zip",
-        "checksum": "804CCB19937935EC4F5BADBB30409FD1",
-        "timestamp": "2026-04-15T22:35:00Z"
-      },
-      {
-        "version": "0.5.0.0",
-        "changelog": "Titoli episodi italiani, sigle OP/ED, collezioni automatiche, ricerca migliorata con ID diretto, fallback episodi generici, poster alta risoluzione, CI/CD auto-release.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.5.0/animeclick-plugin-v0.5.0.zip",
-        "checksum": "76BFC530A6F6E1BE4DA8BE427D21AE16",
-        "timestamp": "2026-04-15T21:30:00Z"
-      },
-      {
-        "version": "0.4.1.0",
-        "changelog": "Aggiunto banner interior mascot nella pagina di configurazione.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.4.1/animeclick-plugin-v0.4.1.zip",
-        "checksum": "1DA1AD21E5022279C2226DA02947D92A",
-        "timestamp": "2026-04-15T19:25:00Z"
-      },
-      {
-        "version": "0.4.0.0",
-        "changelog": "Cast e staff (doppiatori JP+IT, registi, compositori). Tag (Shounen, Seinen). PremiereDate. Link esterno AnimeClick. Nuovo logo plugin. Toggle per cast e tag nella config.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.4.0/animeclick-plugin-v0.4.0.zip",
-        "checksum": "27B88621FAB34EEFCB29FBCDAD1423AE",
-        "timestamp": "2026-04-15T17:40:00Z"
-      },
-      {
-        "version": "0.3.2.0",
-        "changelog": "Fix critico: URL anime con placeholder slug per ID solo numerici. Tutti i provider ora usano BuildAnimeUrl.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.3.2/animeclick-plugin-v0.3.2.zip",
-        "checksum": "C244A15CA98B2971FDCC759A35DE9FC6",
-        "timestamp": "2026-04-15T17:00:00Z"
-      },
-      {
-        "version": "0.3.1.0",
-        "changelog": "Fix URL anime (slug mancante causava 404). Aggiunto campo AnimeClick ID nella schermata Identifica per Serie e Film.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.3.1/animeclick-plugin-v0.3.1.zip",
-        "checksum": "0529FA2E0A69168179D9E2FD293D0CE9",
-        "timestamp": "2026-04-15T16:45:00Z"
-      },
-      {
-        "version": "0.3.0.0",
-        "changelog": "Aggiunta pagina configurazione, supporto Film/Stagioni/Episodi, opzione immagini, risultati ricerca configurabili.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.3.0/animeclick-plugin-v0.3.0.zip",
-        "checksum": "49350C53580E0E51E327883862216658",
-        "timestamp": "2026-04-15T16:00:00Z"
-      },
-      {
-        "version": "0.2.0.0",
-        "changelog": "Prima release pubblica. Scraping etico con cache, metadati italiani, cover art, rate limiting.",
-        "targetAbi": "10.11.8.0",
-        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.2.0/animeclick-plugin-v0.2.0.zip",
-        "checksum": "68FD7C3A9EA02A86D0C3667A0805C121",
-        "timestamp": "2026-04-15T00:00:00Z"
+        "sourceUrl": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/download/v0.8.0/animeclick-plugin-v0.8.0.zip",
+        "checksum": "MD5_CHECKSUM_TBD",
+        "timestamp": "2026-04-16T22:45:00Z"
       }
     ]
   }
