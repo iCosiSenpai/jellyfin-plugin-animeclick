@@ -94,7 +94,7 @@ Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** pe
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
 | URL base | `https://www.animeclick.it` | URL di AnimeClick |
-| User-Agent | `AnimeClick-Jellyfin-Plugin/0.4` | Identificativo per le richieste |
+| User-Agent | `AnimeClick-Jellyfin-Plugin/0.8` | Identificativo per le richieste |
 
 ## 🔍 Identificazione Manuale
 
@@ -110,7 +110,7 @@ Per identificare manualmente un anime:
 AnimeClick è in assoluto l'enciclopedia più completa per quanto riguarda i **Testi** (Sinossi, Titoli) e i **Doppiatori Italiani** nel mondo degli Anime.
 Tuttavia, *non* è un database nato per fornire Locandine, Fanart o Sfondi ad alta risoluzione. Le copertine di AnimeClick sono spesso a bassa risoluzione, contengono loghi o presentano difetti di aspect-ratio.
 
-**Per questo motivo, a partire dalla versione v0.5.6, questo plugin SCARICA ESCLUSIVAMENTE I TESTI, I METADATI E LE FOTO DEI DOPPIATORI.**
+**Per questo motivo, a partire dalla versione v0.8.0, questo plugin SCARICA ESCLUSIVAMENTE I TESTI, I METADATI E LE FOTO DEI DOPPIATORI.**
 È stato appositamente *rimosso* lo scaricatore di locandine per le serie e le stagioni.
 
 Questa castrazione è **volontaria e mirata**, perché nel 2026 l'eccellenza assoluta si ottiene delegando l'estetica a colossi nati per quello.
@@ -160,40 +160,12 @@ L'output sarà in `bin/Release/net9.0/`.
 
 ## 📝 Changelog
 
-### v0.5.6 (Hardening & Best Practices)
-- 🚀 **Zero-Allocation Parsing**: Passaggio a `[GeneratedRegex]` nativo per stressare la CPU allo 0.1% durante l'estrazione dati
-- 🛡️ **Thread-Safe Cache**: Riscritto sistema di Caching Locale per supportare scansioni asincrone ultra-massive senza corrompere i file
-- 📸 **Focus Doppiatori**: Dismesso il downloader generico per le Serie. Ora scarichiamo foto in esclusiva ai doppiatori italiani, delegando l'estetica HD a plugin nativi (TMDB/Fanart) per librerie esteticamente perfette
-- 🔄 **Resilienza di Rete**: Migliorata gestione e logging dei Task Cancellation in caso di timeout verso i server di AnimeClick
-
-### v0.5.0
-- 📺 **Titoli episodi in italiano** dalla pagina /episodi con paginazione
-- 🎵 **Sigle OP/ED** (Opening/Ending) nei tag dell'anime
-- 📦 **Collezioni automatiche** di saghe (sequel/prequel/spin-off) — ⚠️ sperimentale, disattivata di default
-- 🔍 **Ricerca migliorata**: identificazione diretta per ID, pulizia query (rimozione suffissi TV/Movie/anno), fallback progressivo
-- 🖼️ **Poster alta risoluzione**: tenta varianti HD delle cover
-- 🔄 **Fallback episodi**: i titoli generici ("Episodio X") vengono ignorati per lasciar spazio ai provider inglesi
-- 📸 **Person Image Provider** per foto doppiatori/staff
-- 🤖 **CI/CD Auto Release** su GitHub Actions (basta un tag!)
-- ⚙️ 3 nuovi toggle: Titoli episodi, Sigle OP/ED, Collezioni
-
-### v0.4.x
-- 🎭 Cast e staff (doppiatori JP+IT, registi, compositori)
-- 🏷️ Tag (Shounen, Seinen, Mecha, Isekai)
-- 📅 PremiereDate per la timeline
-- 🔗 Link esterno alla pagina AnimeClick
-- 🖼️ Logo e banner personalizzati
-- ⚙️ Toggle per cast e tag nella configurazione
-
-### v0.3.x
-- Fix URL 404 (slug mancante)
-- Campo AnimeClick ID nella schermata Identifica
-- Pagina di configurazione completa
-- Supporto librerie Film, Stagioni, Episodi
-
-### v0.2.0
-- Prima release pubblica
-- Scraping etico con cache, metadati italiani, cover art
+### v0.8.0 (Ottimizzazione e Stabilità)
+- 🚀 **Initial Release**: Lancio ufficiale della nuova architettura stabile con supporto per Jellyfin 10.11+.
+- ⚙️ **Rate Limiter Centralizzato**: `AnimeClickClient` con semafori asincroni estesi a tutte le chiamate (incluse le foto cast) per impedire comportamenti di tipo DDoS ed evitare blocchi dal server remoto.
+- 📸 **Focus Doppiatori ed Estrazione Cast**: Il downloader generico per cover di Serie è stato dismesso: scarichiamo i testi magici e le foto cast da AnimeClick, delegando l'estetica (poster) in esclusiva ai plugin nativi come Fanart.tv/TMDB.
+- 🚀 **Zero-Allocation**: Passaggio strutturale a `[GeneratedRegex]` nativo (.NET 9.0) azzerando l'impatto sulla CPU durante l'estrazione intensiva dei dati HTML.
+- 🛡️ **Resilienza**: Sistema di cache potenziato, gestione avanzata dei cancellation token e dei timeout.
 
 ## 🙏 Attribuzione
 
