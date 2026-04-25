@@ -30,6 +30,16 @@ public partial class AnimeClickHtmlParser
 
     [GeneratedRegex(@"(Opening|Ending)\s+(\d+)\s*\|\s*(.+)", RegexOptions.IgnoreCase)]
     private static partial Regex ThemeSongRegex();
+
+    [GeneratedRegex(@"myanimelist\.net/anime/(\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex MalIdRegex();
+
+    [GeneratedRegex(@"anilist\.co/anime/(\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex AniListIdRegex();
+
+    [GeneratedRegex(@"anidb\.net/(?:a|anime/)(\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex AniDbIdRegex();
+
     /// <summary>
     /// Parses a full anime detail page from AnimeClick.
     /// Uses schema.org microdata and the well-defined dl/dt/dd structure.
@@ -187,7 +197,38 @@ public partial class AnimeClickHtmlParser
             anime.PremiereDate = premiere;
         }
 
-        // --- Provider IDs ---
+        // --- Provider IDs (Extraction from external links) ---
+        var links = doc.DocumentNode.SelectNodes("//a[@href]");
+        if (links != null)
+        {
+            foreach (var link in links)
+            {
+                var href = link.GetAttributeValue("href", string.Empty);
+                if (string.IsNullOrEmpty(href)) continue;
+
+                var malMatch = MalIdRegex().Match(href);
+                if (malMatch.Success)
+                {
+                    anime.ProviderIds["MyAnimeList"] = malMatch.Groups[1].Value;
+                    continue;
+                }
+
+                var aniListMatch = AniListIdRegex().Match(href);
+                if (aniListMatch.Success)
+                {
+                    anime.ProviderIds["AniList"] = aniListMatch.Groups[1].Value;
+                    continue;
+                }
+
+                var aniDbMatch = AniDbIdRegex().Match(href);
+                if (aniDbMatch.Success)
+                {
+                    anime.ProviderIds["AniDB"] = aniDbMatch.Groups[1].Value;
+                    continue;
+                }
+            }
+        }
+
         anime.ProviderIds["AnimeClick"] = anime.Id;
         return anime;
     }
