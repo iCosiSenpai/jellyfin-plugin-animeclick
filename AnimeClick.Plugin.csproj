@@ -7,7 +7,7 @@
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <AssemblyName>AnimeClick.Plugin</AssemblyName>
     <RootNamespace>AnimeClick.Plugin</RootNamespace>
-    <Version>1.0.1.0</Version>
+    <Version>1.0.2.0</Version>
     <PackageId>AnimeClick.Plugin</PackageId>
     <Authors>Alessio Cosi</Authors>
     <Description>Italian anime metadata provider for Jellyfin using AnimeClick with ethical scraping and cache.</Description>
