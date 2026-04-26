@@ -8,9 +8,8 @@ namespace AnimeClick.Plugin;
 
 /// <summary>
 /// Registers plugin services into Jellyfin's DI container.
-/// Automatically discovered by Jellyfin at startup.
-/// Uses explicit interface implementation for backward compatibility
-/// with older Jellyfin.Controller NuGet package.
+/// Both signatures are needed: the interface-based one for assembly loading,
+/// and the reflection-based one for runtime invocation.
 /// </summary>
 public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
@@ -22,7 +21,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<AnimeClickSeriesSearchProvider>();
     }
 
-    void IPluginServiceRegistrator.RegisterServices(IServiceCollection services, IServerApplicationHost applicationHost)
+    public void RegisterServices(IServiceCollection services, IServerApplicationHost applicationHost)
     {
         RegisterServices(services);
     }
