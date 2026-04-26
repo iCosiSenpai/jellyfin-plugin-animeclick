@@ -129,30 +129,139 @@ Tuttavia, *non* è un database nato per fornire Locandine, Fanart o Sfondi ad al
 **Per questo motivo, questo plugin SCARICA ESCLUSIVAMENTE I TESTI, I METADATI E LE FOTO DEI DOPPIATORI.**
 È stato appositamente *rimosso* lo scaricatore di locandine per le serie e le stagioni.
 
-Questa castrazione è **volontaria e mirata**, perché nel 2026 l'eccellenza assoluta si ottiene delegando l'estetica a colossi nati per quello.
+Questa castrazione è **volontaria e mirata**: l'eccellenza si ottiene delegando l'estetica a colossi nati per quello.
 
 ### 📚 La Configurazione Definitiva (Best Practices)
 
-Per ottenere il risultato estetico e testuale perfetto su Jellyfin, configura la tua libreria Anime nel seguente modo. Ti serviranno plugin di terze parti:
-- **TheMovieDb** (Incluso su Jellyfin)
-- **Fanart.tv** (Aggiungilo dai Plugin, crea account gratuito per API key)
-- **AniSearch / AniDB** (Opzionali per extra anime id)
+> **Queste sono le impostazioni esatte del mio server Jellyfin NAS nel 2026.**
+> Puoi copiarle pari-pari: sono il risultato di mesi di test su centinaia di anime.
 
-#### 1. Scraper Metadati (Testi)
-Imposta gli scaricatori nel seguente ordine:
-🥇 `AnimeClick` (Attivalo e spostalo in cima. Farà il 90% del lavoro in italiano: traducendo la scheda e scaricando tutti i doppiatori).
-🥈 `TheMovieDb` o `TheTVDB` (Lasciali come secondari: Jellyfin userà loro per colmare i buchi o prendere i trailer).
+Plugin richiesti (oltre ad AnimeClick):
 
-#### 2. Scraper Stagioni
-🥇 `TheMovieDb` o `TheTVDB`
-🥈 `AnimeClick` (Gestisce la mappatura stagioni su pagine AnimeClick separate. Per stagingi sulla stessa pagina, il parsing automatico `S{N} Ep. {M}` assegna titoli corretti a ogni stagione).
+| Plugin | Dove trovarlo |
+|--------|---------------|
+| **Fanart.tv** | Catalogo Jellyfin → Plugin (richiede API key gratuita) |
+| **TheTVDB** | Catalogo Jellyfin → Plugin |
+| **AniDB** | Catalogo Jellyfin → Plugin |
+| **AniList** | Catalogo Jellyfin → Plugin |
+| **AniSearch** | Catalogo Jellyfin → Plugin |
+| **TheMovieDb** | Incluso in Jellyfin |
+| **Screen Grabber** | Incluso in Jellyfin |
 
-#### 3. Scaricatori di Immagini (Locandine, Sfondi, Banner)
-🥇 `Fanart.tv` (Testo pulito, alta definizione).
-🥈 `TheMovieDb`
-❌ `AnimeClick` (Opzione non più presente: non sporcherà più le vostre bellissime cover!)
+---
 
-In questo modo, quando esegui la scansione, **AnimeClick** metterà il testo magico in Italiano, e **TMDB/Fanart** metteranno i poster brillanti in 4K.
+### 📺 Libreria Anime TV
+
+Vai su **Dashboard → Librerie → Anime TV → Gestisci libreria** e imposta:
+
+#### Metadati Serie
+
+| Priorità | Provider | Ruolo |
+|:--------:|----------|-------|
+| 🥇 | **AnimeClick** | Titoli, trame, generi, cast, staff, rating in italiano |
+| 🥈 | TheTVDB | Colma eventuali buchi, fornisce trailer |
+| 🥉 | AniSearch | ID incrociati e fallback titoli |
+| 4 | AniDB | ID incrociati e fallback |
+| 5 | AniList | ID incrociati extra |
+| 6 | Missing Episode Fetcher | Segnala episodi mancanti |
+| 7 | TheMovieDb | Fallback finale |
+| 8 | The Open Movie Database | Ultima risorsa |
+
+#### Immagini Serie
+
+| Priorità | Provider | Ruolo |
+|:--------:|----------|-------|
+| 🥇 | **TheTVDB** | Poster e banner puliti, aspect-ratio perfetto |
+| 🥈 | **Fanart** | Sfondi HD, logo, artwork ad alta risoluzione |
+| 🥉 | AniSearch | Copertine specifiche anime |
+| 4 | AniDB | Fallback copertine |
+| 5 | AniList | Fallback copertine |
+| 6 | TheMovieDb | Ultima risorsa |
+
+#### Metadati Stagioni
+
+| Priorità | Provider | Ruolo |
+|:--------:|----------|-------|
+| 🥇 | TheTVDB | Informazioni stagione (anno, overview) |
+| 🥈 | AniDB | Fallback |
+| 🥉 | **AnimeClick** | Risolve ID AnimeClick corretto per stagioni su pagine separate |
+
+> **Nota:** Metti AnimeClick come terzo, non primo. Le stagioni non hanno metadati testuali da AnimeClick (sinossi, cast) — il SeasonProvider serve solo a impostare l'ID per la risoluzione corretta degli episodi.
+
+#### Immagini Stagioni
+
+| Priorità | Provider |
+|:--------:|----------|
+| 🥇 | TheTVDB |
+| 🥈 | Fanart |
+| 🥉 | AniDB |
+| 4 | AniList |
+| 5 | AniSearch |
+| 6 | TheMovieDb |
+
+#### Metadati Episodi
+
+| Priorità | Provider | Ruolo |
+|:--------:|----------|-------|
+| 🥇 | **AnimeClick** | Titoli italiani degli episodi |
+| 🥈 | TheTVDB | Fallback titoli inglesi |
+| 🥉 | AniDB | Fallback |
+| 4 | TheMovieDb | Fallback |
+| 5 | The Open Movie Database | Ultima risorsa |
+
+#### Immagini Episodi
+
+| Priorità | Provider |
+|:--------:|----------|
+| 🥇 | TheTVDB |
+| 🥈 | TheMovieDb |
+| 🥉 | The Open Movie Database |
+| 4 | Screen Grabber |
+| 5 | Embedded Image Extractor |
+
+---
+
+### 🎬 Libreria Anime Movie
+
+Vai su **Dashboard → Librerie → Anime Movie → Gestisci libreria** e imposta:
+
+#### Metadati Film
+
+| Priorità | Provider | Ruolo |
+|:--------:|----------|-------|
+| 🥇 | **AnimeClick** | Titoli, trame, generi, cast, staff, rating in italiano |
+| 🥈 | AniList | ID incrociati |
+| 🥉 | AniDB | ID incrociati |
+| 4 | TheTVDB | Fallback |
+| 5 | TheMovieDb | Fallback |
+| 6 | The Open Movie Database | Ultima risorsa |
+
+#### Immagini Film
+
+| Priorità | Provider | Ruolo |
+|:--------:|----------|-------|
+| 🥇 | **Fanart** | Poster HD, sfondi, logo |
+| 🥈 | AniDB | Copertine specifiche anime |
+| 🥉 | AniList | Copertine specifiche anime |
+| 4 | TheTVDB | Fallback |
+| 5 | TheMovieDb | Fallback |
+| 6 | The Open Movie Database | Ultima risorsa |
+| 7 | Embedded Image Extractor | Estrae copertina dal file video |
+| 8 | Screen Grabber | Screenshot automatico dal video |
+
+---
+
+### 🧪 Risultato Finale
+
+Con questa configurazione, quando esegui la scansione:
+
+1. **AnimeClick** scrive tutto in italiano (titolo, trama, generi, cast, rating)
+2. **TheTVDB / Fanart** scaricano poster, banner e sfondi in alta definizione
+3. **AniDB / AniList / AniSearch** forniscono ID incrociati e fallback
+4. **AnimeClick SeasonProvider** risolve la pagina corretta per ogni stagione
+5. **AnimeClick EpisodeProvider** assegna i titoli italiani a ogni episodio
+
+Nessun conflitto, nessuna copertina a bassa risoluzione, tutto in italiano dove disponibile.
 
 ## 🔄 Risoluzione Problemi / ID Mancanti
 
