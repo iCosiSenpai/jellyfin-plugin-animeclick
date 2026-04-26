@@ -18,6 +18,7 @@ namespace AnimeClick.Plugin.Providers;
 /// <summary>
 /// Provides episode-level metadata (Italian titles) for anime from AnimeClick.
 /// Fetches the episode list from /episodi and matches by episode number.
+/// Resolves season-specific AnimeClick pages via relations for multi-season shows.
 /// </summary>
 public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, EpisodeInfo>, IHasOrder
 {
@@ -51,7 +52,6 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
         if (!configuration.EnableEpisodeTitles)
         {
-            // Propagate provider ID only
             var id = info.GetProviderId("AnimeClick");
             if (!string.IsNullOrWhiteSpace(id))
             {
@@ -62,10 +62,10 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         }
 
         // Get AnimeClick ID from parent series
-        var animeClickId = info.SeriesProviderIds?.GetValueOrDefault("AnimeClick")
-                           ?? info.GetProviderId("AnimeClick");
+        var mainAnimeClickId = info.SeriesProviderIds?.GetValueOrDefault("AnimeClick")
+                               ?? info.GetProviderId("AnimeClick");
 
-        if (string.IsNullOrWhiteSpace(animeClickId))
+        if (string.IsNullOrWhiteSpace(mainAnimeClickId))
         {
             return result;
         }
@@ -75,6 +75,13 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         {
             return result;
         }
+
+        var seasonNumber = info.ParentIndexNumber;
+
+        // Resolve season-specific AnimeClick page for multi-season shows
+        var animeClickId = await ResolveSeasonAnimeClickIdAsync(
+            mainAnimeClickId, seasonNumber, configuration, cancellationToken)
+            ?? mainAnimeClickId;
 
         try
         {
@@ -95,40 +102,39 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 episodes = _parser.ParseEpisodesPage(html, configuration.BaseUrl);
 
                 // If there are more pages, fetch them too (pagination)
-                // Look for page=2, page=3, etc.
-                for (var page = 2; page <= 30; page++) // Safety limit
+                for (var page = 2; page <= 30; page++)
                 {
                     var nextUrl = episodesUrl + $"?page={page}";
                     try
                     {
                         var nextHtml = await _client.GetStringAsync(nextUrl, configuration, cancellationToken);
                         var nextEpisodes = _parser.ParseEpisodesPage(nextHtml, configuration.BaseUrl);
-                        if (nextEpisodes.Count == 0) break; // No more pages
+                        if (nextEpisodes.Count == 0) break;
 
-                        // AnimeClick returns page 1 if the page parameter is out of bounds
-                        // If we see the first episode of next page already in our list, it's a loop
-                        if (episodes.Any(e => e.Number == nextEpisodes[0].Number)) break;
+                        if (episodes.Any(e => e.Number == nextEpisodes[0].Number
+                            && e.SeasonNumber == nextEpisodes[0].SeasonNumber)) break;
 
                         episodes.AddRange(nextEpisodes);
                     }
                     catch
                     {
-                        break; // Page doesn't exist or error
+                        break;
                     }
                 }
 
-                // Cache the full list
                 await _cache.SetAsync(cacheKey, episodes, cancellationToken);
                 _logger.LogInformation("AnimeClick: Cached {Count} episodes for {Id}", episodes.Count, animeClickId);
             }
 
-            // Find matching episode
-            var match = episodes.FirstOrDefault(e => e.Number == episodeNumber.Value);
+            // Find matching episode: prefer exact season+number match, fall back to number-only
+            var match = (seasonNumber.HasValue
+                ? episodes.FirstOrDefault(e =>
+                    e.Number == episodeNumber.Value &&
+                    e.SeasonNumber == seasonNumber.Value)
+                : null)
+                ?? episodes.FirstOrDefault(e => e.Number == episodeNumber.Value);
             if (match is not null && !string.IsNullOrWhiteSpace(match.Title))
             {
-                // Skip generic placeholder titles like "Episodio 1", "Episodio 2", etc.
-                // This allows Jellyfin to fall back to English providers (TMDB, TVDB)
-                // which typically have better episode titles.
                 var isGeneric = System.Text.RegularExpressions.Regex.IsMatch(
                     match.Title, @"^Episodio\s+\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
@@ -158,6 +164,60 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         return result;
     }
 
+    /// <summary>
+    /// Resolves the AnimeClick ID for a specific season by searching relations
+    /// on the main anime page. Returns null if the main page should be used.
+    /// </summary>
+    private async Task<string?> ResolveSeasonAnimeClickIdAsync(
+        string mainId, int? seasonNumber,
+        PluginConfiguration config, CancellationToken ct)
+    {
+        if (!seasonNumber.HasValue || seasonNumber.Value <= 1) return null;
+
+        var cacheKey = $"seasonMap::{mainId}::{seasonNumber.Value}";
+        var cached = await _cache.GetAsync<string>(cacheKey, config.CacheHours, ct);
+        if (cached is not null) return cached == "__same__" ? null : cached;
+
+        string? resolvedId = null;
+
+        try
+        {
+            var mainUrl = AnimeClickClient.BuildAnimeUrl(config.BaseUrl, mainId);
+            var relHtml = await _client.GetStringAsync(mainUrl + "/relazioni", config, ct);
+            var relations = _parser.ParseRelationsPage(relHtml, config.BaseUrl);
+
+            var tvRelations = relations
+                .Where(r => r.Format is not null &&
+                    (r.Format.Contains("Serie TV", StringComparison.OrdinalIgnoreCase) ||
+                     r.Format.Contains("TV", StringComparison.OrdinalIgnoreCase)) &&
+                    !IsSpinoffTitle(r.Title))
+                .OrderBy(r => r.Year ?? 9999)
+                .ToList();
+
+            if (tvRelations.Count > 0)
+            {
+                var relIndex = seasonNumber.Value - 2;
+                if (relIndex >= 0 && relIndex < tvRelations.Count)
+                {
+                    var candidateId = tvRelations[relIndex].AnimeClickId;
+                    if (!string.IsNullOrWhiteSpace(candidateId) && candidateId != mainId)
+                    {
+                        resolvedId = candidateId;
+                        _logger.LogInformation("AnimeClick: Season {S} resolved via relations → {Id}",
+                            seasonNumber.Value, resolvedId);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "AnimeClick: Relations-based season resolution failed for {Id} S{S}", mainId, seasonNumber.Value);
+        }
+
+        await _cache.SetAsync(cacheKey, resolvedId ?? "__same__", ct);
+        return resolvedId;
+    }
+
     public Task<IEnumerable<RemoteSearchResult>> GetSearchResults(EpisodeInfo searchInfo, CancellationToken cancellationToken)
     {
         return Task.FromResult<IEnumerable<RemoteSearchResult>>([]);
@@ -168,4 +228,10 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         var client = _httpClientFactory.CreateClient();
         return client.GetAsync(new Uri(url), cancellationToken);
     }
+
+    private static bool IsSpinoffTitle(string? title) =>
+        !string.IsNullOrWhiteSpace(title) &&
+        System.Text.RegularExpressions.Regex.IsMatch(title,
+            @"\b(Alternative|Gaiden|Spin[\s-]?[Oo]ff|Bangai[\s-]?[Hh]en)\b",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 }

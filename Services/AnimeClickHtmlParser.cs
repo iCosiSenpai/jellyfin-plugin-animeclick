@@ -25,6 +25,9 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"(\d+)\s*$")]
     private static partial Regex EpisodeNumberRegex();
 
+    [GeneratedRegex(@"S\s*(\d+)\s+Ep\.?\s*(\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex SeasonEpisodeRegex();
+
     [GeneratedRegex(@"(\d+)")]
     private static partial Regex DigitsRegex();
 
@@ -570,8 +573,19 @@ public partial class AnimeClickHtmlParser
             var numText = NormalizeWhitespace(cells[0].InnerText);
             if (string.IsNullOrWhiteSpace(numText)) continue;
 
-            var numMatch = EpisodeNumberRegex().Match(numText);
-            if (!numMatch.Success || !int.TryParse(numMatch.Groups[1].Value, out var epNum)) continue;
+            int? seasonNumber = null;
+            int epNum;
+            var seasonMatch = SeasonEpisodeRegex().Match(numText);
+            if (seasonMatch.Success)
+            {
+                seasonNumber = int.TryParse(seasonMatch.Groups[1].Value, out var s) ? s : null;
+                epNum = int.TryParse(seasonMatch.Groups[2].Value, out var e) ? e : 0;
+            }
+            else
+            {
+                var numMatch = EpisodeNumberRegex().Match(numText);
+                if (!numMatch.Success || !int.TryParse(numMatch.Groups[1].Value, out epNum)) continue;
+            }
 
             // Second cell: title with link
             var titleLink = cells[1].SelectSingleNode(".//a");
@@ -595,11 +609,12 @@ public partial class AnimeClickHtmlParser
                 }
             }
 
-            // Avoid duplicates
-            if (episodes.Any(e => e.Number == epNum)) continue;
+            // Avoid duplicates: use (Season, Number) pair when season info is available
+            if (episodes.Any(e => e.SeasonNumber == seasonNumber && e.Number == epNum)) continue;
 
             episodes.Add(new AnimeClickEpisode
             {
+                SeasonNumber = seasonNumber,
                 Number = epNum,
                 Title = title,
                 DetailUrl = detailUrl,
@@ -623,14 +638,14 @@ public partial class AnimeClickHtmlParser
         var relations = new List<AnimeClickRelation>();
 
         // Structure: <div class="media"> containing:
-        //   <h4 class="media-heading"><a href="/anime/561/naruto-shippuden">Title</a></h4>
+        //   <h4/h5 class="media-heading"><a href="/anime/561/naruto-shippuden">Title</a></h4>
         //   <span class="label label-success">Sequel</span>
         var mediaBlocks = doc.DocumentNode.SelectNodes("//div[contains(@class, 'media')]");
         if (mediaBlocks is null) return relations;
 
         foreach (var block in mediaBlocks)
         {
-            var headingLink = block.SelectSingleNode(".//h4[contains(@class, 'media-heading')]//a");
+            var headingLink = block.SelectSingleNode(".//*[self::h4 or self::h5][contains(@class, 'media-heading')]//a");
             if (headingLink is null) continue;
 
             var title = NormalizeWhitespace(headingLink.InnerText);
@@ -646,16 +661,18 @@ public partial class AnimeClickHtmlParser
             var labelNode = block.SelectSingleNode(".//span[contains(@class, 'label')]");
             var relationType = NormalizeWhitespace(labelNode?.InnerText) ?? "Correlato";
 
-            // Try to extract year and format from <p> tags in media-body
+            // Try to extract year and format from <p> or <span> in description/media-body
             int? year = null;
             string? format = null;
-            var pNodes = block.SelectNodes(".//div[contains(@class, 'media-body')]//p")
-                         ?? block.SelectNodes(".//p");
-            if (pNodes is not null)
+            var infoNodes = block.SelectNodes(".//div[contains(@class, 'media-body')]//p")
+                         ?? block.SelectNodes(".//div[contains(@class, 'media-body')]//span")
+                         ?? block.SelectNodes(".//div[contains(@class, 'description')]//span")
+                         ?? block.SelectNodes(".//span");
+            if (infoNodes is not null)
             {
-                foreach (var p in pNodes)
+                foreach (var node in infoNodes)
                 {
-                    var text = NormalizeWhitespace(p.InnerText) ?? "";
+                    var text = NormalizeWhitespace(node.InnerText) ?? "";
                     var yearMatch = YearExtractRegex().Match(text);
                     if (yearMatch.Success && int.TryParse(yearMatch.Value, out var y))
                     {

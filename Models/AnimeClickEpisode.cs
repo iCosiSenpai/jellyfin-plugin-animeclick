@@ -5,7 +5,10 @@ namespace AnimeClick.Plugin.Models;
 /// </summary>
 public class AnimeClickEpisode
 {
-    /// <summary>Episode number (1-based).</summary>
+    /// <summary>Season number (null if not available from AnimeClick).</summary>
+    public int? SeasonNumber { get; set; }
+
+    /// <summary>Episode number (1-based, within season if SeasonNumber is set).</summary>
     public int Number { get; set; }
 
     /// <summary>Italian title of the episode.</summary>
