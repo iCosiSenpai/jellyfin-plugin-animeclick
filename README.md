@@ -54,7 +54,7 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 1. In Jellyfin, vai su **Dashboard → Plugin → Repositories**
 2. Aggiungi un nuovo repository con URL:
    ```
-   https://raw.githubusercontent.com/iCosiSenpai/jellyfin-plugin-animeclick/main/manifest.json
+   [https://raw.githubusercontent.com/iCosiSenpai/jellyfin-plugin-animeclick/main/manifest.json](https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json)
    ```
 3. Vai su **Catalogo**, cerca "AnimeClick" e installa
 4. Riavvia Jellyfin
