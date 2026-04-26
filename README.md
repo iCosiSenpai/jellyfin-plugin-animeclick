@@ -80,6 +80,8 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
    - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.1.2.0\`
 3. Riavvia Jellyfin
 
+> **💡 Altri miei plugin:** Nello stesso repository trovi anche [KometaThemes](https://github.com/iCosiSenpai/KometaTheme), che scarica automaticamente le sigle OP/ED degli anime da animethemes.moe.
+
 ## ⚙️ Configurazione
 
 Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** per configurare:
