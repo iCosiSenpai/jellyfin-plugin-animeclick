@@ -131,22 +131,23 @@ Tuttavia, *non* è un database nato per fornire Locandine, Fanart o Sfondi ad al
 
 Questa castrazione è **volontaria e mirata**: l'eccellenza si ottiene delegando l'estetica a colossi nati per quello.
 
-### 📚 La Configurazione Definitiva (Best Practices)
+### 🌐 La Mia Configurazione (plugin facoltativi ma utili per il fallback)
 
 > **Queste sono le impostazioni esatte del mio server Jellyfin NAS nel 2026.**
 > Puoi copiarle pari-pari: sono il risultato di mesi di test su centinaia di anime.
+>
+> AnimeClick fa il grosso del lavoro da solo — i plugin sotto servono come safety net per quando un anime non è presente su AnimeClick, per arricchire gli ID incrociati, e per le immagini.
 
-Plugin richiesti (oltre ad AnimeClick):
-
-| Plugin | Dove trovarlo |
-|--------|---------------|
-| **Fanart.tv** | Catalogo Jellyfin → Plugin (richiede API key gratuita) |
-| **TheTVDB** | Catalogo Jellyfin → Plugin |
-| **AniDB** | Catalogo Jellyfin → Plugin |
-| **AniList** | Catalogo Jellyfin → Plugin |
-| **AniSearch** | Catalogo Jellyfin → Plugin |
-| **TheMovieDb** | Incluso in Jellyfin |
-| **Screen Grabber** | Incluso in Jellyfin |
+| Plugin | Perché lo uso | Dove trovarlo |
+|--------|---------------|---------------|
+| **Fanart.tv** | Poster, banner e sfondi in HD | Catalogo → Plugin (richiede API key gratuita) |
+| **TheMovieDb** | Fallback metadati e immagini | Incluso in Jellyfin |
+| **TheTVDB** | Episodi, stagioni, trailer | Catalogo → Plugin |
+| **AniSearch** | ID incrociati e copertine anime | Catalogo → Plugin |
+| **AniDB** | ID incrociati e fallback | Catalogo → Plugin |
+| **AniList** | ID incrociati extra | Catalogo → Plugin |
+| **Screen Grabber** | Screenshot automatico episodi | Incluso in Jellyfin |
+| **Embedded Image Extractor** | Estrae copertina dal file video | Incluso in Jellyfin |
 
 ---
 
