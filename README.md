@@ -14,9 +14,10 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 
 ## ✨ Funzionalità
 
-### Metadati
+### Metadati Testuali
 - **Titoli in italiano** (con opzione per titolo originale giapponese)
 - **Trama/sinossi** in italiano
+- **Titoli episodi** in italiano
 - **Generi** in italiano (Commedia, Fantascienza, Scolastico, ecc.)
 - **Tag** (Shounen, Seinen, Mecha, Isekai, ecc.)
 - **Anno di produzione** e **data premiere**
@@ -24,6 +25,7 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 - **Stato serie** (completato → Ended, in corso → Continuing)
 - **Studi di animazione**
 - **Content rating** (se disponibile)
+- **Sigle OP/ED** come tag (se abilitato)
 
 ### Cast & Staff
 - **Doppiatori giapponesi** (seiyuu) con nome del personaggio
@@ -32,12 +34,22 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 - **Autori** (soggetto originale, sceneggiatura, series composition)
 - **Compositori** (colonne sonore)
 
+### Collezioni Automatiche
+- Rilevamento **sequel, prequel e spin-off** tramite la pagina relazioni di AnimeClick
+- I titoli correlati vengono raggruppati in BoxSet
+
+### Multi-Stagione
+- **Stagioni sulla stessa pagina**: il parser riconosce automaticamente il formato `S{N} Ep. {M}` di AnimeClick e assegna titoli corretti a ciascuna stagione
+- **Stagioni su pagine separate**: per anime con pagine AnimeClick distinte (es. Sword Art Online → SAO II → Alicization), il plugin risolve automaticamente la pagina corretta di ogni stagione tramite le relazioni
+- **Filtro spin-off**: titoli contenenti "Alternative", "Gaiden", "Spin-off" o "Bangai-hen" vengono esclusi dalla mappatura automatica
+- **SeasonProvider**: imposta l'ID AnimeClick corretto sull'entità Season di Jellyfin
+
 ### Librerie Supportate
 | Tipo | Metadati Testuali e Cast | Locandine e Art |
 |------|----------|----------|
 | 📺 Serie TV | ✅ | ❌ (Usa TMDB/Fanart) |
 | 🎬 Film | ✅ | ❌ (Usa TMDB/Fanart) |
-| 📅 Stagioni | ❌ | ❌ (Usa TMDB/Fanart) |
+| 📅 Stagioni | ✅ (ID Provider) | ❌ (Usa TMDB/Fanart) |
 | 📝 Episodi | ✅ (Titoli Ita) | ❌ |
 
 ### Funzionalità Tecniche
@@ -56,16 +68,16 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
    ```
    https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json
    ```
-3. Vai su **Catalogo**, cerca "AnimeClick" e installa
+3. Vai su **Catalogo**, cerca "AnimeClick Metadata" e installa
 4. Riavvia Jellyfin
 
 ### Installazione Manuale
 
 1. Scarica l'ultima release dalla [pagina Releases](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases)
 2. Estrai lo zip nella cartella plugin di Jellyfin:
-   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata/`
-   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata\`
-   - **Docker**: `/config/plugins/AnimeClick Metadata/`
+   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.1.2.0/`
+   - **Docker**: `/config/plugins/AnimeClick Metadata_0.1.2.0/`
+   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.1.2.0\`
 3. Riavvia Jellyfin
 
 ## ⚙️ Configurazione
@@ -75,13 +87,16 @@ Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** pe
 ### Metadati
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
-| Preferisci titolo italiano | ✅ | Usa il titolo italiano come nome |
+| Preferisci titolo italiano | ✅ | Usa il titolo italiano come nome della serie |
 | Importa trama | ✅ | Importa la sinossi in italiano |
 | Importa generi | ✅ | Importa i generi (Commedia, Fantascienza, ecc.) |
 | Importa studi | ✅ | Importa gli studi di animazione |
 | Importa valutazione | ✅ | Importa il rating community |
 | Importa cast e staff | ✅ | Doppiatori, registi, autori, compositori |
 | Importa tag | ✅ | Tag come Shounen, Seinen, Mecha |
+| Importa titoli episodi | ✅ | Titoli italiani degli episodi da /episodi |
+| Crea collezioni automatiche | ❌ | Raggruppa sequel/prequel in BoxSet |
+| Importa sigle OP/ED | ✅ | Aggiunge i nomi delle sigle come tag |
 
 ### Cache & Performance
 | Opzione | Default | Descrizione |
@@ -94,23 +109,24 @@ Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** pe
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
 | URL base | `https://www.animeclick.it` | URL di AnimeClick |
-| User-Agent | `AnimeClick-Jellyfin-Plugin/0.8` | Identificativo per le richieste |
+| User-Agent | `AnimeClick-Jellyfin-Plugin/0.5` | Identificativo per le richieste |
 
 ## 🔍 Identificazione Manuale
 
 Per identificare manualmente un anime:
+
 1. Cerca l'anime su [AnimeClick.it](https://www.animeclick.it/)
-2. Copia l'ID dall'URL (es. per `animeclick.it/anime/72/naruto` → `72/naruto` oppure anche solo `72`)
+2. Copia l'ID completo dall'URL: per `animeclick.it/anime/72/naruto` → `72/naruto`
 3. In Jellyfin, clicca sull'anime → **Identifica** → inserisci l'ID nel campo "AnimeClick"
 
-> **Nota:** Puoi anche inserire solo l'ID numerico (es. `72`) e il plugin lo troverà automaticamente.
+> **Nota:** Puoi anche inserire solo l'ID numerico (es. `72`) e il plugin lo troverà automaticamente tramite ricerca.
 
 ## 🧠 La Filosofia del Plugin (Configurazione Ideale 2026)
 
 AnimeClick è in assoluto l'enciclopedia più completa per quanto riguarda i **Testi** (Sinossi, Titoli) e i **Doppiatori Italiani** nel mondo degli Anime.
 Tuttavia, *non* è un database nato per fornire Locandine, Fanart o Sfondi ad alta risoluzione. Le copertine di AnimeClick sono spesso a bassa risoluzione, contengono loghi o presentano difetti di aspect-ratio.
 
-**Per questo motivo, a partire dalla versione v0.8.0, questo plugin SCARICA ESCLUSIVAMENTE I TESTI, I METADATI E LE FOTO DEI DOPPIATORI.**
+**Per questo motivo, questo plugin SCARICA ESCLUSIVAMENTE I TESTI, I METADATI E LE FOTO DEI DOPPIATORI.**
 È stato appositamente *rimosso* lo scaricatore di locandine per le serie e le stagioni.
 
 Questa castrazione è **volontaria e mirata**, perché nel 2026 l'eccellenza assoluta si ottiene delegando l'estetica a colossi nati per quello.
@@ -124,12 +140,12 @@ Per ottenere il risultato estetico e testuale perfetto su Jellyfin, configura la
 
 #### 1. Scraper Metadati (Testi)
 Imposta gli scaricatori nel seguente ordine:
-🥇 `AnimeClick` (Attivalo e spostalo in cima. Lui farà il 90% del lavoro in italiano: tramutando la scheda in italiano e scaricando tutti i doppiatori).
+🥇 `AnimeClick` (Attivalo e spostalo in cima. Farà il 90% del lavoro in italiano: traducendo la scheda e scaricando tutti i doppiatori).
 🥈 `TheMovieDb` o `TheTVDB` (Lasciali come secondari: Jellyfin userà loro per colmare i buchi o prendere i trailer).
 
 #### 2. Scraper Stagioni
 🥇 `TheMovieDb` o `TheTVDB`
-❌ `AnimeClick` (Da tenere ASSOLUTAMENTE DISATTIVATO. AnimeClick tratta le stagioni come serie separate, incasinando le cartelle).
+🥈 `AnimeClick` (Gestisce la mappatura stagioni su pagine AnimeClick separate. Per stagingi sulla stessa pagina, il parsing automatico `S{N} Ep. {M}` assegna titoli corretti a ogni stagione).
 
 #### 3. Scaricatori di Immagini (Locandine, Sfondi, Banner)
 🥇 `Fanart.tv` (Testo pulito, alta definizione).
@@ -139,6 +155,7 @@ Imposta gli scaricatori nel seguente ordine:
 In questo modo, quando esegui la scansione, **AnimeClick** metterà il testo magico in Italiano, e **TMDB/Fanart** metteranno i poster brillanti in 4K.
 
 ## 🔄 Risoluzione Problemi / ID Mancanti
+
 Se usi l'opzione "Identifica" azzurra in Jellyfin e clicchi manualmente su un risultato "AnimeClick", Jellyfin **cancella** gli ID degli altri database americani per sicurezza. Se lo fai, *Fanart / TMDB smetteranno di trovare immagini per quell'anime* perché hanno perso il bersaglio!
 Se ti succede: vai su Modifica Metadati e ri-incolla a mano l'ID TheMovieDb in fondo alla pagina (lo trovi cercando l'anime su themoviedb.org). Se invece lasci fare la "Scansione Libreria" in automatico a Jellyfin, lui conserverà entrambi gli ID perfettamente!
 
@@ -148,10 +165,10 @@ Se ti succede: vai su Modifica Metadati e ri-incolla a mano l'ID TheMovieDb in f
 git clone https://github.com/iCosiSenpai/jellyfin-plugin-animeclick.git
 cd jellyfin-plugin-animeclick
 dotnet restore
-dotnet build -c Release
+dotnet publish -c Release -o pub
 ```
 
-L'output sarà in `bin/Release/net9.0/`.
+L'output sarà in `pub/`.
 
 ## 📋 Requisiti
 
@@ -160,12 +177,23 @@ L'output sarà in `bin/Release/net9.0/`.
 
 ## 📝 Changelog
 
-### v0.8.0 (Ottimizzazione e Stabilità)
-- 🚀 **Initial Release**: Lancio ufficiale della nuova architettura stabile con supporto per Jellyfin 10.11+.
-- ⚙️ **Rate Limiter Centralizzato**: `AnimeClickClient` con semafori asincroni estesi a tutte le chiamate (incluse le foto cast) per impedire comportamenti di tipo DDoS ed evitare blocchi dal server remoto.
-- 📸 **Focus Doppiatori ed Estrazione Cast**: Il downloader generico per cover di Serie è stato dismesso: scarichiamo i testi magici e le foto cast da AnimeClick, delegando l'estetica (poster) in esclusiva ai plugin nativi come Fanart.tv/TMDB.
-- 🚀 **Zero-Allocation**: Passaggio strutturale a `[GeneratedRegex]` nativo (.NET 9.0) azzerando l'impatto sulla CPU durante l'estrazione intensiva dei dati HTML.
-- 🛡️ **Resilienza**: Sistema di cache potenziato, gestione avanzata dei cancellation token e dei timeout.
+### v0.1.2.0 (Fix Multi-Stagione)
+- 🔧 **Parsing stagioni**: riconoscimento formato `S{N} Ep. {M}` su pagine episodi multi-stagione
+- 🔗 **Stagioni su pagine separate**: risoluzione automatica via relazioni AnimeClick per catene di sequel
+- 🚫 **Filtro spin-off**: esclusione automatica di Alternative, Gaiden, Spin-off, Bangai-hen
+- 📅 **SeasonProvider**: nuovo provider per impostare l'ID AnimeClick corretto sull'entità Season
+- 🐛 **Fix sidebar relazioni**: parsing `h5.media-heading` e `<span>` description (prima trovava solo la prima relazione)
+- 📦 **Bundle snellito**: rimosse DLL Microsoft.Extensions conflittuali (Jellyfin le fornisce già)
+
+### v0.1.1.0 (Allineamento)
+- 🔄 Allineamento versione con catalogo KometaThemes
+
+### v0.1.0.0 (Initial Release)
+- 🚀 Prima release stabile con supporto Jellyfin 10.11+
+- ⚙️ **Rate Limiter Centralizzato**: `AnimeClickClient` con semafori asincroni su tutte le richieste
+- 📸 **Focus Doppiatori**: download foto cast da AnimeClick, estetica delegata a Fanart.tv/TMDB
+- 🚀 **Zero-Allocation**: `[GeneratedRegex]` nativo .NET 9.0
+- 🛡️ **Resilienza**: cache potenziata, cancellation token, timeout
 
 ## 🙏 Attribuzione
 
