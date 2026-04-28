@@ -62,7 +62,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         }
         else if (!string.IsNullOrWhiteSpace(info.Name))
         {
-            var search = await _searchProvider.SearchAsync(info.Name, configuration, cancellationToken);
+            var search = await _searchProvider.SearchAsync(info.Name, configuration, cancellationToken, info.Year, seriesRequest: true);
             var first = search.FirstOrDefault();
             if (first is not null && first.ProviderIds.TryGetValue("AnimeClick", out var searchId))
             {
@@ -143,12 +143,12 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
 
         if (searchInfo.ProviderIds.TryGetValue("AnimeClick", out var providerId) && !string.IsNullOrWhiteSpace(providerId))
         {
-            return await _searchProvider.SearchAsync(providerId, configuration, cancellationToken);
+            return await _searchProvider.SearchAsync(providerId, configuration, cancellationToken, searchInfo.Year, seriesRequest: true);
         }
 
         return string.IsNullOrWhiteSpace(searchInfo.Name)
             ? []
-            : await _searchProvider.SearchAsync(searchInfo.Name, configuration, cancellationToken);
+            : await _searchProvider.SearchAsync(searchInfo.Name, configuration, cancellationToken, searchInfo.Year, seriesRequest: true);
     }
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
@@ -227,11 +227,19 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         try
         {
             var html = await _client.GetStringAsync(animeUrl + "/multimedia", configuration, cancellationToken);
-            var songs = _parser.ParseMultimediaPage(html);
-            anime.ThemeSongs.AddRange(songs);
+            var diagnostics = _parser.ParseMultimediaDiagnostics(html);
+            anime.ThemeSongs.AddRange(diagnostics.Songs);
 
-            _logger.LogInformation("AnimeClick sigle: {Count} OP/ED per {Title}",
-                songs.Count, anime.Title);
+            if (!string.IsNullOrWhiteSpace(diagnostics.Warning))
+            {
+                _logger.LogInformation("AnimeClick sigle best-effort non disponibili per {Title}: {Reason}",
+                    anime.Title, diagnostics.Warning);
+            }
+            else
+            {
+                _logger.LogInformation("AnimeClick sigle: {Count} OP/ED per {Title}",
+                    diagnostics.Songs.Count, anime.Title);
+            }
         }
         catch (Exception ex)
         {

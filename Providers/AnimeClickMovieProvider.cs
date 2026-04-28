@@ -62,7 +62,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         }
         else if (!string.IsNullOrWhiteSpace(info.Name))
         {
-            var search = await _searchProvider.SearchAsync(info.Name, configuration, cancellationToken);
+            var search = await _searchProvider.SearchAsync(info.Name, configuration, cancellationToken, info.Year, seriesRequest: false);
             var first = search.FirstOrDefault();
             if (first is not null && first.ProviderIds.TryGetValue("AnimeClick", out var searchId))
             {
@@ -116,12 +116,12 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
 
         if (searchInfo.ProviderIds.TryGetValue("AnimeClick", out var providerId) && !string.IsNullOrWhiteSpace(providerId))
         {
-            return await _searchProvider.SearchAsync(providerId, configuration, cancellationToken);
+            return await _searchProvider.SearchAsync(providerId, configuration, cancellationToken, searchInfo.Year, seriesRequest: false);
         }
 
         return string.IsNullOrWhiteSpace(searchInfo.Name)
             ? []
-            : await _searchProvider.SearchAsync(searchInfo.Name, configuration, cancellationToken);
+            : await _searchProvider.SearchAsync(searchInfo.Name, configuration, cancellationToken, searchInfo.Year, seriesRequest: false);
     }
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)

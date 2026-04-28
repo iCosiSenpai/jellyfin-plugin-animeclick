@@ -22,6 +22,9 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"/anime/(\d+(?:/[^/?#]+)?)")]
     private static partial Regex AnimeUrlIdRegex();
 
+    [GeneratedRegex(@"/episodio/(\d+(?:/[^/?#]+)?)")]
+    private static partial Regex EpisodeUrlIdRegex();
+
     [GeneratedRegex(@"(\d+)\s*$")]
     private static partial Regex EpisodeNumberRegex();
 
@@ -396,6 +399,7 @@ public partial class AnimeClickHtmlParser
 
             // Year from <li>anno inizio: 2002</li>
             int? year = null;
+            string? format = null;
             var liNodes = item.SelectNodes(".//li");
             if (liNodes is not null)
             {
@@ -407,6 +411,27 @@ public partial class AnimeClickHtmlParser
                     if (match.Success && int.TryParse(match.Value, out var y))
                     {
                         year = y;
+                    }
+                }
+
+                foreach (var li in liNodes)
+                {
+                    var liText = NormalizeWhitespace(li.InnerText);
+                    if (string.IsNullOrWhiteSpace(liText))
+                    {
+                        continue;
+                    }
+
+                    if (liText.Contains("Serie TV", StringComparison.OrdinalIgnoreCase) ||
+                        liText.Contains("TV", StringComparison.OrdinalIgnoreCase) ||
+                        liText.Contains("Movie", StringComparison.OrdinalIgnoreCase) ||
+                        liText.Contains("Film", StringComparison.OrdinalIgnoreCase) ||
+                        liText.Contains("Special", StringComparison.OrdinalIgnoreCase) ||
+                        liText.Contains("OVA", StringComparison.OrdinalIgnoreCase) ||
+                        liText.Contains("OAV", StringComparison.OrdinalIgnoreCase) ||
+                        liText.Contains("ONA", StringComparison.OrdinalIgnoreCase))
+                    {
+                        format = liText;
                     }
                 }
             }
@@ -423,7 +448,8 @@ public partial class AnimeClickHtmlParser
                 Title = title,
                 Url = baseUrl + href,
                 ThumbnailUrl = thumbnailUrl,
-                ProductionYear = year
+                ProductionYear = year,
+                Format = format
             });
         }
 
@@ -437,6 +463,17 @@ public partial class AnimeClickHtmlParser
         // Matches /anime/72/naruto or /anime/72
         var match = AnimeUrlIdRegex().Match(url);
         return match.Success ? match.Groups[1].Value : url;
+    }
+
+    private static string? ExtractEpisodeId(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        var match = EpisodeUrlIdRegex().Match(url);
+        return match.Success ? match.Groups[1].Value : null;
     }
 
     // ── Helper: OG / meta tags ──
@@ -592,6 +629,7 @@ public partial class AnimeClickHtmlParser
             var title = NormalizeWhitespace(titleLink?.InnerText ?? cells[1].InnerText);
 
             var detailUrl = titleLink?.GetAttributeValue("href", null);
+            var episodeProviderId = ExtractEpisodeId(detailUrl);
             if (detailUrl is not null && !detailUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
             {
                 detailUrl = baseUrl + detailUrl;
@@ -616,13 +654,50 @@ public partial class AnimeClickHtmlParser
             {
                 SeasonNumber = seasonNumber,
                 Number = epNum,
+                AbsoluteNumber = epNum,
+                SeasonOrdinalNumber = epNum,
                 Title = title,
                 DetailUrl = detailUrl,
+                ProviderId = episodeProviderId,
                 DurationMinutes = duration
             });
         }
 
+        NormalizeEpisodeOrdinals(episodes);
         return episodes;
+    }
+
+    private static void NormalizeEpisodeOrdinals(List<AnimeClickEpisode> episodes)
+    {
+        foreach (var group in episodes.GroupBy(e => e.SeasonNumber))
+        {
+            var ordered = group
+                .OrderBy(e => e.AbsoluteNumber > 0 ? e.AbsoluteNumber : e.Number)
+                .ThenBy(e => e.Title)
+                .ToList();
+
+            if (ordered.Count == 0)
+            {
+                continue;
+            }
+
+            var firstNumber = ordered[0].AbsoluteNumber > 0 ? ordered[0].AbsoluteNumber : ordered[0].Number;
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                var episode = ordered[i];
+                episode.AbsoluteNumber = episode.AbsoluteNumber > 0 ? episode.AbsoluteNumber : episode.Number;
+
+                if (episode.SeasonNumber.HasValue)
+                {
+                    var relative = episode.AbsoluteNumber - firstNumber + 1;
+                    episode.SeasonOrdinalNumber = relative > 0 ? relative : i + 1;
+                }
+                else
+                {
+                    episode.SeasonOrdinalNumber = episode.Number;
+                }
+            }
+        }
     }
 
     // ── Relations parsing ──
@@ -766,6 +841,37 @@ public partial class AnimeClickHtmlParser
 
         return songs;
     }
+
+    public AnimeClickMultimediaDiagnostics ParseMultimediaDiagnostics(string html)
+    {
+        var doc = new HtmlDocument();
+        doc.LoadHtml(html);
+
+        var text = NormalizeWhitespace(doc.DocumentNode.InnerText) ?? string.Empty;
+        var videoLinks = doc.DocumentNode
+            .SelectNodes("//a[@href] | //iframe[@src] | //embed[@src]")
+            ?.Select(n => n.GetAttributeValue("href", null) ?? n.GetAttributeValue("src", null))
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .ToArray() ?? [];
+
+        var hasTrailerOrPv = videoLinks.Any(v =>
+                v!.Contains("youtube", StringComparison.OrdinalIgnoreCase) ||
+                v.Contains("youtu.be", StringComparison.OrdinalIgnoreCase)) ||
+            text.Contains("Trailer", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("PV", StringComparison.Ordinal);
+
+        var songs = ParseMultimediaPage(html);
+        var warning = songs.Count == 0 && hasTrailerOrPv
+            ? "La pagina multimedia espone solo trailer/PV; AnimeClick non fornisce dati OP/ED strutturati per questa scheda."
+            : null;
+
+        return new AnimeClickMultimediaDiagnostics
+        {
+            Songs = songs,
+            HasTrailerOrPvOnly = warning is not null,
+            Warning = warning
+        };
+    }
 }
 
 /// <summary>
@@ -778,4 +884,12 @@ public class AnimeClickSearchResult
     public string Url { get; set; } = string.Empty;
     public string? ThumbnailUrl { get; set; }
     public int? ProductionYear { get; set; }
+    public string? Format { get; set; }
+}
+
+public class AnimeClickMultimediaDiagnostics
+{
+    public List<AnimeClickThemeSong> Songs { get; set; } = [];
+    public bool HasTrailerOrPvOnly { get; set; }
+    public string? Warning { get; set; }
 }

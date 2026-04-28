@@ -42,15 +42,15 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           cd publish
-          zip -j ../animeclick-plugin-${GITHUB_REF_NAME}.zip AnimeClick.Plugin.dll HtmlAgilityPack.dll
+          zip -j ../AnimeClick.Plugin.zip AnimeClick.Plugin.dll HtmlAgilityPack.dll
           cd ..
-          echo "CHECKSUM=$(md5sum animeclick-plugin-${GITHUB_REF_NAME}.zip | cut -d ' ' -f 1 | tr 'a-f' 'A-F')" >> $GITHUB_ENV
+          echo "CHECKSUM=$(md5sum AnimeClick.Plugin.zip | cut -d ' ' -f 1 | tr 'a-f' 'A-F')" >> $GITHUB_ENV
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: animeclick-plugin-${{ github.ref_name }}.zip
+          files: AnimeClick.Plugin.zip
           generate_release_notes: true
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
