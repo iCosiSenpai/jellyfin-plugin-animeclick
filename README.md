@@ -17,7 +17,7 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 ### Metadati Testuali
 - **Titoli in italiano** (con opzione per titolo originale giapponese)
 - **Trama/sinossi** in italiano
-- **Titoli episodi** in italiano
+- **Titoli episodi** in italiano con matching multi-stagione basato su normalizzazione AnimeClick
 - **Generi** in italiano (Commedia, Fantascienza, Scolastico, ecc.)
 - **Tag** (Shounen, Seinen, Mecha, Isekai, ecc.)
 - **Anno di produzione** e **data premiere**
@@ -25,7 +25,7 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 - **Stato serie** (completato → Ended, in corso → Continuing)
 - **Studi di animazione**
 - **Content rating** (se disponibile)
-- **Sigle OP/ED** come tag (se abilitato)
+- **Sigle OP/ED** come tag, in modalita best-effort quando AnimeClick espone dati strutturati
 
 ### Cast & Staff
 - **Doppiatori giapponesi** (seiyuu) con nome del personaggio
@@ -39,7 +39,8 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 - I titoli correlati vengono raggruppati in BoxSet
 
 ### Multi-Stagione
-- **Stagioni sulla stessa pagina**: il parser riconosce automaticamente il formato `S{N} Ep. {M}` di AnimeClick e assegna titoli corretti a ciascuna stagione
+- **Stagioni sulla stessa pagina**: il parser normalizza numero assoluto, progressivo di stagione, stagione, URL dettaglio e ID episodio AnimeClick
+- **Matching universale**: quando AnimeClick espone gruppi stagione, Jellyfin `S02E01` viene abbinato al progressivo della seconda stagione, non al vecchio episodio 1 della prima stagione
 - **Stagioni su pagine separate**: per anime con pagine AnimeClick distinte (es. Sword Art Online → SAO II → Alicization), il plugin risolve automaticamente la pagina corretta di ogni stagione tramite le relazioni
 - **Filtro spin-off**: titoli contenenti "Alternative", "Gaiden", "Spin-off" o "Bangai-hen" vengono esclusi dalla mappatura automatica
 - **SeasonProvider**: imposta l'ID AnimeClick corretto sull'entità Season di Jellyfin
@@ -58,6 +59,7 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 - **Identificazione manuale** tramite ID AnimeClick (formato: `72/naruto` dall'URL)
 - **Link esterno** diretto alla pagina AnimeClick nella sidebar
 - **Pagina di configurazione** completa nella dashboard Jellyfin
+- **Diagnostica admin** per provare lookup, preview episodi normalizzati e pulizia mirata della cache
 
 ## 📦 Installazione
 
@@ -75,9 +77,9 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 
 1. Scarica l'ultima release dalla [pagina Releases](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases)
 2. Estrai lo zip nella cartella plugin di Jellyfin:
-   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.1.2.0/`
-   - **Docker**: `/config/plugins/AnimeClick Metadata_0.1.2.0/`
-   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.1.2.0\`
+   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.2.0.0/`
+   - **Docker**: `/config/plugins/AnimeClick Metadata_0.2.0.0/`
+   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.2.0.0\`
 3. Riavvia Jellyfin
 
 > **💡 Altri miei plugin:** Nello stesso repository trovi anche [KometaThemes](https://github.com/iCosiSenpai/KometaTheme), che scarica automaticamente le sigle OP/ED degli anime da animethemes.moe.
@@ -96,9 +98,9 @@ Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** pe
 | Importa valutazione | ✅ | Importa il rating community |
 | Importa cast e staff | ✅ | Doppiatori, registi, autori, compositori |
 | Importa tag | ✅ | Tag come Shounen, Seinen, Mecha |
-| Importa titoli episodi | ✅ | Titoli italiani degli episodi da /episodi |
+| Importa titoli episodi | ✅ | Titoli italiani degli episodi da /episodi, con matching per progressivo di stagione |
 | Crea collezioni automatiche | ❌ | Raggruppa sequel/prequel in BoxSet |
-| Importa sigle OP/ED | ✅ | Aggiunge i nomi delle sigle come tag |
+| Importa sigle OP/ED | ✅ | Aggiunge i nomi delle sigle come tag quando AnimeClick espone OP/ED strutturati |
 
 ### Cache & Performance
 | Opzione | Default | Descrizione |
@@ -111,7 +113,13 @@ Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** pe
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
 | URL base | `https://www.animeclick.it` | URL di AnimeClick |
-| User-Agent | `AnimeClick-Jellyfin-Plugin/0.5` | Identificativo per le richieste |
+| User-Agent | `AnimeClick-Jellyfin-Plugin/0.2.0.0` | Identificativo per le richieste |
+
+### Diagnostica
+La pagina plugin include strumenti admin per:
+- testare il ranking lookup con titolo e anno;
+- vedere episodi normalizzati con numero assoluto, progressivo di stagione e ID episodio;
+- pulire in modo mirato cache episodi, mappa stagioni e metadati AnimeClick.
 
 ## 🔍 Identificazione Manuale
 
@@ -288,6 +296,13 @@ L'output sarà in `pub/`.
 - .NET **9.0** runtime
 
 ## 📝 Changelog
+
+### v0.2.0.0 (Diagnostica e matching episodi universale)
+- **Matching episodi universale**: normalizza numeri assoluti e progressivi di stagione AnimeClick, evitando fallback errati agli episodi S1 quando esiste un gruppo stagione
+- **Diagnostica admin**: aggiunti endpoint e UI per lookup preview, preview episodi normalizzati e pulizia cache mirata
+- **Ricerca piu robusta**: scoring per titolo esatto, anno e tipo, con penalita per Movie/Special quando Jellyfin cerca una serie
+- **Cache versionata**: chiavi episodi e season-map aggiornate con pulizia mirata dalla configurazione
+- **OP/ED best-effort**: trailer/PV-only viene segnalato come diagnostica, senza fingere discovery riuscita di sigle
 
 ### v0.1.2.0 (Fix Multi-Stagione)
 - 🔧 **Parsing stagioni**: riconoscimento formato `S{N} Ep. {M}` su pagine episodi multi-stagione

@@ -30,7 +30,12 @@ public class AnimeClickSeriesSearchProvider
         _logger = logger;
     }
 
-    public async Task<IEnumerable<RemoteSearchResult>> SearchAsync(string name, PluginConfiguration configuration, CancellationToken cancellationToken)
+    public async Task<IEnumerable<RemoteSearchResult>> SearchAsync(
+        string name,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken,
+        int? productionYear = null,
+        bool seriesRequest = true)
     {
         var trimmed = name.Trim();
 
@@ -45,22 +50,37 @@ public class AnimeClickSeriesSearchProvider
         // ── Text search ──
         var cleanedQuery = CleanSearchQuery(trimmed);
 
-        var cacheKey = $"search::{cleanedQuery.ToLowerInvariant()}";
+        var cacheKey = $"search:v2::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "any")}";
+        var negativeCacheKey = $"search-empty:v1::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "any")}";
         var cached = await _cache.GetAsync<List<RemoteSearchResult>>(cacheKey, configuration.CacheHours, cancellationToken);
         if (cached is not null)
         {
+            _logger.LogDebug("AnimeClick search cache hit: {Key}", cacheKey);
             return cached;
         }
 
+        var negativeCached = await _cache.GetAsync<string>(negativeCacheKey, configuration.NegativeCacheHours, cancellationToken);
+        if (negativeCached == "empty")
+        {
+            _logger.LogDebug("AnimeClick negative search cache hit: {Key}", negativeCacheKey);
+            return [];
+        }
+
+        var attemptsHadErrors = false;
+
         // Try original cleaned query first
-        var results = await ExecuteSearchAsync(cleanedQuery, configuration, cancellationToken);
+        var attempt = await ExecuteSearchAsync(cleanedQuery, configuration, cancellationToken, productionYear, seriesRequest);
+        attemptsHadErrors |= attempt.HadError;
+        var results = attempt.Results;
 
         // If no results, try progressively simpler queries
         if (results.Count == 0 && cleanedQuery != trimmed)
         {
             _logger.LogInformation("AnimeClick: No results for '{Clean}', retrying with original '{Original}'",
                 cleanedQuery, trimmed);
-            results = await ExecuteSearchAsync(trimmed, configuration, cancellationToken);
+            attempt = await ExecuteSearchAsync(trimmed, configuration, cancellationToken, productionYear, seriesRequest);
+            attemptsHadErrors |= attempt.HadError;
+            results = attempt.Results;
         }
 
         // If still no results, try removing colons, special chars
@@ -70,7 +90,9 @@ public class AnimeClickSeriesSearchProvider
             if (simplified != cleanedQuery)
             {
                 _logger.LogInformation("AnimeClick: Retrying with simplified '{Simplified}'", simplified);
-                results = await ExecuteSearchAsync(simplified, configuration, cancellationToken);
+                attempt = await ExecuteSearchAsync(simplified, configuration, cancellationToken, productionYear, seriesRequest);
+                attemptsHadErrors |= attempt.HadError;
+                results = attempt.Results;
             }
         }
 
@@ -81,11 +103,21 @@ public class AnimeClickSeriesSearchProvider
             if (shortQuery is not null)
             {
                 _logger.LogInformation("AnimeClick: Retrying with short query '{Short}'", shortQuery);
-                results = await ExecuteSearchAsync(shortQuery, configuration, cancellationToken);
+                attempt = await ExecuteSearchAsync(shortQuery, configuration, cancellationToken, productionYear, seriesRequest);
+                attemptsHadErrors |= attempt.HadError;
+                results = attempt.Results;
             }
         }
 
-        await _cache.SetAsync(cacheKey, results, cancellationToken);
+        if (results.Count > 0)
+        {
+            await _cache.SetAsync(cacheKey, results, cancellationToken);
+        }
+        else if (!attemptsHadErrors)
+        {
+            await _cache.SetAsync(negativeCacheKey, "empty", cancellationToken);
+        }
+
         return results;
     }
 
@@ -129,7 +161,12 @@ public class AnimeClickSeriesSearchProvider
         }
     }
 
-    private async Task<List<RemoteSearchResult>> ExecuteSearchAsync(string query, PluginConfiguration configuration, CancellationToken cancellationToken)
+    private async Task<SearchAttempt> ExecuteSearchAsync(
+        string query,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken,
+        int? productionYear,
+        bool seriesRequest)
     {
         var slug = Uri.EscapeDataString(query);
         var url = $"{configuration.BaseUrl}/cerca?name={slug}";
@@ -139,11 +176,31 @@ public class AnimeClickSeriesSearchProvider
         {
             var html = await _client.GetStringAsync(url, configuration, cancellationToken);
             var searchResults = _parser.ParseSearchResults(html, configuration.BaseUrl);
+            _logger.LogInformation("AnimeClick: Parsed {Count} search candidates for '{Query}'", searchResults.Count, query);
 
             var maxResults = configuration.MaxSearchResults > 0 ? configuration.MaxSearchResults : 10;
 
-            return searchResults
+            var ranked = searchResults
+                .Select(r => new { Result = r, Score = AnimeClickSearchScorer.Score(r, query, productionYear, seriesRequest) })
+                .OrderByDescending(x => x.Score)
+                .ThenBy(x => x.Result.ProductionYear ?? 9999)
+                .ThenBy(x => x.Result.Title)
+                .ToList();
+
+            foreach (var candidate in ranked.Take(Math.Min(5, ranked.Count)))
+            {
+                _logger.LogDebug(
+                    "AnimeClick search candidate score={Score} title={Title} year={Year} format={Format} id={Id}",
+                    candidate.Score,
+                    candidate.Result.Title,
+                    candidate.Result.ProductionYear,
+                    candidate.Result.Format,
+                    candidate.Result.Id);
+            }
+
+            return SearchAttempt.Success(ranked
                 .Take(maxResults)
+                .Select(x => x.Result)
                 .Select(r => new RemoteSearchResult
                 {
                     Name = r.Title,
@@ -155,12 +212,12 @@ public class AnimeClickSeriesSearchProvider
                         ["AnimeClick"] = r.Id
                     }
                 })
-                .ToList();
+                .ToList());
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "AnimeClick: Search failed for '{Query}'", query);
-            return [];
+            return SearchAttempt.Error();
         }
     }
 
@@ -214,5 +271,22 @@ public class AnimeClickSeriesSearchProvider
         if (words.Length < 2) return null;
         var shortQuery = string.Join(' ', words);
         return shortQuery == query ? null : shortQuery;
+    }
+
+    private sealed class SearchAttempt
+    {
+        private SearchAttempt(List<RemoteSearchResult> results, bool hadError)
+        {
+            Results = results;
+            HadError = hadError;
+        }
+
+        public List<RemoteSearchResult> Results { get; }
+
+        public bool HadError { get; }
+
+        public static SearchAttempt Success(List<RemoteSearchResult> results) => new(results, false);
+
+        public static SearchAttempt Error() => new([], true);
     }
 }

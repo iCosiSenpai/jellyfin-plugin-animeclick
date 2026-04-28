@@ -81,13 +81,49 @@ public class AnimeClickCacheService
         }
     }
 
+    public int ClearByPrefix(string prefix)
+    {
+        var safePrefix = SanitizeFileKey(prefix);
+        var removed = 0;
+
+        foreach (var path in Directory.EnumerateFiles(_cacheDirectory, safePrefix + "*.json"))
+        {
+            try
+            {
+                File.Delete(path);
+                removed++;
+            }
+            catch
+            {
+                // Best effort: cache cleanup should not fail diagnostics.
+            }
+        }
+
+        return removed;
+    }
+
+    public int ClearKey(string key)
+    {
+        var path = GetPath(key);
+        if (!File.Exists(path))
+        {
+            return 0;
+        }
+
+        File.Delete(path);
+        return 1;
+    }
+
     private string GetPath(string key)
+        => Path.Combine(_cacheDirectory, SanitizeFileKey(key) + ".json");
+
+    private static string SanitizeFileKey(string key)
     {
         foreach (var c in Path.GetInvalidFileNameChars())
         {
             key = key.Replace(c, '_');
         }
 
-        return Path.Combine(_cacheDirectory, key + ".json");
+        return key;
     }
 }

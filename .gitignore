@@ -1,6 +1,8 @@
 ## Build artifacts
 bin/
 obj/
+**/bin/
+**/obj/
 
 ## IDE
 .vs/
@@ -23,6 +25,7 @@ _debug_*
 
 ## Build output
 publish/
+pub_v*/
 *.zip
 
 ## Temp

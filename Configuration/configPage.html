@@ -118,10 +118,11 @@
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label class="emby-checkbox-label">
                                 <input type="checkbox" is="emby-checkbox" id="chkEnableThemeSongs" />
-                                <span>Importa sigle (OP/ED)</span>
+                                <span>Importa sigle AnimeClick best-effort</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
-                                Importa i nomi delle Opening ed Ending nei tag dell'anime (es. "OP1: GO!!! (FLOW)").
+                                Importa i nomi delle Opening ed Ending solo quando AnimeClick li espone in modo strutturato.
+                                Molte schede multimedia contengono solo trailer/PV e in quel caso il plugin lo segnala in diagnostica senza trattarlo come errore.
                             </div>
                         </div>
 
@@ -243,6 +244,66 @@
                     </div>
 
                     <!-- ═══════════════════════════════════════════════ -->
+                    <!-- DIAGNOSTICA -->
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">Diagnostica</h2>
+                    </div>
+
+                    <div class="verticalSection">
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtDiagLookup">
+                                Test lookup serie
+                            </label>
+                            <input id="txtDiagLookup" type="text" is="emby-input" placeholder="The Dangers in My Heart" />
+                            <div class="fieldDescription">
+                                Mostra i candidati scelti dal provider dopo scoring per titolo, anno e tipo.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtDiagYear">
+                                Anno opzionale
+                            </label>
+                            <input id="txtDiagYear" type="number" is="emby-input" min="1900" max="2100" step="1" />
+                        </div>
+
+                        <button is="emby-button" type="button" id="btnDiagLookup" class="raised emby-button">
+                            <span>Test lookup</span>
+                        </button>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtDiagAnimeClickId">
+                                AnimeClick ID
+                            </label>
+                            <input id="txtDiagAnimeClickId" type="text" is="emby-input" placeholder="44780/boku-no-kokoro-no-yabai-yatsu" />
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtDiagSeason">
+                                Stagione
+                            </label>
+                            <input id="txtDiagSeason" type="number" is="emby-input" min="1" max="99" step="1" />
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtDiagEpisode">
+                                Episodio
+                            </label>
+                            <input id="txtDiagEpisode" type="number" is="emby-input" min="1" max="999" step="1" />
+                        </div>
+
+                        <button is="emby-button" type="button" id="btnDiagEpisodes" class="raised emby-button">
+                            <span>Preview episodi</span>
+                        </button>
+                        <button is="emby-button" type="button" id="btnDiagClearCache" class="raised emby-button">
+                            <span>Pulisci cache ID</span>
+                        </button>
+
+                        <pre id="txtDiagOutput" style="white-space: pre-wrap; overflow-x: auto; margin-top: 1em;"></pre>
+                    </div>
+
+                    <!-- ═══════════════════════════════════════════════ -->
                     <!-- BOTTONE SALVA -->
                     <!-- ═══════════════════════════════════════════════ -->
                     <div>
@@ -291,6 +352,106 @@
                     });
                 });
 
+            function clampInt(selector, fallback, min, max) {
+                var raw = parseInt(document.querySelector(selector).value, 10);
+                if (isNaN(raw)) {
+                    raw = fallback;
+                }
+                return Math.max(min, Math.min(max, raw));
+            }
+
+            function optionalInt(selector) {
+                var raw = parseInt(document.querySelector(selector).value, 10);
+                return isNaN(raw) ? null : raw;
+            }
+
+            function validateBaseUrl(value) {
+                try {
+                    var url = new URL(value);
+                    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+                        return null;
+                    }
+                    return url.origin;
+                } catch (err) {
+                    return null;
+                }
+            }
+
+            function animeClickApi(path, method, body) {
+                return ApiClient.ajax({
+                    type: method || 'GET',
+                    url: ApiClient.getUrl(path),
+                    data: body ? JSON.stringify(body) : null,
+                    contentType: 'application/json'
+                });
+            }
+
+            function setDiagOutput(value) {
+                document.querySelector('#txtDiagOutput').textContent =
+                    typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+            }
+
+            document.querySelector('#btnDiagLookup')
+                .addEventListener('click', function () {
+                    var name = document.querySelector('#txtDiagLookup').value.trim();
+                    if (!name) {
+                        setDiagOutput('Inserisci un titolo da cercare.');
+                        return;
+                    }
+
+                    Dashboard.showLoadingMsg();
+                    var year = optionalInt('#txtDiagYear');
+                    var path = 'Plugins/AnimeClick/TestLookup?name=' + encodeURIComponent(name);
+                    if (year) {
+                        path += '&year=' + encodeURIComponent(year);
+                    }
+
+                    animeClickApi(path, 'GET')
+                        .then(setDiagOutput)
+                        .catch(function (err) { setDiagOutput(err && err.responseText ? err.responseText : String(err)); })
+                        .finally(function () { Dashboard.hideLoadingMsg(); });
+                });
+
+            document.querySelector('#btnDiagEpisodes')
+                .addEventListener('click', function () {
+                    var id = document.querySelector('#txtDiagAnimeClickId').value.trim();
+                    if (!id) {
+                        setDiagOutput('Inserisci un AnimeClick ID.');
+                        return;
+                    }
+
+                    Dashboard.showLoadingMsg();
+                    var path = 'Plugins/AnimeClick/TestEpisodes?animeClickId=' + encodeURIComponent(id);
+                    var season = optionalInt('#txtDiagSeason');
+                    var episode = optionalInt('#txtDiagEpisode');
+                    if (season) {
+                        path += '&season=' + encodeURIComponent(season);
+                    }
+                    if (episode) {
+                        path += '&episode=' + encodeURIComponent(episode);
+                    }
+
+                    animeClickApi(path, 'GET')
+                        .then(setDiagOutput)
+                        .catch(function (err) { setDiagOutput(err && err.responseText ? err.responseText : String(err)); })
+                        .finally(function () { Dashboard.hideLoadingMsg(); });
+                });
+
+            document.querySelector('#btnDiagClearCache')
+                .addEventListener('click', function () {
+                    var id = document.querySelector('#txtDiagAnimeClickId').value.trim();
+                    if (!id) {
+                        setDiagOutput('Inserisci un AnimeClick ID da pulire.');
+                        return;
+                    }
+
+                    Dashboard.showLoadingMsg();
+                    animeClickApi('Plugins/AnimeClick/ClearCache', 'POST', { AnimeClickId: id })
+                        .then(setDiagOutput)
+                        .catch(function (err) { setDiagOutput(err && err.responseText ? err.responseText : String(err)); })
+                        .finally(function () { Dashboard.hideLoadingMsg(); });
+                });
+
             document.querySelector('#AnimeClickConfigForm')
                 .addEventListener('submit', function (e) {
                     e.preventDefault();
@@ -309,17 +470,24 @@
                         config.EnableCollections = document.querySelector('#chkEnableCollections').checked;
 
                         // Ricerca
-                        config.MaxSearchResults = parseInt(document.querySelector('#txtMaxSearchResults').value, 10);
+                        config.MaxSearchResults = clampInt('#txtMaxSearchResults', 10, 1, 25);
                         config.FilterToAnimeOnly = document.querySelector('#chkFilterToAnimeOnly').checked;
 
                         // Cache & Performance
-                        config.CacheHours = parseInt(document.querySelector('#txtCacheHours').value, 10);
-                        config.NegativeCacheHours = parseInt(document.querySelector('#txtNegativeCacheHours').value, 10);
-                        config.RequestDelayMilliseconds = parseInt(document.querySelector('#txtRequestDelay').value, 10);
+                        config.CacheHours = clampInt('#txtCacheHours', 48, 1, 720);
+                        config.NegativeCacheHours = clampInt('#txtNegativeCacheHours', 12, 1, 168);
+                        config.RequestDelayMilliseconds = clampInt('#txtRequestDelay', 1000, 500, 10000);
 
                         // Avanzate
-                        config.BaseUrl = document.querySelector('#txtBaseUrl').value;
-                        config.UserAgent = document.querySelector('#txtUserAgent').value;
+                        var baseUrl = validateBaseUrl(document.querySelector('#txtBaseUrl').value);
+                        if (!baseUrl) {
+                            Dashboard.hideLoadingMsg();
+                            setDiagOutput('URL base AnimeClick non valido. Usa un URL http/https completo.');
+                            return;
+                        }
+
+                        config.BaseUrl = baseUrl;
+                        config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
 
                         ApiClient.updatePluginConfiguration(AnimeClickPluginId, config).then(function () {
                             Dashboard.processPluginConfigurationUpdateResult();

@@ -53,6 +53,7 @@ public partial class AnimeClickClient
             // Setting the ac_campaign cookie bypasses it and returns the real content.
             request.Headers.Add("Cookie", "ac_campaign=show");
 
+            _logger.LogDebug("AnimeClick HTTP fetch: {Url}", url);
             using var response = await _httpClient.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
             var content = await response.Content.ReadAsStringAsync(cancellationToken);

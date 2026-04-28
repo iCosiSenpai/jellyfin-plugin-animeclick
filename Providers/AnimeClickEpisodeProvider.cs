@@ -86,8 +86,9 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         try
         {
             // Try to get cached episode list
-            var cacheKey = $"episodes::{animeClickId}";
+            var cacheKey = $"episodes:v2::{animeClickId}";
             var cachedEpisodes = await _cache.GetAsync<List<AnimeClickEpisode>>(cacheKey, configuration.CacheHours, cancellationToken);
+            _logger.LogDebug("AnimeClick episodes cache {State}: {Key}", cachedEpisodes is null ? "miss" : "hit", cacheKey);
 
             List<AnimeClickEpisode>? episodes = cachedEpisodes;
 
@@ -100,6 +101,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 _logger.LogInformation("AnimeClick: Fetching episodes from {Url}", episodesUrl);
                 var html = await _client.GetStringAsync(episodesUrl, configuration, cancellationToken);
                 episodes = _parser.ParseEpisodesPage(html, configuration.BaseUrl);
+                _logger.LogInformation("AnimeClick: Parsed {Count} episodes from {Url}", episodes.Count, episodesUrl);
 
                 // If there are more pages, fetch them too (pagination)
                 for (var page = 2; page <= 30; page++)
@@ -115,6 +117,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                             && e.SeasonNumber == nextEpisodes[0].SeasonNumber)) break;
 
                         episodes.AddRange(nextEpisodes);
+                        _logger.LogInformation("AnimeClick: Parsed {Count} more episodes from {Url}", nextEpisodes.Count, nextUrl);
                     }
                     catch
                     {
@@ -126,13 +129,15 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 _logger.LogInformation("AnimeClick: Cached {Count} episodes for {Id}", episodes.Count, animeClickId);
             }
 
-            // Find matching episode: prefer exact season+number match, fall back to number-only
-            var match = (seasonNumber.HasValue
-                ? episodes.FirstOrDefault(e =>
-                    e.Number == episodeNumber.Value &&
-                    e.SeasonNumber == seasonNumber.Value)
-                : null)
-                ?? episodes.FirstOrDefault(e => e.Number == episodeNumber.Value);
+            var episodeMatch = AnimeClickEpisodeMatcher.Match(episodes, seasonNumber, episodeNumber.Value);
+            var match = episodeMatch.Episode;
+            _logger.LogInformation(
+                "AnimeClick: Episode match strategy={Strategy} animeClickId={Id} S{Season}E{Episode}",
+                episodeMatch.Strategy,
+                animeClickId,
+                seasonNumber,
+                episodeNumber.Value);
+
             if (match is not null && !string.IsNullOrWhiteSpace(match.Title))
             {
                 var isGeneric = System.Text.RegularExpressions.Regex.IsMatch(
@@ -145,7 +150,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                     return result;
                 }
                 result.Item.Name = match.Title;
-                result.Item.SetProviderId("AnimeClick", animeClickId);
+                result.Item.SetProviderId("AnimeClick", match.ProviderId ?? animeClickId);
 
                 if (match.DurationMinutes.HasValue)
                 {
@@ -153,7 +158,13 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 }
 
                 result.HasMetadata = true;
-                _logger.LogDebug("AnimeClick: Episode {Num} = \"{Title}\"", match.Number, match.Title);
+                _logger.LogDebug(
+                    "AnimeClick: Episode S{Season} AC#{Absolute} ordinal={Ordinal} providerId={ProviderId} = \"{Title}\"",
+                    match.SeasonNumber,
+                    match.AbsoluteNumber,
+                    match.SeasonOrdinalNumber,
+                    match.ProviderId,
+                    match.Title);
             }
         }
         catch (Exception ex)
@@ -174,8 +185,9 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
     {
         if (!seasonNumber.HasValue || seasonNumber.Value <= 1) return null;
 
-        var cacheKey = $"seasonMap::{mainId}::{seasonNumber.Value}";
+        var cacheKey = $"seasonMap:v2::{mainId}::{seasonNumber.Value}";
         var cached = await _cache.GetAsync<string>(cacheKey, config.CacheHours, ct);
+        _logger.LogDebug("AnimeClick season map cache {State}: {Key}", cached is null ? "miss" : "hit", cacheKey);
         if (cached is not null) return cached == "__same__" ? null : cached;
 
         string? resolvedId = null;
