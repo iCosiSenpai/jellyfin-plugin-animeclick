@@ -149,6 +149,18 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                         match.Number, match.Title);
                     return result;
                 }
+
+                // Safety net: don't assign special episode titles (OVA/Special/Bonus)
+                // to regular season episodes in Jellyfin
+                if (seasonNumber.HasValue && seasonNumber.Value > 0
+                    && AnimeClickHtmlParser.IsSpecialEpisodeTitle(match.Title))
+                {
+                    _logger.LogDebug(
+                        "AnimeClick: Skipping special-episode title \"{Title}\" for regular season S{Season}E{Episode}",
+                        match.Title, seasonNumber.Value, episodeNumber.Value);
+                    return result;
+                }
+
                 result.Item.Name = match.Title;
                 result.Item.SetProviderId("AnimeClick", match.ProviderId ?? animeClickId);
 
