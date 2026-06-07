@@ -46,6 +46,9 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"anidb\.net/(?:a|anime/)(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex AniDbIdRegex();
 
+    [GeneratedRegex(@"\b(Special|OAV|OVA|OAD|ONA|PV|Recap|Episode\s*0|Bonus|Extra|Episodio\s+Speciale)\b", RegexOptions.IgnoreCase)]
+    private static partial Regex SpecialTitleRegex();
+
     /// <summary>
     /// Parses a full anime detail page from AnimeClick.
     /// Uses schema.org microdata and the well-defined dl/dt/dd structure.
@@ -647,6 +650,13 @@ public partial class AnimeClickHtmlParser
                 }
             }
 
+            // Auto-detect special episodes (OVAs, Specials, Bonus) by title
+            // when AnimeClick page doesn't provide season grouping
+            if (!seasonNumber.HasValue && IsSpecialEpisodeTitle(title))
+            {
+                seasonNumber = 0;
+            }
+
             // Avoid duplicates: use (Season, Number) pair when season info is available
             if (episodes.Any(e => e.SeasonNumber == seasonNumber && e.Number == epNum)) continue;
 
@@ -666,6 +676,9 @@ public partial class AnimeClickHtmlParser
         NormalizeEpisodeOrdinals(episodes);
         return episodes;
     }
+
+    internal static bool IsSpecialEpisodeTitle(string? title) =>
+        !string.IsNullOrWhiteSpace(title) && SpecialTitleRegex().IsMatch(title);
 
     private static void NormalizeEpisodeOrdinals(List<AnimeClickEpisode> episodes)
     {
