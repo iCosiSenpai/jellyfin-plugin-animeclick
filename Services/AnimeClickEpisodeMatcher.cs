@@ -54,13 +54,6 @@ public static class AnimeClickEpisodeMatcher
             var absolute = episodes.FirstOrDefault(e => e.AbsoluteNumber == jellyfinEpisodeNumber);
             if (absolute is not null)
             {
-                // Don't match a special episode (OVA/Special/Bonus) to a regular season query
-                if (jellyfinSeasonNumber.HasValue && jellyfinSeasonNumber.Value > 0
-                    && AnimeClickHtmlParser.IsSpecialEpisodeTitle(absolute.Title))
-                {
-                    return AnimeClickEpisodeMatch.None("absoluteSpecialBlocked");
-                }
-
                 return AnimeClickEpisodeMatch.Found(absolute, "absolute");
             }
         }
