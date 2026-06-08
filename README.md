@@ -152,12 +152,12 @@ Questa castrazione è **volontaria e mirata**: l'eccellenza si ottiene delegando
 |--------|---------------|---------------|
 | **Fanart.tv** | Poster, banner e sfondi in HD | Catalogo → Plugin (richiede API key gratuita) |
 | **TheMovieDb** | Fallback metadati e immagini | Incluso in Jellyfin |
-| **TheTVDB** | Episodi, stagioni, trailer | Catalogo → Plugin |
 | **AniSearch** | ID incrociati e copertine anime | Catalogo → Plugin |
-| **AniDB** | ID incrociati e fallback | Catalogo → Plugin |
 | **AniList** | ID incrociati extra | Catalogo → Plugin |
 | **Screen Grabber** | Screenshot automatico episodi | Incluso in Jellyfin |
 | **Embedded Image Extractor** | Estrae copertina dal file video | Incluso in Jellyfin |
+
+> **Plugin rimossi (2026):** TheTVDB e AniDB sono stati rimossi permanentemente dal mio server. TheTVDB causava duplicati fantasma nella stagione Specials; AniDB sovrascriveva il numero stagione corretto (rilevato dalla struttura cartelle `Season 01/`) con `Season=0` (Specials), creando episodi fantasma.
 
 ---
 
@@ -170,32 +170,26 @@ Vai su **Dashboard → Librerie → Anime TV → Gestisci libreria** e imposta:
 | Priorità | Provider | Ruolo |
 |:--------:|----------|-------|
 | 🥇 | **AnimeClick** | Titoli, trame, generi, cast, staff, rating in italiano |
-| 🥈 | TheTVDB | Colma eventuali buchi, fornisce trailer |
-| 🥉 | AniSearch | ID incrociati e fallback titoli |
-| 4 | AniDB | ID incrociati e fallback |
-| 5 | AniList | ID incrociati extra |
-| 6 | Missing Episode Fetcher | Segnala episodi mancanti |
-| 7 | TheMovieDb | Fallback finale |
-| 8 | The Open Movie Database | Ultima risorsa |
+| 🥈 | AniSearch | ID incrociati e fallback titoli |
+| 🥉 | AniList | ID incrociati extra |
+| 4 | TheMovieDb | Fallback finale |
+| 5 | The Open Movie Database | Ultima risorsa |
 
 #### Immagini Serie
 
 | Priorità | Provider | Ruolo |
 |:--------:|----------|-------|
-| 🥇 | **TheTVDB** | Poster e banner puliti, aspect-ratio perfetto |
-| 🥈 | **Fanart** | Sfondi HD, logo, artwork ad alta risoluzione |
-| 🥉 | AniSearch | Copertine specifiche anime |
-| 4 | AniDB | Fallback copertine |
-| 5 | AniList | Fallback copertine |
-| 6 | TheMovieDb | Ultima risorsa |
+| 🥇 | **Fanart** | Sfondi HD, logo, artwork ad alta risoluzione |
+| 🥈 | AniSearch | Copertine specifiche anime |
+| 🥉 | AniList | Fallback copertine |
+| 4 | TheMovieDb | Ultima risorsa |
 
 #### Metadati Stagioni
 
 | Priorità | Provider | Ruolo |
 |:--------:|----------|-------|
-| 🥇 | TheTVDB | Informazioni stagione (anno, overview) |
-| 🥈 | AniDB | Fallback |
-| 🥉 | **AnimeClick** | Risolve ID AnimeClick corretto per stagioni su pagine separate |
+| 🥇 | **AnimeClick** | Risolve ID AnimeClick corretto per stagioni su pagine separate |
+| 🥈 | TheMovieDb | Informazioni stagione (anno, overview) |
 
 > **Nota:** Metti AnimeClick come terzo, non primo. Le stagioni non hanno metadati testuali da AnimeClick (sinossi, cast) — il SeasonProvider serve solo a impostare l'ID per la risoluzione corretta degli episodi.
 
@@ -203,32 +197,27 @@ Vai su **Dashboard → Librerie → Anime TV → Gestisci libreria** e imposta:
 
 | Priorità | Provider |
 |:--------:|----------|
-| 🥇 | TheTVDB |
-| 🥈 | Fanart |
-| 🥉 | AniDB |
-| 4 | AniList |
-| 5 | AniSearch |
-| 6 | TheMovieDb |
+| 🥇 | Fanart |
+| 🥈 | AniList |
+| 🥉 | AniSearch |
+| 4 | TheMovieDb |
 
 #### Metadati Episodi
 
 | Priorità | Provider | Ruolo |
 |:--------:|----------|-------|
 | 🥇 | **AnimeClick** | Titoli italiani degli episodi |
-| 🥈 | TheTVDB | Fallback titoli inglesi |
-| 🥉 | AniDB | Fallback |
-| 4 | TheMovieDb | Fallback |
-| 5 | The Open Movie Database | Ultima risorsa |
+| 🥈 | TheMovieDb | Fallback titoli inglesi |
+| 🥉 | The Open Movie Database | Ultima risorsa |
 
 #### Immagini Episodi
 
 | Priorità | Provider |
 |:--------:|----------|
-| 🥇 | TheTVDB |
-| 🥈 | TheMovieDb |
-| 🥉 | The Open Movie Database |
-| 4 | Screen Grabber |
-| 5 | Embedded Image Extractor |
+| 🥇 | TheMovieDb |
+| 🥈 | The Open Movie Database |
+| 🥉 | Screen Grabber |
+| 4 | Embedded Image Extractor |
 
 ---
 
@@ -242,23 +231,19 @@ Vai su **Dashboard → Librerie → Anime Movie → Gestisci libreria** e impost
 |:--------:|----------|-------|
 | 🥇 | **AnimeClick** | Titoli, trame, generi, cast, staff, rating in italiano |
 | 🥈 | AniList | ID incrociati |
-| 🥉 | AniDB | ID incrociati |
-| 4 | TheTVDB | Fallback |
-| 5 | TheMovieDb | Fallback |
-| 6 | The Open Movie Database | Ultima risorsa |
+| 🥉 | TheMovieDb | Fallback |
+| 4 | The Open Movie Database | Ultima risorsa |
 
 #### Immagini Film
 
 | Priorità | Provider | Ruolo |
 |:--------:|----------|-------|
 | 🥇 | **Fanart** | Poster HD, sfondi, logo |
-| 🥈 | AniDB | Copertine specifiche anime |
-| 🥉 | AniList | Copertine specifiche anime |
-| 4 | TheTVDB | Fallback |
-| 5 | TheMovieDb | Fallback |
-| 6 | The Open Movie Database | Ultima risorsa |
-| 7 | Embedded Image Extractor | Estrae copertina dal file video |
-| 8 | Screen Grabber | Screenshot automatico dal video |
+| 🥈 | AniList | Copertine specifiche anime |
+| 🥉 | TheMovieDb | Fallback |
+| 4 | The Open Movie Database | Ultima risorsa |
+| 5 | Embedded Image Extractor | Estrae copertina dal file video |
+| 6 | Screen Grabber | Screenshot automatico dal video |
 
 ---
 
@@ -267,8 +252,8 @@ Vai su **Dashboard → Librerie → Anime Movie → Gestisci libreria** e impost
 Con questa configurazione, quando esegui la scansione:
 
 1. **AnimeClick** scrive tutto in italiano (titolo, trama, generi, cast, rating)
-2. **TheTVDB / Fanart** scaricano poster, banner e sfondi in alta definizione
-3. **AniDB / AniList / AniSearch** forniscono ID incrociati e fallback
+2. **Fanart / TMDB** scaricano poster, banner e sfondi in alta definizione
+3. **AniList / AniSearch** forniscono ID incrociati e fallback
 4. **AnimeClick SeasonProvider** risolve la pagina corretta per ogni stagione
 5. **AnimeClick EpisodeProvider** assegna i titoli italiani a ogni episodio
 
@@ -296,6 +281,12 @@ L'output sarà in `pub/`.
 - .NET **9.0** runtime
 
 ## 📝 Changelog
+
+### v0.2.1.0 (Fix Special Fantasma)
+- 🐛 **Fix Special/OVA/OAD su stagioni regolari**: il parser rileva episodi Special dal titolo e forza `SeasonNumber=0`
+- 🐛 **Blocco fallback assoluto**: l'EpisodeMatcher non applica più il fallback absolute per titoli Special su richieste di stagione regolare
+- 🛡️ **Safety net EpisodeProvider**: controllo su `ParentIndexNumber > 0` per prevenire assegnazioni errate
+- 📝 **Nota importante**: TheTVDB e AniDB sono stati rimossi dal mio server personale (causavano duplicati fantasma nella stagione Specials). Vedi sezione "La Mia Configurazione" aggiornata.
 
 ### v0.2.0.0 (Diagnostica e matching episodi universale)
 - **Matching episodi universale**: normalizza numeri assoluti e progressivi di stagione AnimeClick, evitando fallback errati agli episodi S1 quando esiste un gruppo stagione
