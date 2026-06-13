@@ -131,6 +131,38 @@ Per identificare manualmente un anime:
 
 > **Nota:** Puoi anche inserire solo l'ID numerico (es. `72`) e il plugin lo troverà automaticamente tramite ricerca.
 
+### ⚠️ Identify → Save → Refresh (Jellyfin 10.11.x)
+
+Jellyfin 10.11.x ha un comportamento subdolo: quando identifichi un item via
+"Identify → Save", l'API `POST /Items/RemoteSearch/Apply` salva l'ID provider
+sull'item ma **NON** triggera un metadata refresh. Risultato: lo spinner termina
+in un secondo e l'item resta con titolo/cast/descrizione vuoti o vecchi fino a
+quando non clicchi manualmente "Refresh & replace" o non riavvii la libreria.
+
+Inoltre, **se l'ID provider è già lo stesso che stai salvando** (es. hai già
+identificato l'item in passato e stai solo ri-applicando lo stesso ID), Jellyfin
+considera la modifica un no-op e non fa partire nessun refresh automatico.
+
+Questo plugin (dalla v0.2.2.0) risolve il problema con un pulsante dedicato
+**"Identify & Refresh"** nella pagina di configurazione del plugin (sezione
+*Diagnostica*):
+
+1. Apri Dashboard → Plugin → AnimeClick Metadata
+2. Scorri fino a **Diagnostica → Identify & Refresh**
+3. Inserisci:
+   - **Item ID Jellyfin**: l'UUID dell'item (lo trovi nell'URL della pagina del film)
+   - **AnimeClick ID**: l'ID nel formato `numeroslug` (es. `4371/hanasaku-iroha-movie-2013`)
+4. Clicca **Identify & Refresh**: il plugin salva l'ID e triggera immediatamente
+   un `MetadataRefreshOptions { MetadataRefreshMode = FullRefresh, ReplaceAllMetadata = true }`
+5. Attendi qualche secondo (3-5 secondi per un film con cast): titolo italiano,
+   trama, generi, cast e staff compaiono sulla pagina dell'item
+
+C'è anche un pulsante **Stato Identify** per verificare velocemente se un item
+ha già l'ID provider AnimeClick impostato.
+
+> **Alternativa manuale**: clicca sul film → ⋮ → "Refresh & replace metadata".
+> Funziona anche senza il pulsante del plugin, ma devi farlo esplicitamente.
+
 ## 🧠 La Filosofia del Plugin (Configurazione Ideale 2026)
 
 AnimeClick è in assoluto l'enciclopedia più completa per quanto riguarda i **Testi** (Sinossi, Titoli) e i **Doppiatori Italiani** nel mondo degli Anime.
@@ -281,6 +313,13 @@ L'output sarà in `pub/`.
 - .NET **9.0** runtime
 
 ## 📝 Changelog
+
+### v0.2.2.0 (Fix Identify → Save → Refresh)
+- 🐛 **Fix Identify & Save non popola i metadati**: Jellyfin 10.11.x salva l'ID provider con Identify → Save ma non triggera automaticamente un metadata refresh. Aggiunto endpoint custom `POST /Plugins/AnimeClick/IdentifyAndRefresh` che salva l'ID e triggera immediatamente un full refresh (`MetadataRefreshMode = FullRefresh`, `ReplaceAllMetadata = true`).
+- 🛠️ **Pulsante Identify & Refresh** nella pagina di configurazione del plugin (Diagnostica) con input per Item ID Jellyfin + AnimeClick ID. Risolve in un click il problema "spinner brevissimo, metadata non aggiornati".
+- 🩺 **Pulsante Stato Identify** per verificare se un item ha già l'ID AnimeClick impostato (utile per diagnosi su Hanasaku Iroha: Home Sweet Home, et similia).
+- 🔍 **Log diagnostico esplicito** all'ingresso di `MovieProvider.GetMetadata`, `SeriesProvider.GetMetadata`, `EpisodeProvider.GetMetadata`, `SeasonProvider.GetMetadata` con `Name`, `ProviderId`, `Year`, `Path`. Permette di verificare se il provider viene effettivamente chiamato dopo Identify/Refresh.
+- 📝 Documentazione del flusso Identify → Save → Refresh e della limitazione Jellyfin 10.11.x in README.
 
 ### v0.2.1.0 (Fix Special Fantasma)
 - 🐛 **Fix Special/OVA/OAD su stagioni regolari**: il parser rileva episodi Special dal titolo e forza `SeasonNumber=0`

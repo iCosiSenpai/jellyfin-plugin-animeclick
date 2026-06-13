@@ -50,6 +50,14 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var result = new MetadataResult<Episode> { Item = new Episode() };
 
+        _logger.LogInformation(
+            "AnimeClick EpisodeProvider.GetMetadata called: name=\"{Name}\" S{Season}E{Episode} seriesProviderId={SeriesProviderId} path={Path}",
+            info.Name,
+            info.ParentIndexNumber,
+            info.IndexNumber,
+            info.SeriesProviderIds?.GetValueOrDefault("AnimeClick") ?? "<none>",
+            info.Path ?? "<none>");
+
         if (!configuration.EnableEpisodeTitles)
         {
             var id = info.GetProviderId("AnimeClick");

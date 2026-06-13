@@ -50,6 +50,11 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
         var result = new MetadataResult<Season> { Item = new Season() };
 
         var mainAnimeClickId = info.SeriesProviderIds?.GetValueOrDefault("AnimeClick");
+        _logger.LogInformation(
+            "AnimeClick SeasonProvider.GetMetadata called: name=\"{Name}\" S{Season} seriesProviderId={SeriesProviderId}",
+            info.Name,
+            info.IndexNumber,
+            string.IsNullOrWhiteSpace(mainAnimeClickId) ? "<none>" : mainAnimeClickId);
 
         if (string.IsNullOrWhiteSpace(mainAnimeClickId))
         {
