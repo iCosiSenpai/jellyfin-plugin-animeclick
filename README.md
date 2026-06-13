@@ -271,10 +271,10 @@ Vai su **Dashboard → Librerie → Anime Movie → Gestisci libreria** e impost
 
 | Priorità | Provider | Ruolo |
 |:--------:|----------|-------|
-| 🥇 | **AnimeClick** | Titoli, trame, generi, cast, staff, rating in italiano |
-| 🥈 | AniList | ID incrociati |
-| 🥉 | TheMovieDb | Fallback |
-| 4 | The Open Movie Database | Ultima risorsa |
+| 🥇 | **AniList** | Studios, OfficialRating, generi, ID incrociati (eseguito per primo: riempie i campi che AnimeClick non copre) |
+| 🥈 | TheMovieDb | Fallback Studios, generi, Overview |
+| 🥉 | The Open Movie Database | Ultimo fallback per Studios e metadata di base |
+| 4 | **AnimeClick** | Overlay di Titoli, Trama, Generi, Cast, Staff, Sigle in italiano (eseguito per ultimo: vince su TMDB/OMDb per i testi) |
 
 #### Immagini Film
 
@@ -323,6 +323,12 @@ L'output sarà in `pub/`.
 - .NET **9.0** runtime
 
 ## 📝 Changelog
+
+### v0.2.4.0 (AnimeClick runs LAST so Studios come from AniList/TMDB)
+- 🔧 **`IHasOrder` portato da 0 a 100** su `MovieProvider`, `SeriesProvider`, `EpisodeProvider`. AnimeClick ora gira DOPO AniList / TheMovieDb / OMDb / OMDb nella catena metadata, così i campi che AnimeClick non popola (Studios, OfficialRating, Genres vuoti, …) vengono riempiti PRIMA dai provider a monte, e poi AnimeClick overlay dei testi italiani (Name, Overview, Genres, Tags, Cast).
+- 🔧 **Mapping difensivo**: `Genres` e `Studios` ora si applicano solo se la sorgente AnimeClick ha davvero qualcosa (`source.Genres.Count > 0` e `source.Studios.Count > 0`). Prima il plugin sovrascriveva sempre con array vuoto, perdendo i dati che AniList/TMDB avevano appena inserito.
+- 🔍 **Log diagnostico `leaving fields for downstream providers`**: alla fine di `GetMetadata` il plugin logga quali field NON ha popolato (Genres, Studios, OfficialRating) così dal log si vede a colpo d'occhio se i provider a monte hanno materiale da usare.
+- 🛡️ **No regressioni**: i campi già popolati da AnimeClick (Name italiano, Overview italiano, CommunityRating AnimeClick, Cast, Sigle) continuano a essere applicati per ultimi e a vincere su TMDB/AniList.
 
 ### v0.2.3.0 (Fix Identify & Refresh non riscarica le immagini)
 - 🐛 **Fix "Identify & Refresh" non sostituisce le immagini esistenti**: l'endpoint `POST /Plugins/AnimeClick/IdentifyAndRefresh` adesso accetta il flag opzionale `ReplaceAllImages` (default `false`). Quando `true`, prima del refresh il plugin rimuove tutte le immagini remote (poster, backdrop, logo, art, banner, thumb, disc, box) lasciando intatte solo le immagini locali (folder.jpg, poster.jpg, backdrop.jpg nella cartella del film). Il refresh successivo fa riscaricare le copertine dagli ImageFetchers configurati (Fanart, AniList, TMDB, OMDb, Embedded Image Extractor, Screen Grabber).

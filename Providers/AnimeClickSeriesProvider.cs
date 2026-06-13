@@ -46,7 +46,13 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
     }
 
     public string Name => "AnimeClick";
-    public int Order => 0;
+    /// <summary>
+    /// Run AFTER the other metadata providers so that fields we don't populate
+    /// (Studios, OfficialRating, Genres when empty, etc.) are filled in first
+    /// by AniList / TheMovieDb / OMDb, and only then we overlay the Italian
+    /// title, Italian overview, Italian genres/tags, cast, etc.
+    /// </summary>
+    public int Order => 100;
 
     public async Task<MetadataResult<Series>> GetMetadata(SeriesInfo info, CancellationToken cancellationToken)
     {
@@ -140,6 +146,20 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         }
 
         result.HasMetadata = true;
+
+        // Diagnostic: report which fields we left empty so the next provider
+        // (AniList, TMDB, OMDb) can fill them in.
+        var emptyFields = new List<string>();
+        if (configuration.EnableGenres && anime.Genres.Count == 0) emptyFields.Add("Genres");
+        if (configuration.EnableStudios && anime.Studios.Count == 0) emptyFields.Add("Studios");
+        if (string.IsNullOrWhiteSpace(anime.OfficialRating)) emptyFields.Add("OfficialRating");
+        if (emptyFields.Count > 0)
+        {
+            _logger.LogInformation(
+                "AnimeClick SeriesProvider leaving fields for downstream providers: {Fields} (title=\"{Title}\")",
+                string.Join(", ", emptyFields), anime.Title);
+        }
+
         return result;
     }
 
@@ -278,12 +298,12 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
             target.CommunityRating = source.CommunityRating.Value;
         }
 
-        if (configuration.EnableGenres)
+        if (configuration.EnableGenres && source.Genres.Count > 0)
         {
             target.Genres = source.Genres.ToArray();
         }
 
-        if (configuration.EnableStudios)
+        if (configuration.EnableStudios && source.Studios.Count > 0)
         {
             target.Studios = source.Studios.ToArray();
         }
