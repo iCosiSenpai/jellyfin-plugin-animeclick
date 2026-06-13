@@ -488,13 +488,35 @@
                         ReplaceAllImages: replaceAllImages
                     })
                         .then(function (resp) {
+                            // ASP.NET Core serializes response in camelCase (itemId, name, …)
+                            // even though the C# DTO uses PascalCase. Read both for safety.
+                            function pick(o) { return [].concat.apply([], arguments).find(function (k) { return o && o[k] !== undefined; }) || arguments[0]; }
+                            var itemIdVal = resp.itemId || resp.ItemId;
+                            var nameVal = resp.name || resp.Name;
+                            var acIdVal = resp.animeClickId || resp.AnimeClickId;
+                            var prevAcIdVal = resp.previousAnimeClickId || resp.PreviousAnimeClickId;
+                            var replaceAllImagesVal = resp.replaceAllImages;
+                            if (replaceAllImagesVal === undefined) replaceAllImagesVal = resp.ReplaceAllImages;
+                            var deletedVal = resp.deletedImages;
+                            if (deletedVal === undefined) deletedVal = resp.DeletedImages;
+                            var successVal = resp.success;
+                            if (successVal === undefined) successVal = resp.Success;
+                            var errorVal = resp.error || resp.Error;
+                            var downloadedVal = resp.downloadedImages || resp.DownloadedImages || [];
+
                             var summary = 'Identify & Refresh OK\n'
-                                + '  ItemId:        ' + resp.ItemId + '\n'
-                                + '  Name:          ' + resp.Name + '\n'
-                                + '  AnimeClick:    ' + (resp.PreviousAnimeClickId || '<none>') + ' → ' + resp.AnimeClickId + '\n'
-                                + '  ReplaceAllImages: ' + resp.ReplaceAllImages + '\n'
-                                + '  DeletedImages: ' + resp.DeletedImages + '\n'
-                                + '  Success:       ' + resp.Success + (resp.Error ? '\n  Error:         ' + resp.Error : '');
+                                + '  ItemId:        ' + itemIdVal + '\n'
+                                + '  Name:          ' + nameVal + '\n'
+                                + '  AnimeClick:    ' + (prevAcIdVal || '<none>') + ' → ' + acIdVal + '\n'
+                                + '  ReplaceAllImages: ' + replaceAllImagesVal + '\n'
+                                + '  DeletedImages: ' + deletedVal + '\n'
+                                + '  DownloadedImages: ' + (downloadedVal.length || 0) + ' image(s)\n';
+                            if (downloadedVal.length) {
+                                downloadedVal.forEach(function (entry) {
+                                    summary += '    ' + entry + '\n';
+                                });
+                            }
+                            summary += '  Success:       ' + successVal + (errorVal ? '\n  Error:         ' + errorVal : '');
                             setDiagOutput(summary);
                         })
                         .catch(function (err) {
@@ -593,7 +615,7 @@
                         }
 
                         config.BaseUrl = baseUrl;
-                            config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.5.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
+                            config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.6.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
 
                         ApiClient.updatePluginConfiguration(AnimeClickPluginId, config).then(function () {
                             Dashboard.processPluginConfigurationUpdateResult();

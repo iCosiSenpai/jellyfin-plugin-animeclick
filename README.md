@@ -324,6 +324,13 @@ L'output sarà in `pub/`.
 
 ## 📝 Changelog
 
+### v0.2.6.0 (Fix response undefined + force image download)
+- 🐛 **Fix response body showing `undefined` for every field**: ASP.NET Core serializes C# PascalCase DTOs in camelCase (`itemId`, `name`, `animeClickId`, …) but the v0.2.5.0 client JavaScript was reading `resp.ItemId`, `resp.Name`, … (PascalCase) — every field came back `undefined` even though the backend returned 200 OK with the correct data. v0.2.6.0 client reads both casings (`resp.itemId || resp.ItemId`) and pretty-prints the `DownloadedImages` list (Type:Provider:Url) so the operator can see exactly what was downloaded.
+- 🐛 **Fix `no remote images available` for all 5 image types**: v0.2.5.0 created `new RemoteImageQuery(providerName: string.Empty)` which filters by provider with empty name (= none), so `GetAvailableRemoteImages` returned `[]` for Primary/Backdrop/Logo/Art/Thumb. v0.2.6.0 uses `providerName: null` (= all providers) and `IncludeDisabledProviders = true`, so every enabled ImageFetcher is now queried.
+- 🔧 **New `EnsureAniListIdAsync`**: queries AniList GraphQL by title (`{ Media(search: "Hanasaku Iroha Home Sweet Home", type: ANIME) { id } }`) and stores the resulting AniList ID on the item before downloading images. Without an AniList ID the AniList ImageFetcher can't do its lookup. AnimeClick provides the Italian/Anime metadata but no TMDB/IMDB/AniList IDs, so this fallback is what makes the rest of the image chain work for items that the user only identified via AnimeClick.
+- 📋 **Minimal JSON parsing** for the AniList response: `ParseAniListIdFromSearch` (no System.Text.Json dependency) extracts the `id` field by string matching, keeping the plugin's dependency footprint small.
+- 🛡️ **No new dependencies**: IHttpClientFactory is injected via the standard ASP.NET Core DI (no new `using`).
+
 ### v0.2.5.0 (Force-download images from Fanart/AniList/TMDB)
 - 🔧 **Bypass Jellyfin 10.11.x broken image-refresh path**: `MetadataRefreshOptions.ReplaceAllImages` doesn't exist in Jellyfin 10.11.11, so even with `ReplaceAllMetadata=true` Jellyfin does NOT reliably re-download remote images. v0.2.5.0 fixes this by calling `IProviderManager.GetAvailableRemoteImages` + `IProviderManager.SaveImage` directly inside the `IdentifyAndRefresh` flow, asking each enabled ImageFetcher (Fanart, AniList, TheMovieDb, OMDb) for the best image of each type and saving it explicitly.
 - 🖼️ **Forced download of 5 image types**: 1 Primary (poster), up to 3 Backdrops, 1 Logo, 1 Art, 1 Thumb. Provider priority: **Fanart > AniList > TheMovieDb > OMDb > Embedded Image Extractor**. Ties broken by community rating desc, then by pixel area desc.
