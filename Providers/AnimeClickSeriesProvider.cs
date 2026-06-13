@@ -54,6 +54,12 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         var result = new MetadataResult<Series> { Item = new Series() };
 
         var animeClickId = info.GetProviderId("AnimeClick");
+        _logger.LogInformation(
+            "AnimeClick SeriesProvider.GetMetadata called: name=\"{Name}\" year={Year} providerId={ProviderId} path={Path}",
+            info.Name,
+            info.Year,
+            string.IsNullOrWhiteSpace(animeClickId) ? "<none>" : animeClickId,
+            info.Path ?? "<none>");
         string? url = null;
 
         if (!string.IsNullOrWhiteSpace(animeClickId))

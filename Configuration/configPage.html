@@ -251,6 +251,51 @@
                     </div>
 
                     <div class="verticalSection">
+                        <div class="paperList" style="background: rgba(255,193,7,0.12); border-left: 4px solid #ffc107; padding: 1em; border-radius: 4px; margin-bottom: 1.5em;">
+                            <p style="margin: 0 0 0.5em 0;">
+                                <strong>Flusso Identify → Save → Refresh</strong>
+                            </p>
+                            <p style="margin: 0; font-size: 0.9em; line-height: 1.5;">
+                                Jellyfin 10.11.x salva l'ID provider con Identify → Save, ma
+                                <strong>NON</strong> triggera automaticamente un metadata refresh.
+                                Per popolare titolo italiano, trama, cast, ecc. subito dopo aver salvato
+                                l'ID AnimeClick su un item, usa il pulsante <em>Identify &amp; Refresh</em>
+                                qui sotto (inserisci l'ID item Jellyfin e l'ID AnimeClick).
+                            </p>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtIdentifyItemId">
+                                Item ID Jellyfin
+                            </label>
+                            <input id="txtIdentifyItemId" type="text" is="emby-input"
+                                   placeholder="es. cb31a96c-a9c6-dc99-c9a6-6554d90bb453" />
+                            <div class="fieldDescription">
+                                L'UUID dell'item Jellyfin. Lo trovi nell'URL della pagina del film
+                                (Dashboard → libreria → film, copia l'UUID dall'indirizzo).
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtIdentifyAnimeClickId">
+                                AnimeClick ID
+                            </label>
+                            <input id="txtIdentifyAnimeClickId" type="text" is="emby-input"
+                                   placeholder="es. 4371/hanasaku-iroha-movie-2013" />
+                            <div class="fieldDescription">
+                                ID AnimeClick nel formato <code>numeroslug</code> o solo numerico.
+                            </div>
+                        </div>
+
+                        <button is="emby-button" type="button" id="btnIdentifyAndRefresh" class="raised emby-button">
+                            <span>Identify &amp; Refresh</span>
+                        </button>
+                        <button is="emby-button" type="button" id="btnIdentifyStatus" class="raised emby-button">
+                            <span>Stato Identify</span>
+                        </button>
+
+                        <hr style="margin: 2em 0; border: none; border-top: 1px solid rgba(255,255,255,0.1);" />
+
                         <div class="inputContainer">
                             <label class="inputLabel inputLabelUnfocused" for="txtDiagLookup">
                                 Test lookup serie
@@ -412,6 +457,45 @@
                         .finally(function () { Dashboard.hideLoadingMsg(); });
                 });
 
+            document.querySelector('#btnIdentifyAndRefresh')
+                .addEventListener('click', function () {
+                    var itemId = document.querySelector('#txtIdentifyItemId').value.trim();
+                    var animeClickId = document.querySelector('#txtIdentifyAnimeClickId').value.trim();
+                    if (!itemId || !animeClickId) {
+                        setDiagOutput('Inserisci sia Item ID Jellyfin sia AnimeClick ID.');
+                        return;
+                    }
+
+                    Dashboard.showLoadingMsg();
+                    animeClickApi('Plugins/AnimeClick/IdentifyAndRefresh', 'POST', {
+                        ItemId: itemId,
+                        AnimeClickId: animeClickId,
+                        ReplaceAllMetadata: true
+                    })
+                        .then(function (resp) {
+                            setDiagOutput('Identify & Refresh OK:\n' + JSON.stringify(resp, null, 2));
+                        })
+                        .catch(function (err) {
+                            setDiagOutput('Identify & Refresh FAILED:\n' + (err && err.responseText ? err.responseText : String(err)));
+                        })
+                        .finally(function () { Dashboard.hideLoadingMsg(); });
+                });
+
+            document.querySelector('#btnIdentifyStatus')
+                .addEventListener('click', function () {
+                    var itemId = document.querySelector('#txtIdentifyItemId').value.trim();
+                    if (!itemId) {
+                        setDiagOutput('Inserisci un Item ID Jellyfin.');
+                        return;
+                    }
+
+                    Dashboard.showLoadingMsg();
+                    animeClickApi('Plugins/AnimeClick/IdentifyStatus?itemId=' + encodeURIComponent(itemId), 'GET')
+                        .then(setDiagOutput)
+                        .catch(function (err) { setDiagOutput(err && err.responseText ? err.responseText : String(err)); })
+                        .finally(function () { Dashboard.hideLoadingMsg(); });
+                });
+
             document.querySelector('#btnDiagEpisodes')
                 .addEventListener('click', function () {
                     var id = document.querySelector('#txtDiagAnimeClickId').value.trim();
@@ -487,7 +571,7 @@
                         }
 
                         config.BaseUrl = baseUrl;
-                        config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.1.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
+                            config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.2.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
 
                         ApiClient.updatePluginConfiguration(AnimeClickPluginId, config).then(function () {
                             Dashboard.processPluginConfigurationUpdateResult();
