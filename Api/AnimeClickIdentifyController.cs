@@ -43,6 +43,7 @@ public class AnimeClickIdentifyController : ControllerBase
     private readonly ILibraryManager _libraryManager;
     private readonly IProviderManager _providerManager;
     private readonly AnimeClickClient _client;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AnimeClickIdentifyController> _logger;
 
     public const string ProviderKey = "AnimeClick";
@@ -51,11 +52,13 @@ public class AnimeClickIdentifyController : ControllerBase
         ILibraryManager libraryManager,
         IProviderManager providerManager,
         AnimeClickClient client,
+        IHttpClientFactory httpClientFactory,
         ILogger<AnimeClickIdentifyController> logger)
     {
         _libraryManager = libraryManager;
         _providerManager = providerManager;
         _client = client;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -111,6 +114,17 @@ public class AnimeClickIdentifyController : ControllerBase
         if (request.ReplaceAllImages)
         {
             deletedImages = await WipeRemoteImagesAsync(item, cancellationToken).ConfigureAwait(false);
+        }
+
+        // ── Ensure AniList/TMDB/IMDB provider IDs are populated so ImageFetchers
+        // can do their lookup. AnimeClick does not provide TMDB/IMDB IDs but
+        // we can fetch them by title via the AniList GraphQL API.
+        var anilistIdFound = await EnsureAniListIdAsync(item, cancellationToken).ConfigureAwait(false);
+        if (anilistIdFound is not null)
+        {
+            _logger.LogInformation(
+                "AnimeClick IdentifyAndRefresh: ensured AniList ID={AniListId} for {ItemId} ({Name})",
+                anilistIdFound, item.Id, item.Name);
         }
 
         // ── Always fetch the best remote images from each enabled ImageFetcher ──
@@ -216,9 +230,10 @@ public class AnimeClickIdentifyController : ControllerBase
             return NotFound(new { error = $"Item '{itemId}' not found" });
         }
 
-        var query = new RemoteImageQuery(providerName: string.Empty)
+        var query = new RemoteImageQuery(providerName: (string)null!)
         {
-            ImageType = type is null ? null : ParseImageType(type)
+            ImageType = type is null ? null : ParseImageType(type),
+            IncludeDisabledProviders = true
         };
 
         var images = await _providerManager.GetAvailableRemoteImages(item, query, cancellationToken).ConfigureAwait(false);
@@ -351,9 +366,10 @@ public class AnimeClickIdentifyController : ControllerBase
         {
             try
             {
-                var query = new RemoteImageQuery(providerName: string.Empty)
+                var query = new RemoteImageQuery(providerName: (string)null!)
                 {
-                    ImageType = type
+                    ImageType = type,
+                    IncludeDisabledProviders = true
                 };
                 var candidates = (await _providerManager.GetAvailableRemoteImages(item, query, cancellationToken).ConfigureAwait(false)).ToList();
                 if (candidates.Count == 0)
@@ -433,6 +449,88 @@ public class AnimeClickIdentifyController : ControllerBase
             }
         }
         return -1;
+    }
+
+    /// <summary>
+    /// If the item doesn't have an AniList provider ID yet, queries the
+    /// AniList GraphQL API by title and stores the resulting AniList ID on
+    /// the item so the AniList ImageFetcher can do its lookup. This is
+    /// best-effort: returns the new AniList ID on success, null on failure.
+    /// </summary>
+    private async Task<string?> EnsureAniListIdAsync(BaseItem item, CancellationToken cancellationToken)
+    {
+        var existing = item.GetProviderId("AniList");
+        if (!string.IsNullOrWhiteSpace(existing))
+        {
+            return existing;
+        }
+
+        var title = item.Name;
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return null;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(8);
+
+            var query = "{\"query\":\"{ Media(search: \\\"" + EscapeGraphQL(title) + "\\\", type: ANIME) { id type title { romaji english } } }\"}";
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://graphql.anilist.co")
+            {
+                Content = new StringContent(query, System.Text.Encoding.UTF8, "application/json")
+            };
+
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("EnsureAniListId: AniList returned {Status} for {Title}", response.StatusCode, title);
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var anilistId = ParseAniListIdFromSearch(json);
+            if (string.IsNullOrWhiteSpace(anilistId))
+            {
+                _logger.LogDebug("EnsureAniListId: no AniList match for {Title}", title);
+                return null;
+            }
+
+            item.SetProviderId("AniList", anilistId);
+            await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+            return anilistId;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "EnsureAniListId: failed for {Title}", title);
+            return null;
+        }
+    }
+
+    private static string EscapeGraphQL(string s) =>
+        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+    private static string? ParseAniListIdFromSearch(string json)
+    {
+        // Minimal JSON parsing without bringing in System.Text.Json
+        // dependency (which would conflict with the plugin's existing one).
+        // The shape is {"data":{"Media":{"id":14175, ...}}}.
+        var idMarker = "\"id\":";
+        var dataMarker = "\"data\"";
+        var mediaMarker = "\"Media\"";
+        var dataIdx = json.IndexOf(dataMarker, StringComparison.Ordinal);
+        if (dataIdx < 0) return null;
+        var mediaIdx = json.IndexOf(mediaMarker, dataIdx, StringComparison.Ordinal);
+        if (mediaIdx < 0) return null;
+        var idIdx = json.IndexOf(idMarker, mediaIdx, StringComparison.Ordinal);
+        if (idIdx < 0) return null;
+        var after = idIdx + idMarker.Length;
+        while (after < json.Length && (json[after] == ' ' || json[after] == '\t')) after++;
+        var start = after;
+        while (after < json.Length && (char.IsDigit(json[after]))) after++;
+        if (after == start) return null;
+        return json.Substring(start, after - start);
     }
 
     private static ImageType? ParseImageType(string s)
