@@ -324,6 +324,13 @@ L'output sarà in `pub/`.
 
 ## 📝 Changelog
 
+### v0.2.5.0 (Force-download images from Fanart/AniList/TMDB)
+- 🔧 **Bypass Jellyfin 10.11.x broken image-refresh path**: `MetadataRefreshOptions.ReplaceAllImages` doesn't exist in Jellyfin 10.11.11, so even with `ReplaceAllMetadata=true` Jellyfin does NOT reliably re-download remote images. v0.2.5.0 fixes this by calling `IProviderManager.GetAvailableRemoteImages` + `IProviderManager.SaveImage` directly inside the `IdentifyAndRefresh` flow, asking each enabled ImageFetcher (Fanart, AniList, TheMovieDb, OMDb) for the best image of each type and saving it explicitly.
+- 🖼️ **Forced download of 5 image types**: 1 Primary (poster), up to 3 Backdrops, 1 Logo, 1 Art, 1 Thumb. Provider priority: **Fanart > AniList > TheMovieDb > OMDb > Embedded Image Extractor**. Ties broken by community rating desc, then by pixel area desc.
+- 🔍 **New `DownloadedImages` field in `IdentifyAndRefreshResponse`**: returns a list of `Type:Provider:Url` entries for every image saved, so the operator can see exactly what Fanart / AniList / TMDB / OMDb returned and which won.
+- ⚠️ **Behaviour change**: as of v0.2.5.0, `IdentifyAndRefresh` ALWAYS wipes existing remote images and downloads fresh ones from the enabled ImageFetchers, regardless of the `ReplaceAllImages` checkbox. The checkbox is now a legacy flag kept for backwards compatibility; use it to opt out by setting it to false.
+- 🛠️ **IndexOfProvider helper** + **DownloadBestRemoteImagesAsync** in `AnimeClickIdentifyController.cs`: reads `RemoteImageQuery` (providerName=""), sorts by priority, saves via `_providerManager.SaveImage(item, url, type, imageIndex, ct)`.
+
 ### v0.2.4.0 (AnimeClick runs LAST so Studios come from AniList/TMDB)
 - 🔧 **`IHasOrder` portato da 0 a 100** su `MovieProvider`, `SeriesProvider`, `EpisodeProvider`. AnimeClick ora gira DOPO AniList / TheMovieDb / OMDb / OMDb nella catena metadata, così i campi che AnimeClick non popola (Studios, OfficialRating, Genres vuoti, …) vengono riempiti PRIMA dai provider a monte, e poi AnimeClick overlay dei testi italiani (Name, Overview, Genres, Tags, Cast).
 - 🔧 **Mapping difensivo**: `Genres` e `Studios` ora si applicano solo se la sorgente AnimeClick ha davvero qualcosa (`source.Genres.Count > 0` e `source.Studios.Count > 0`). Prima il plugin sovrascriveva sempre con array vuoto, perdendo i dati che AniList/TMDB avevano appena inserito.

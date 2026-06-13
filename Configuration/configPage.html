@@ -593,7 +593,7 @@
                         }
 
                         config.BaseUrl = baseUrl;
-                            config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.4.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
+                            config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.5.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
 
                         ApiClient.updatePluginConfiguration(AnimeClickPluginId, config).then(function () {
                             Dashboard.processPluginConfigurationUpdateResult();
