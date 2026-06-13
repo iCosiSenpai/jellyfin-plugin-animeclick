@@ -43,7 +43,12 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
     }
 
     public string Name => "AnimeClick";
-    public int Order => 0;
+    /// <summary>
+    /// Run AFTER the other metadata providers so that fields we don't populate
+    /// are filled in first by AniList / TheMovieDb / OMDb, and only then we
+    /// overlay the Italian episode title.
+    /// </summary>
+    public int Order => 100;
 
     public async Task<MetadataResult<Episode>> GetMetadata(EpisodeInfo info, CancellationToken cancellationToken)
     {
