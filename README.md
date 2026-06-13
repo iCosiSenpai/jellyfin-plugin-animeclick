@@ -152,16 +152,26 @@ Questo plugin (dalla v0.2.2.0) risolve il problema con un pulsante dedicato
 3. Inserisci:
    - **Item ID Jellyfin**: l'UUID dell'item (lo trovi nell'URL della pagina del film)
    - **AnimeClick ID**: l'ID nel formato `numeroslug` (es. `4371/hanasaku-iroha-movie-2013`)
-4. Clicca **Identify & Refresh**: il plugin salva l'ID e triggera immediatamente
-   un `MetadataRefreshOptions { MetadataRefreshMode = FullRefresh, ReplaceAllMetadata = true }`
-5. Attendi qualche secondo (3-5 secondi per un film con cast): titolo italiano,
-   trama, generi, cast e staff compaiono sulla pagina dell'item
+4. (Opzionale) Spunta **Sostituisci anche le immagini** se vuoi che il plugin
+   cancelli le immagini remote esistenti (poster, backdrop, logo) prima del
+   refresh, così gli ImageFetchers (Fanart, AniList, TMDB, OMDb) possono
+   riscaricare artwork migliore. Le immagini locali (`folder.jpg`,
+   `poster.jpg`, `backdrop.jpg` nella cartella del film) sono sempre
+   preservate.
+5. Clicca **Identify & Refresh**: il plugin salva l'ID e triggera immediatamente
+   un `MetadataRefreshOptions { MetadataRefreshMode = FullRefresh, ReplaceAllMetadata = true, ReplaceAllImages = <come checkbox> }`
+6. Attendi qualche secondo (3-5 secondi per un film con cast, 5-10 secondi
+   se hai spuntato anche le immagini): titolo italiano, trama, generi, cast
+   e staff compaiono sulla pagina dell'item, e (se richiesto) le copertine
+   vengono aggiornate.
 
 C'è anche un pulsante **Stato Identify** per verificare velocemente se un item
 ha già l'ID provider AnimeClick impostato.
 
 > **Alternativa manuale**: clicca sul film → ⋮ → "Refresh & replace metadata".
 > Funziona anche senza il pulsante del plugin, ma devi farlo esplicitamente.
+> Il pulsante del plugin replica esattamente quel flusso (incluso il wipe
+> delle immagini remote) senza dover navigare nel menu contestuale.
 
 ## 🧠 La Filosofia del Plugin (Configurazione Ideale 2026)
 
@@ -313,6 +323,13 @@ L'output sarà in `pub/`.
 - .NET **9.0** runtime
 
 ## 📝 Changelog
+
+### v0.2.3.0 (Fix Identify & Refresh non riscarica le immagini)
+- 🐛 **Fix "Identify & Refresh" non sostituisce le immagini esistenti**: l'endpoint `POST /Plugins/AnimeClick/IdentifyAndRefresh` adesso accetta il flag opzionale `ReplaceAllImages` (default `false`). Quando `true`, prima del refresh il plugin rimuove tutte le immagini remote (poster, backdrop, logo, art, banner, thumb, disc, box) lasciando intatte solo le immagini locali (folder.jpg, poster.jpg, backdrop.jpg nella cartella del film). Il refresh successivo fa riscaricare le copertine dagli ImageFetchers configurati (Fanart, AniList, TMDB, OMDb, Embedded Image Extractor, Screen Grabber).
+- 🛠️ **Pulsante "Sostituisci anche le immagini"** nella sezione Diagnostica della configPage: checkbox che quando spuntata passa `ReplaceAllImages=true` all'endpoint. Di default deselezionato per non sovrascrivere artwork curato dall'utente.
+- 🔍 **Endpoint diagnostico `GET /Plugins/AnimeClick/AvailableRemoteImages?itemId=...&type=Primary`**: elenca le immagini remote disponibili per un item da ogni ImageFetcher abilitato (utile per capire cosa può scaricare Fanart/AniList/TMDB).
+- 📋 **Wipe remote images intelligente**: enumera i tipi supportati (Primary, Backdrop, Logo, Art, Banner, Thumb, Disc, Box, BoxRear), preserva `IsLocalFile=true`, e itera dall'ULTIMO indice al primo per evitare shift degli indici durante la cancellazione.
+- 📝 README: aggiornata la sezione Identify → Save → Refresh per spiegare il flag `ReplaceAllImages` e quando usarlo.
 
 ### v0.2.2.0 (Fix Identify → Save → Refresh)
 - 🐛 **Fix Identify & Save non popola i metadati**: Jellyfin 10.11.x salva l'ID provider con Identify → Save ma non triggera automaticamente un metadata refresh. Aggiunto endpoint custom `POST /Plugins/AnimeClick/IdentifyAndRefresh` che salva l'ID e triggera immediatamente un full refresh (`MetadataRefreshMode = FullRefresh`, `ReplaceAllMetadata = true`).

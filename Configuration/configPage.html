@@ -287,6 +287,19 @@
                             </div>
                         </div>
 
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin: 0.5em 0;">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkReplaceAllImages" />
+                                <span>Sostituisci anche le immagini (rimuove cover/poster/backdrop remoti esistenti prima del refresh)</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Le immagini locali (folder.jpg, poster.jpg, backdrop.jpg nella cartella del film) sono
+                                preservate. Le immagini remote già scaricate (poster, backdrop, logo) sono rimosse
+                                e riscaricate dagli ImageFetchers (Fanart, AniList, TMDB, OMDb). Lascia deselezionato
+                                per popolare solo i metadata testuali (titolo italiano, trama, cast, …).
+                            </div>
+                        </div>
+
                         <button is="emby-button" type="button" id="btnIdentifyAndRefresh" class="raised emby-button">
                             <span>Identify &amp; Refresh</span>
                         </button>
@@ -467,13 +480,22 @@
                     }
 
                     Dashboard.showLoadingMsg();
+                    var replaceAllImages = document.querySelector('#chkReplaceAllImages').checked;
                     animeClickApi('Plugins/AnimeClick/IdentifyAndRefresh', 'POST', {
                         ItemId: itemId,
                         AnimeClickId: animeClickId,
-                        ReplaceAllMetadata: true
+                        ReplaceAllMetadata: true,
+                        ReplaceAllImages: replaceAllImages
                     })
                         .then(function (resp) {
-                            setDiagOutput('Identify & Refresh OK:\n' + JSON.stringify(resp, null, 2));
+                            var summary = 'Identify & Refresh OK\n'
+                                + '  ItemId:        ' + resp.ItemId + '\n'
+                                + '  Name:          ' + resp.Name + '\n'
+                                + '  AnimeClick:    ' + (resp.PreviousAnimeClickId || '<none>') + ' → ' + resp.AnimeClickId + '\n'
+                                + '  ReplaceAllImages: ' + resp.ReplaceAllImages + '\n'
+                                + '  DeletedImages: ' + resp.DeletedImages + '\n'
+                                + '  Success:       ' + resp.Success + (resp.Error ? '\n  Error:         ' + resp.Error : '');
+                            setDiagOutput(summary);
                         })
                         .catch(function (err) {
                             setDiagOutput('Identify & Refresh FAILED:\n' + (err && err.responseText ? err.responseText : String(err)));
@@ -571,7 +593,7 @@
                         }
 
                         config.BaseUrl = baseUrl;
-                            config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.2.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
+                            config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.3.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
 
                         ApiClient.updatePluginConfiguration(AnimeClickPluginId, config).then(function () {
                             Dashboard.processPluginConfigurationUpdateResult();
