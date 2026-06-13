@@ -113,6 +113,13 @@ public class AnimeClickIdentifyController : ControllerBase
             deletedImages = await WipeRemoteImagesAsync(item, cancellationToken).ConfigureAwait(false);
         }
 
+        // ── Always fetch the best remote images from each enabled ImageFetcher ──
+        // Jellyfin 10.11.x with ReplaceAllMetadata=true does NOT reliably call
+        // every metadata provider and does NOT always re-download remote images,
+        // so we do it explicitly here. The wipe above ensures we can save
+        // fresh images over the existing slots.
+        var downloadedImages = await DownloadBestRemoteImagesAsync(item, cancellationToken).ConfigureAwait(false);
+
         // ── Trigger full metadata refresh (text + cast + tags + …) ──
         var refreshOptions = new MetadataRefreshOptions(new DirectoryService(BaseItem.FileSystem))
         {
@@ -151,6 +158,7 @@ public class AnimeClickIdentifyController : ControllerBase
             RefreshTriggered = true,
             ReplaceAllImages = request.ReplaceAllImages,
             DeletedImages = deletedImages,
+            DownloadedImages = downloadedImages,
             Error = refreshError
         });
     }
@@ -313,6 +321,120 @@ public class AnimeClickIdentifyController : ControllerBase
         return deleted;
     }
 
+    /// <summary>
+    /// For each supported image type, queries the enabled ImageFetchers
+    /// (Fanart, AniList, TheMovieDb, OMDb, …) and downloads the best
+    /// available remote image for that type, picking in the order:
+    /// Fanart > AniList > TheMovieDb > The Open Movie Database.
+    /// Returns a list of "type:providerName:url" entries for diagnostics.
+    /// </summary>
+    private async Task<List<string>> DownloadBestRemoteImagesAsync(BaseItem item, CancellationToken cancellationToken)
+    {
+        var downloaded = new List<string>();
+        // Priority order for the best provider. We don't trust the
+        // Enabled state in Jellyfin (Fanart may be configured but the
+        // API key may be missing), so we try each provider in order
+        // and accept the first that returns a URL.
+        var priorityOrder = new[] { "Fanart", "AniList", "TheMovieDb", "The Open Movie Database", "Embedded Image Extractor" };
+
+        // We need to download: 1 Primary, up to 3 Backdrops, 1 Logo, 1 Art, 1 Thumb.
+        var typesToFetch = new (ImageType Type, int MaxCount)[]
+        {
+            (ImageType.Primary, 1),
+            (ImageType.Backdrop, 3),
+            (ImageType.Logo, 1),
+            (ImageType.Art, 1),
+            (ImageType.Thumb, 1)
+        };
+
+        foreach (var (type, maxCount) in typesToFetch)
+        {
+            try
+            {
+                var query = new RemoteImageQuery(providerName: string.Empty)
+                {
+                    ImageType = type
+                };
+                var candidates = (await _providerManager.GetAvailableRemoteImages(item, query, cancellationToken).ConfigureAwait(false)).ToList();
+                if (candidates.Count == 0)
+                {
+                    _logger.LogInformation("AnimeClick IdentifyAndRefresh: no remote images available for {Type} on {ItemId}", type, item.Id);
+                    continue;
+                }
+
+                // Sort by provider priority: lower index wins. Ties broken
+                // by CommunityRating desc, then by Width*Height desc (bigger is better).
+                var ordered = candidates
+                    .Select((img, idx) => new
+                    {
+                        Img = img,
+                        ProviderPriority = IndexOfProvider(priorityOrder, img.ProviderName),
+                        OriginalIndex = idx
+                    })
+                    .OrderBy(x => x.ProviderPriority < 0 ? int.MaxValue : x.ProviderPriority)
+                    .ThenByDescending(x => x.Img.CommunityRating)
+                    .ThenByDescending(x => (long)(x.Img.Width ?? 0) * (x.Img.Height ?? 0))
+                    .ToList();
+
+                int saved = 0;
+                foreach (var cand in ordered)
+                {
+                    if (saved >= maxCount)
+                    {
+                        break;
+                    }
+                    if (string.IsNullOrWhiteSpace(cand.Img.Url))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        // Compute the index: Primary/Logo/Art/Thumb/Disc are single-slot
+                        // (index 0), Backdrop is multi-slot (0,1,2,…)
+                        var imageIndex = type == ImageType.Backdrop ? saved : 0;
+                        await _providerManager.SaveImage(item, cand.Img.Url, type, imageIndex, cancellationToken).ConfigureAwait(false);
+                        saved++;
+                        downloaded.Add($"{type}:{cand.Img.ProviderName}:{cand.Img.Url}");
+                        _logger.LogInformation(
+                            "AnimeClick IdentifyAndRefresh: saved remote {Type} from {Provider} ({Width}x{Height}) for {ItemId}",
+                            type, cand.Img.ProviderName, cand.Img.Width, cand.Img.Height, item.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex,
+                            "AnimeClick IdentifyAndRefresh: failed to save {Type} from {Provider} ({Url}) for {ItemId}",
+                            type, cand.Img.ProviderName, cand.Img.Url, item.Id);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "AnimeClick IdentifyAndRefresh: error fetching {Type} for {ItemId}",
+                    type, item.Id);
+            }
+        }
+
+        return downloaded;
+    }
+
+    private static int IndexOfProvider(string[] priority, string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return -1;
+        }
+        for (var i = 0; i < priority.Length; i++)
+        {
+            if (string.Equals(priority[i], name, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private static ImageType? ParseImageType(string s)
     {
         if (Enum.TryParse<ImageType>(s, ignoreCase: true, out var t))
@@ -348,6 +470,7 @@ public sealed class IdentifyAndRefreshResponse
     public bool RefreshTriggered { get; set; }
     public bool ReplaceAllImages { get; set; }
     public int DeletedImages { get; set; }
+    public List<string> DownloadedImages { get; set; } = new();
     public string? Error { get; set; }
 }
 
