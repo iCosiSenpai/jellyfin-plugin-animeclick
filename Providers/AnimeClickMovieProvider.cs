@@ -26,6 +26,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
     private readonly AnimeClickCacheService _cache;
     private readonly AnimeClickHtmlParser _parser;
     private readonly AnimeClickSeriesSearchProvider _searchProvider;
+    private readonly AnimeClickAniListResolver _aniListResolver;
     private readonly ILogger<AnimeClickMovieProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
 
@@ -34,6 +35,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         AnimeClickCacheService cache,
         AnimeClickHtmlParser parser,
         AnimeClickSeriesSearchProvider searchProvider,
+        AnimeClickAniListResolver aniListResolver,
         ILogger<AnimeClickMovieProvider> logger,
         IHttpClientFactory httpClientFactory)
     {
@@ -41,6 +43,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         _cache = cache;
         _parser = parser;
         _searchProvider = searchProvider;
+        _aniListResolver = aniListResolver;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
     }
@@ -119,6 +122,22 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         }
 
         result.HasMetadata = true;
+
+        // AnimeClick exposes no cross-site IDs. Resolve an AniList ID by title
+        // (best-effort) so Jellyfin's AniList ImageFetcher can fetch artwork and
+        // downstream providers have a stable ID on future refreshes.
+        if (!anime.ProviderIds.ContainsKey("AniList"))
+        {
+            var aniListId = await _aniListResolver.ResolveAniListIdAsync(
+                anime.OriginalTitle ?? anime.Title, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(aniListId))
+            {
+                result.Item.SetProviderId("AniList", aniListId);
+                _logger.LogInformation(
+                    "AnimeClick MovieProvider resolved AniList ID={AniListId} by title for \"{Title}\"",
+                    aniListId, anime.Title);
+            }
+        }
 
         // Diagnostic: report which fields we left empty so the next provider
         // (AniList, TMDB, OMDb) can fill them in.
