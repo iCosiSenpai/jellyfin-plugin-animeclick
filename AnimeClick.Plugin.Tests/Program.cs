@@ -48,6 +48,33 @@ static void TestTrailerOnlyMultimedia()
     Assert(!string.IsNullOrWhiteSpace(diagnostics.Warning), "Trailer-only page should include a diagnostic warning.");
 }
 
+static void TestAniListIdParsing()
+{
+    Assert(
+        AnimeClickAniListResolver.ParseAniListIdFromSearch("{\"data\":{\"Media\":{\"id\":14175,\"type\":\"ANIME\"}}}") == "14175",
+        "Should extract the AniList id from a successful match.");
+
+    Assert(
+        AnimeClickAniListResolver.ParseAniListIdFromSearch("{\"data\":{\"Media\":null}}") == null,
+        "Null Media must yield no id.");
+
+    Assert(
+        AnimeClickAniListResolver.ParseAniListIdFromSearch("{\"errors\":[{\"message\":\"Not Found\"}]}") == null,
+        "Error payload without data must yield no id.");
+
+    Assert(
+        AnimeClickAniListResolver.ParseAniListIdFromSearch("{\"data\":{\"Media\":{\"id\": 9876 ,\"type\":\"ANIME\"}}}") == "9876",
+        "Should tolerate whitespace around the id value.");
+
+    Assert(
+        AnimeClickAniListResolver.EscapeGraphQL("K-On! \"Movie\"") == "K-On! \\\"Movie\\\"",
+        "EscapeGraphQL must escape embedded double quotes.");
+
+    Assert(
+        AnimeClickAniListResolver.EscapeGraphQL("path\\to") == "path\\\\to",
+        "EscapeGraphQL must escape backslashes.");
+}
+
 static void Assert(bool condition, string message)
 {
     if (!condition)
@@ -60,7 +87,8 @@ var tests = new (string Name, Action Run)[]
 {
     ("Dangers S2 matcher uses season ordinal", TestDangersSeasonOrdinalMatching),
     ("Search scorer prefers 2023 series over movie and special", TestSearchScoring),
-    ("Trailer-only multimedia reports diagnostic warning", TestTrailerOnlyMultimedia)
+    ("Trailer-only multimedia reports diagnostic warning", TestTrailerOnlyMultimedia),
+    ("AniList GraphQL id/escape parsing", TestAniListIdParsing)
 };
 
 foreach (var test in tests)

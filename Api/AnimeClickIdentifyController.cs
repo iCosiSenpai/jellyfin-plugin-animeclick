@@ -43,6 +43,7 @@ public class AnimeClickIdentifyController : ControllerBase
     private readonly ILibraryManager _libraryManager;
     private readonly IProviderManager _providerManager;
     private readonly AnimeClickClient _client;
+    private readonly AnimeClickAniListResolver _aniListResolver;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AnimeClickIdentifyController> _logger;
 
@@ -52,12 +53,14 @@ public class AnimeClickIdentifyController : ControllerBase
         ILibraryManager libraryManager,
         IProviderManager providerManager,
         AnimeClickClient client,
+        AnimeClickAniListResolver aniListResolver,
         IHttpClientFactory httpClientFactory,
         ILogger<AnimeClickIdentifyController> logger)
     {
         _libraryManager = libraryManager;
         _providerManager = providerManager;
         _client = client;
+        _aniListResolver = aniListResolver;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -465,72 +468,15 @@ public class AnimeClickIdentifyController : ControllerBase
             return existing;
         }
 
-        var title = item.Name;
-        if (string.IsNullOrWhiteSpace(title))
+        var anilistId = await _aniListResolver.ResolveAniListIdAsync(item.Name, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(anilistId))
         {
             return null;
         }
 
-        try
-        {
-            var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(8);
-
-            var query = "{\"query\":\"{ Media(search: \\\"" + EscapeGraphQL(title) + "\\\", type: ANIME) { id type title { romaji english } } }\"}";
-            using var request = new HttpRequestMessage(HttpMethod.Post, "https://graphql.anilist.co")
-            {
-                Content = new StringContent(query, System.Text.Encoding.UTF8, "application/json")
-            };
-
-            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogDebug("EnsureAniListId: AniList returned {Status} for {Title}", response.StatusCode, title);
-                return null;
-            }
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            var anilistId = ParseAniListIdFromSearch(json);
-            if (string.IsNullOrWhiteSpace(anilistId))
-            {
-                _logger.LogDebug("EnsureAniListId: no AniList match for {Title}", title);
-                return null;
-            }
-
-            item.SetProviderId("AniList", anilistId);
-            await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
-            return anilistId;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "EnsureAniListId: failed for {Title}", title);
-            return null;
-        }
-    }
-
-    private static string EscapeGraphQL(string s) =>
-        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
-
-    private static string? ParseAniListIdFromSearch(string json)
-    {
-        // Minimal JSON parsing without bringing in System.Text.Json
-        // dependency (which would conflict with the plugin's existing one).
-        // The shape is {"data":{"Media":{"id":14175, ...}}}.
-        var idMarker = "\"id\":";
-        var dataMarker = "\"data\"";
-        var mediaMarker = "\"Media\"";
-        var dataIdx = json.IndexOf(dataMarker, StringComparison.Ordinal);
-        if (dataIdx < 0) return null;
-        var mediaIdx = json.IndexOf(mediaMarker, dataIdx, StringComparison.Ordinal);
-        if (mediaIdx < 0) return null;
-        var idIdx = json.IndexOf(idMarker, mediaIdx, StringComparison.Ordinal);
-        if (idIdx < 0) return null;
-        var after = idIdx + idMarker.Length;
-        while (after < json.Length && (json[after] == ' ' || json[after] == '\t')) after++;
-        var start = after;
-        while (after < json.Length && (char.IsDigit(json[after]))) after++;
-        if (after == start) return null;
-        return json.Substring(start, after - start);
+        item.SetProviderId("AniList", anilistId);
+        await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+        return anilistId;
     }
 
     private static ImageType? ParseImageType(string s)

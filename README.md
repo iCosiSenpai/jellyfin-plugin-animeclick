@@ -324,6 +324,13 @@ L'output sarà in `pub/`.
 
 ## 📝 Changelog
 
+### v0.2.7.0 (AniList ID risolto durante ogni scan, non solo nell'Identify manuale)
+- 🔧 **Nuovo servizio `AnimeClickAniListResolver`**: la risoluzione dell'AniList ID per titolo (via AniList GraphQL) è stata estratta da `AnimeClickIdentifyController` in un servizio riutilizzabile, registrato in DI. Niente più logica duplicata (DRY).
+- 🖼️ **Fix immagini/metadati mancanti su scan automatico**: `AnimeClickSeriesProvider` e `AnimeClickMovieProvider` ora chiamano il resolver in `GetMetadata` e scrivono `ProviderIds["AniList"]` sull'item quando AnimeClick non fornisce ID incrociati (le pagine AnimeClick **non** espongono link MAL/AniList/AniDB/TMDB). Prima questo avveniva SOLO premendo il pulsante "Identify & Refresh"; ora succede a ogni scansione della libreria, così l'ImageFetcher AniList trova le copertine in automatico e i provider a valle hanno un ID stabile per i refresh successivi. La ricerca usa il titolo originale (romaji) quando disponibile, con fallback al titolo italiano.
+- 🧩 **Nota Fanart per i Film**: Fanart.tv per i film è indicizzato per TMDB ID, non AniList. Per le copertine dei film abilita anche **TheMovieDb** come metadata fetcher nella libreria "Anime Movie" (Dashboard → Librerie → Anime Movie → downloader metadati Film) così Jellyfin risolve un TMDB ID a monte.
+- ♻️ **Refactor controller**: `AnimeClickIdentifyController.EnsureAniListIdAsync` delega al servizio condiviso; rimossi gli helper privati `EscapeGraphQL`/`ParseAniListIdFromSearch` (ora `internal static` nel servizio, coperti da unit test).
+- ✅ **Nuovi unit test**: `ParseAniListIdFromSearch` (match, `Media:null`, payload di errore, whitespace) e `EscapeGraphQL` (quote/backslash).
+
 ### v0.2.6.0 (Fix response undefined + force image download)
 - 🐛 **Fix response body showing `undefined` for every field**: ASP.NET Core serializes C# PascalCase DTOs in camelCase (`itemId`, `name`, `animeClickId`, …) but the v0.2.5.0 client JavaScript was reading `resp.ItemId`, `resp.Name`, … (PascalCase) — every field came back `undefined` even though the backend returned 200 OK with the correct data. v0.2.6.0 client reads both casings (`resp.itemId || resp.ItemId`) and pretty-prints the `DownloadedImages` list (Type:Provider:Url) so the operator can see exactly what was downloaded.
 - 🐛 **Fix `no remote images available` for all 5 image types**: v0.2.5.0 created `new RemoteImageQuery(providerName: string.Empty)` which filters by provider with empty name (= none), so `GetAvailableRemoteImages` returned `[]` for Primary/Backdrop/Logo/Art/Thumb. v0.2.6.0 uses `providerName: null` (= all providers) and `IncludeDisabledProviders = true`, so every enabled ImageFetcher is now queried.
