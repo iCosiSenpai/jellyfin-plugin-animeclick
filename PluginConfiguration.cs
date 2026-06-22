@@ -74,6 +74,22 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Timeout in secondi per una singola chiamata di traduzione Ollama.</summary>
     public int EpisodeTranslationTimeoutSec { get; set; } = 30;
 
+    // ── TVDB (sinossi episodi IT dirette, senza traduzione) ──
+    /// <summary>
+    /// Abilita TheTVDB come fonte di sinossi episodi in italiano diretto. TVDB espone
+    /// overview per-episodio tradotte in diverse lingue; quando la traduzione IT esiste
+    /// viene usata direttamente (zero chiamate Ollama, zero compute sul NAS). Quando TVDB
+    /// non ha la traduzione per un episodio, si ricade sul flusso TMDB EN + Ollama IT
+    /// (se abilitato). Opt-in, richiede TvdbApiKey.
+    /// </summary>
+    public bool EnableTvdbSynopsis { get; set; } = false;
+
+    /// <summary>API key TheTVDB v4 (thetvdb.com dashboard). Lascia vuoto per disabilitare la fonte TVDB.</summary>
+    public string TvdbApiKey { get; set; } = string.Empty;
+
+    /// <summary>Codice lingua TVDB (3-char) per le sinossi episodi. Default "ita".</summary>
+    public string TvdbLanguage { get; set; } = "ita";
+
     // ── Ricerca ──
     /// <summary>Numero massimo di risultati per ricerca.</summary>
     public int MaxSearchResults { get; set; } = 10;
@@ -96,5 +112,5 @@ public class PluginConfiguration : BasePluginConfiguration
 
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP.</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.2.8.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.2.9.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 }

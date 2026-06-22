@@ -29,6 +29,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickTmdbClient _tmdbClient;
     private readonly AnimeClickOllamaTranslator _translator;
+    private readonly AnimeClickTvdbClient _tvdbClient;
 
     public AnimeClickEpisodeProvider(
         AnimeClickClient client,
@@ -37,7 +38,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         ILogger<AnimeClickEpisodeProvider> logger,
         IHttpClientFactory httpClientFactory,
         AnimeClickTmdbClient tmdbClient,
-        AnimeClickOllamaTranslator translator)
+        AnimeClickOllamaTranslator translator,
+        AnimeClickTvdbClient tvdbClient)
     {
         _client = client;
         _cache = cache;
@@ -46,6 +48,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         _httpClientFactory = httpClientFactory;
         _tmdbClient = tmdbClient;
         _translator = translator;
+        _tvdbClient = tvdbClient;
     }
 
     public string Name => "AnimeClick";
@@ -204,10 +207,15 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
     }
 
     /// <summary>
-    /// Resolves a TMDB tv id for the series, fetches the English episode overview from TMDB,
-    /// and translates it to Italian via Ollama Cloud. Sets <see cref="MetadataResult{T}.Item"/>'s
-    /// Overview (and HasMetadata) only on success. No-op when the feature is disabled or any
-    /// key is missing, and never throws.
+    /// Fills the Italian episode synopsis. Source order (gated by
+    /// <see cref="PluginConfiguration.EnableEpisodeSynopsisTranslation"/>):
+    /// 1) <b>TVDB</b> — direct Italian overview from TheTVDB translations (zero Ollama
+    ///    compute) when <see cref="PluginConfiguration.EnableTvdbSynopsis"/> is on and a
+    ///    TVDB API key is set. Preferred.
+    /// 2) <b>TMDB EN + Ollama IT</b> — fallback: English overview from TMDB translated to
+    ///    Italian via Ollama Cloud, when TMDB + Ollama keys are set.
+    /// Sets <see cref="MetadataResult{T}.Item"/>'s Overview (and HasMetadata) only on
+    /// success. Empty-guard: never overwrites with an empty string. Never throws.
     /// </summary>
     private async Task TrySetTranslatedSynopsisAsync(
         MetadataResult<Episode> result,
@@ -218,9 +226,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         PluginConfiguration configuration,
         CancellationToken cancellationToken)
     {
-        if (!configuration.EnableEpisodeSynopsisTranslation
-            || string.IsNullOrWhiteSpace(configuration.TmdbApiKey)
-            || string.IsNullOrWhiteSpace(configuration.OllamaCloudApiKey))
+        if (!configuration.EnableEpisodeSynopsisTranslation)
         {
             return;
         }
@@ -230,18 +236,67 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             return;
         }
 
+        var tvdbConfigured = configuration.EnableTvdbSynopsis
+            && !string.IsNullOrWhiteSpace(configuration.TvdbApiKey);
+        var tmdbOllamaConfigured = !string.IsNullOrWhiteSpace(configuration.TmdbApiKey)
+            && !string.IsNullOrWhiteSpace(configuration.OllamaCloudApiKey);
+
+        if (!tvdbConfigured && !tmdbOllamaConfigured)
+        {
+            return;
+        }
+
         try
         {
             // The series title + year come from the cached AnimeClickAnime that the
             // SeriesProvider populated (key anime::{url}). OriginalTitle (romaji) is the
-            // best search key for TMDB; Italian Title is the fallback. If the cache miss
-            // (e.g. episodes scanned before the series), skip — it'll work on a later scan.
+            // best search key for both TVDB and TMDB; Italian Title is the fallback. If the
+            // cache misses (e.g. episodes scanned before the series), skip — later scan.
             var seriesUrl = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
             var seriesCacheKey = $"anime::{seriesUrl}";
             var series = await _cache.GetAsync<AnimeClickAnime>(seriesCacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
             if (series is null)
             {
-                _logger.LogDebug("AnimeClick: series anime not cached for {Id}, skipping synopsis translation", animeClickId);
+                _logger.LogDebug("AnimeClick: series anime not cached for {Id}, skipping synopsis", animeClickId);
+                return;
+            }
+
+            // 1) TVDB direct Italian overview (preferred — no translation, no compute).
+            if (tvdbConfigured)
+            {
+                var tvdbId = await _tvdbClient.ResolveTvdbSeriesIdAsync(
+                    series.OriginalTitle,
+                    series.Title,
+                    series.ProductionYear,
+                    configuration,
+                    $"tvdbSeriesId::{animeClickId}",
+                    cancellationToken).ConfigureAwait(false);
+
+                if (tvdbId.HasValue)
+                {
+                    var itOverview = await _tvdbClient.GetEpisodeItalianOverviewAsync(
+                        tvdbId.Value, seasonNumber.Value, episodeNumber, configuration, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (!string.IsNullOrWhiteSpace(itOverview))
+                    {
+                        result.Item.Overview = itOverview;
+                        result.HasMetadata = true;
+                        _logger.LogDebug(
+                            "AnimeClick: synopsis IT (TVDB direct) for tvdb={Tvdb} S{S}E{E} ({Chars} chars)",
+                            tvdbId.Value, seasonNumber.Value, episodeNumber, itOverview.Length);
+                        return;
+                    }
+
+                    _logger.LogDebug(
+                        "AnimeClick: TVDB has no {Lang} overview for tvdb={Tvdb} S{S}E{E}, falling back to TMDB+Ollama",
+                        configuration.TvdbLanguage, tvdbId.Value, seasonNumber.Value, episodeNumber);
+                }
+            }
+
+            // 2) Fallback: TMDB English overview + Ollama Italian translation.
+            if (!tmdbOllamaConfigured)
+            {
                 return;
             }
 
@@ -255,7 +310,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
             if (!tmdbId.HasValue)
             {
-                _logger.LogDebug("AnimeClick: no TMDB tv id for series \"{Series}\", skipping synopsis translation",
+                _logger.LogDebug("AnimeClick: no TMDB tv id for series \"{Series}\", skipping synopsis",
                     series.OriginalTitle ?? series.Title ?? "<unknown>");
                 return;
             }
@@ -277,13 +332,13 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 result.Item.Overview = italianOverview;
                 result.HasMetadata = true;
                 _logger.LogDebug(
-                    "AnimeClick: translated synopsis IT for tmdb={Tmdb} S{S}E{E} ({Chars} chars)",
+                    "AnimeClick: synopsis IT (TMDB+Ollama) for tmdb={Tmdb} S{S}E{E} ({Chars} chars)",
                     tmdbId.Value, seasonNumber.Value, episodeNumber, italianOverview.Length);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "AnimeClick: synopsis translation failed for S{S}E{E}", seasonNumber, episodeNumber);
+            _logger.LogDebug(ex, "AnimeClick: synopsis fill failed for S{S}E{E}", seasonNumber, episodeNumber);
         }
     }
 

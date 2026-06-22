@@ -112,6 +112,86 @@ public class AnimeClickOllamaTranslator
     }
 
     /// <summary>
+    /// Diagnostics-only: validates the Ollama Cloud endpoint + key + model by sending a
+    /// trivial test prompt. Does NOT silent-catch — returns a detailed DTO so the UI can
+    /// show the real error (status code, response body, exception message).
+    /// </summary>
+    public async Task<OllamaTestResult> TestConnectionAsync(
+        string endpoint,
+        string apiKey,
+        string model,
+        int timeoutSec,
+        CancellationToken cancellationToken)
+    {
+        var result = new OllamaTestResult
+        {
+            Endpoint = endpoint,
+            Model = model
+        };
+
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            result.ErrorMessage = "Ollama endpoint is empty.";
+            return result;
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            result.ErrorMessage = "Ollama API key is empty.";
+            return result;
+        }
+
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            result.ErrorMessage = "Ollama model is empty.";
+            return result;
+        }
+
+        const string testSystemPrompt = "You are a test endpoint. Reply with exactly: ok";
+        const string testUserContent = "traduci: hello";
+
+        try
+        {
+            var body = BuildRequestBody(model, testSystemPrompt, testUserContent);
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(Math.Max(5, timeoutSec <= 0 ? 30 : timeoutSec));
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + apiKey);
+
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+            result.StatusCode = (int)response.StatusCode;
+            result.ResponseBody = responseBody;
+
+            if (!response.IsSuccessStatusCode)
+            {
+                result.ErrorMessage = $"Request failed: HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
+                return result;
+            }
+
+            result.Reply = ParseTranslatedContent(responseBody);
+            result.Success = !string.IsNullOrWhiteSpace(result.Reply);
+
+            if (!result.Success)
+            {
+                result.ErrorMessage = "Request succeeded but the response contained no message.content.";
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            result.ErrorMessage = ex.Message;
+            return result;
+        }
+    }
+
+    /// <summary>
     /// Strips HTML tags (AniList/TMDB overviews are HTML) and collapses whitespace.
     /// Converts &lt;br&gt; to newlines before stripping so paragraph breaks survive.
     /// </summary>
@@ -223,4 +303,16 @@ public class AnimeClickOllamaTranslator
         var result = sb.ToString();
         return string.IsNullOrWhiteSpace(result) ? null : result;
     }
+}
+
+/// <summary>Detailed result of an Ollama Cloud connection test (used by the diagnostics UI).</summary>
+public sealed class OllamaTestResult
+{
+    public bool Success { get; set; }
+    public string Endpoint { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public int StatusCode { get; set; }
+    public string? ResponseBody { get; set; }
+    public string? ErrorMessage { get; set; }
+    public string? Reply { get; set; }
 }

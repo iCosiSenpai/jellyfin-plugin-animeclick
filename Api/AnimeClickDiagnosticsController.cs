@@ -22,17 +22,26 @@ public class AnimeClickDiagnosticsController : ControllerBase
     private readonly AnimeClickClient _client;
     private readonly AnimeClickHtmlParser _parser;
     private readonly AnimeClickCacheService _cache;
+    private readonly AnimeClickTmdbClient _tmdbClient;
+    private readonly AnimeClickOllamaTranslator _translator;
+    private readonly AnimeClickTvdbClient _tvdbClient;
 
     public AnimeClickDiagnosticsController(
         AnimeClickSeriesSearchProvider searchProvider,
         AnimeClickClient client,
         AnimeClickHtmlParser parser,
-        AnimeClickCacheService cache)
+        AnimeClickCacheService cache,
+        AnimeClickTmdbClient tmdbClient,
+        AnimeClickOllamaTranslator translator,
+        AnimeClickTvdbClient tvdbClient)
     {
         _searchProvider = searchProvider;
         _client = client;
         _parser = parser;
         _cache = cache;
+        _tmdbClient = tmdbClient;
+        _translator = translator;
+        _tvdbClient = tvdbClient;
     }
 
     [HttpGet("TestLookup")]
@@ -122,6 +131,73 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
         return Ok(new ClearCacheResponse { Removed = removed });
     }
+
+    /// <summary>
+    /// Validates the TMDB API key (as currently entered in the form) by running a
+    /// search/tv with a known query. Returns a detailed result for the diagnostics UI.
+    /// </summary>
+    [HttpPost("TestTmdb")]
+    public async Task<ActionResult<TmdbTestResult>> TestTmdb(
+        [FromBody] TestTmdbRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+        {
+            return BadRequest(new { error = "request body is required" });
+        }
+
+        var apiKey = request.ApiKey ?? (Plugin.Instance?.Configuration ?? new PluginConfiguration()).TmdbApiKey;
+        var result = await _tmdbClient.TestConnectionAsync(apiKey, cancellationToken).ConfigureAwait(false);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Validates the Ollama Cloud endpoint + key + model (as currently entered in the
+    /// form) by sending a trivial test prompt. Returns a detailed result.
+    /// </summary>
+    [HttpPost("TestOllama")]
+    public async Task<ActionResult<OllamaTestResult>> TestOllama(
+        [FromBody] TestOllamaRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+        {
+            return BadRequest(new { error = "request body is required" });
+        }
+
+        var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var endpoint = string.IsNullOrWhiteSpace(request.Endpoint) ? config.OllamaCloudEndpoint : request.Endpoint;
+        var apiKey = string.IsNullOrEmpty(request.ApiKey) ? config.OllamaCloudApiKey : request.ApiKey;
+        var model = string.IsNullOrWhiteSpace(request.Model) ? config.OllamaCloudModel : request.Model;
+        var timeoutSec = request.TimeoutSec > 0 ? request.TimeoutSec.Value : config.EpisodeTranslationTimeoutSec;
+
+        var result = await _translator.TestConnectionAsync(endpoint!, apiKey, model, timeoutSec, cancellationToken)
+            .ConfigureAwait(false);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Validates the TheTVDB API key (as currently entered in the form) by logging in
+    /// and running a series search. Returns a detailed result.
+    /// </summary>
+    [HttpPost("TestTvdb")]
+    public async Task<ActionResult<TvdbTestResult>> TestTvdb(
+        [FromBody] TestTvdbRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+        {
+            return BadRequest(new { error = "request body is required" });
+        }
+
+        var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var apiKey = string.IsNullOrEmpty(request.ApiKey) ? config.TvdbApiKey : request.ApiKey;
+        var language = string.IsNullOrWhiteSpace(request.Language) ? config.TvdbLanguage : request.Language;
+
+        var result = await _tvdbClient.TestConnectionAsync(apiKey, language!, cancellationToken)
+            .ConfigureAwait(false);
+        return Ok(result);
+    }
 }
 
 public sealed class LookupDiagnosticResponse
@@ -174,4 +250,23 @@ public sealed class ClearCacheRequest
 public sealed class ClearCacheResponse
 {
     public int Removed { get; set; }
+}
+
+public sealed class TestTmdbRequest
+{
+    public string? ApiKey { get; set; }
+}
+
+public sealed class TestOllamaRequest
+{
+    public string? Endpoint { get; set; }
+    public string? ApiKey { get; set; }
+    public string? Model { get; set; }
+    public int? TimeoutSec { get; set; }
+}
+
+public sealed class TestTvdbRequest
+{
+    public string? ApiKey { get; set; }
+    public string? Language { get; set; }
 }
