@@ -217,27 +217,18 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
 
     private static void Map(Movie target, AnimeClickAnime source, PluginConfiguration configuration)
     {
-        target.Name = configuration.PreferItalianTitle ? source.Title : source.OriginalTitle ?? source.Title;
-        target.OriginalTitle = source.OriginalTitle;
+        // ── Campi localizzati (Italian-wins): sempre sovrascriventi quando AnimeClick
+        //    ha un valore reale. Empty-guard per non svuotare campi già riempiti da
+        //    altri provider con un valore nullo/vuoto. ──
+        var italianName = configuration.PreferItalianTitle ? source.Title : source.OriginalTitle ?? source.Title;
+        if (!string.IsNullOrWhiteSpace(italianName))
+        {
+            target.Name = italianName;
+        }
 
-        if (configuration.EnablePlot)
+        if (configuration.EnablePlot && !string.IsNullOrWhiteSpace(source.Overview))
         {
             target.Overview = source.Overview;
-        }
-
-        if (source.ProductionYear.HasValue)
-        {
-            target.ProductionYear = source.ProductionYear.Value;
-        }
-
-        if (source.PremiereDate.HasValue)
-        {
-            target.PremiereDate = source.PremiereDate.Value.UtcDateTime;
-        }
-
-        if (configuration.EnableCommunityRating && source.CommunityRating.HasValue)
-        {
-            target.CommunityRating = source.CommunityRating.Value;
         }
 
         if (configuration.EnableGenres && source.Genres.Count > 0)
@@ -245,19 +236,45 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             target.Genres = source.Genres.ToArray();
         }
 
-        if (configuration.EnableStudios && source.Studios.Count > 0)
-        {
-            target.Studios = source.Studios.ToArray();
-        }
-
         if (configuration.EnableTags && source.Tags.Count > 0)
         {
             target.Tags = source.Tags.ToArray();
         }
 
-        if (!string.IsNullOrWhiteSpace(source.OfficialRating))
+        // ── Campi non-italiani (language-neutral): solo se l'utente ha attivato
+        //    OverwriteNonItalianFields. Default false = li lascia ad AniList/TMDB/OMDb
+        //    (fill-gaps). Empty-guard comunque, per non cancellare valori esistenti. ──
+        if (configuration.OverwriteNonItalianFields)
         {
-            target.OfficialRating = source.OfficialRating;
+            if (!string.IsNullOrWhiteSpace(source.OriginalTitle))
+            {
+                target.OriginalTitle = source.OriginalTitle;
+            }
+
+            if (source.ProductionYear.HasValue)
+            {
+                target.ProductionYear = source.ProductionYear.Value;
+            }
+
+            if (source.PremiereDate.HasValue)
+            {
+                target.PremiereDate = source.PremiereDate.Value.UtcDateTime;
+            }
+
+            if (configuration.EnableCommunityRating && source.CommunityRating.HasValue)
+            {
+                target.CommunityRating = source.CommunityRating.Value;
+            }
+
+            if (configuration.EnableStudios && source.Studios.Count > 0)
+            {
+                target.Studios = source.Studios.ToArray();
+            }
+
+            if (!string.IsNullOrWhiteSpace(source.OfficialRating))
+            {
+                target.OfficialRating = source.OfficialRating;
+            }
         }
 
         foreach (var pair in source.ProviderIds)

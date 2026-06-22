@@ -27,19 +27,25 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
     private readonly AnimeClickHtmlParser _parser;
     private readonly ILogger<AnimeClickEpisodeProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AnimeClickTmdbClient _tmdbClient;
+    private readonly AnimeClickOllamaTranslator _translator;
 
     public AnimeClickEpisodeProvider(
         AnimeClickClient client,
         AnimeClickCacheService cache,
         AnimeClickHtmlParser parser,
         ILogger<AnimeClickEpisodeProvider> logger,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        AnimeClickTmdbClient tmdbClient,
+        AnimeClickOllamaTranslator translator)
     {
         _client = client;
         _cache = cache;
         _parser = parser;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _tmdbClient = tmdbClient;
+        _translator = translator;
     }
 
     public string Name => "AnimeClick";
@@ -156,29 +162,38 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 var isGeneric = System.Text.RegularExpressions.Regex.IsMatch(
                     match.Title, @"^Episodio\s+\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
-                if (isGeneric)
+                if (!isGeneric)
                 {
-                    _logger.LogDebug("AnimeClick: Episode {Num} has generic title \"{Title}\", skipping for English fallback",
+                    result.Item.Name = match.Title;
+                    result.Item.SetProviderId("AnimeClick", match.ProviderId ?? animeClickId);
+
+                    if (match.DurationMinutes.HasValue)
+                    {
+                        result.Item.RunTimeTicks = TimeSpan.FromMinutes(match.DurationMinutes.Value).Ticks;
+                    }
+
+                    result.HasMetadata = true;
+                    _logger.LogDebug(
+                        "AnimeClick: Episode S{Season} AC#{Absolute} ordinal={Ordinal} providerId={ProviderId} = \"{Title}\"",
+                        match.SeasonNumber,
+                        match.AbsoluteNumber,
+                        match.SeasonOrdinalNumber,
+                        match.ProviderId,
+                        match.Title);
+                }
+                else
+                {
+                    _logger.LogDebug("AnimeClick: Episode {Num} has generic title \"{Title}\", skipping Italian title",
                         match.Number, match.Title);
-                    return result;
                 }
-                result.Item.Name = match.Title;
-                result.Item.SetProviderId("AnimeClick", match.ProviderId ?? animeClickId);
-
-                if (match.DurationMinutes.HasValue)
-                {
-                    result.Item.RunTimeTicks = TimeSpan.FromMinutes(match.DurationMinutes.Value).Ticks;
-                }
-
-                result.HasMetadata = true;
-                _logger.LogDebug(
-                    "AnimeClick: Episode S{Season} AC#{Absolute} ordinal={Ordinal} providerId={ProviderId} = \"{Title}\"",
-                    match.SeasonNumber,
-                    match.AbsoluteNumber,
-                    match.SeasonOrdinalNumber,
-                    match.ProviderId,
-                    match.Title);
             }
+
+            // Optional: translate English episode synopsis (TMDB) to Italian (Ollama Cloud).
+            // AnimeClick publishes no per-episode synopsis, so we source the EN overview
+            // from TMDB and translate it. Runs even when the Italian title is generic/missing
+            // (the Italian synopsis has value on its own). Best-effort + cached; on any
+            // failure the Overview is left to other providers (AniList/TMDB) in EN (fill-gaps).
+            await TrySetTranslatedSynopsisAsync(result, info, mainAnimeClickId, seasonNumber, episodeNumber.Value, configuration, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -186,6 +201,90 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Resolves a TMDB tv id for the series, fetches the English episode overview from TMDB,
+    /// and translates it to Italian via Ollama Cloud. Sets <see cref="MetadataResult{T}.Item"/>'s
+    /// Overview (and HasMetadata) only on success. No-op when the feature is disabled or any
+    /// key is missing, and never throws.
+    /// </summary>
+    private async Task TrySetTranslatedSynopsisAsync(
+        MetadataResult<Episode> result,
+        EpisodeInfo info,
+        string animeClickId,
+        int? seasonNumber,
+        int episodeNumber,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (!configuration.EnableEpisodeSynopsisTranslation
+            || string.IsNullOrWhiteSpace(configuration.TmdbApiKey)
+            || string.IsNullOrWhiteSpace(configuration.OllamaCloudApiKey))
+        {
+            return;
+        }
+
+        if (!seasonNumber.HasValue || seasonNumber.Value < 0)
+        {
+            return;
+        }
+
+        try
+        {
+            // The series title + year come from the cached AnimeClickAnime that the
+            // SeriesProvider populated (key anime::{url}). OriginalTitle (romaji) is the
+            // best search key for TMDB; Italian Title is the fallback. If the cache miss
+            // (e.g. episodes scanned before the series), skip — it'll work on a later scan.
+            var seriesUrl = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
+            var seriesCacheKey = $"anime::{seriesUrl}";
+            var series = await _cache.GetAsync<AnimeClickAnime>(seriesCacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
+            if (series is null)
+            {
+                _logger.LogDebug("AnimeClick: series anime not cached for {Id}, skipping synopsis translation", animeClickId);
+                return;
+            }
+
+            var tmdbId = await _tmdbClient.ResolveTmdbTvIdAsync(
+                series.OriginalTitle,
+                series.Title,
+                series.ProductionYear,
+                configuration,
+                $"tmdbId::{animeClickId}",
+                cancellationToken).ConfigureAwait(false);
+
+            if (!tmdbId.HasValue)
+            {
+                _logger.LogDebug("AnimeClick: no TMDB tv id for series \"{Series}\", skipping synopsis translation",
+                    series.OriginalTitle ?? series.Title ?? "<unknown>");
+                return;
+            }
+
+            var englishOverview = await _tmdbClient.GetEpisodeOverviewAsync(
+                tmdbId.Value, seasonNumber.Value, episodeNumber, configuration, cancellationToken).ConfigureAwait(false);
+
+            if (string.IsNullOrWhiteSpace(englishOverview))
+            {
+                return;
+            }
+
+            var italianOverview = await _translator.TranslateSynopsisAsync(
+                englishOverview, tmdbId.Value, seasonNumber.Value, episodeNumber, configuration, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(italianOverview))
+            {
+                result.Item.Overview = italianOverview;
+                result.HasMetadata = true;
+                _logger.LogDebug(
+                    "AnimeClick: translated synopsis IT for tmdb={Tmdb} S{S}E{E} ({Chars} chars)",
+                    tmdbId.Value, seasonNumber.Value, episodeNumber, italianOverview.Length);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "AnimeClick: synopsis translation failed for S{S}E{E}", seasonNumber, episodeNumber);
+        }
     }
 
     /// <summary>
