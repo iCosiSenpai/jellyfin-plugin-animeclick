@@ -57,16 +57,23 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 
 1. Scarica l'ultima release dalla [pagina Releases](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases)
 2. Estrai lo zip nella cartella plugin:
-   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.2.10.0/`
-   - **Docker**: `/config/plugins/AnimeClick Metadata_0.2.10.0/`
-   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.2.10.0\`
+   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.2.11.0/`
+   - **Docker**: `/config/plugins/AnimeClick Metadata_0.2.11.0/`
+   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.2.11.0\`
 3. Riavvia Jellyfin
 
 > **Altri miei plugin:** nello stesso repository trovi anche [KometaThemes](https://github.com/iCosiSenpai/KometaTheme), che scarica automaticamente le sigle OP/ED degli anime da animethemes.moe.
 
 ## ⚙️ Configurazione
 
-La pagina di configurazione è organizzata in **4 schede**:
+La pagina di configurazione usa un layout **dashboard premium glassmorphism** con header sticky, tab bar iconata a pillole e card raggruppate. È organizzata in **4 schede**: Overview, Metadati, Sinossi e Strumenti.
+
+### Overview
+Scheda iniziale con:
+- **Stato connessione provider**: 3 tile TMDB / Ollama Cloud / TheTVDB con badge ✓/✗ e dettagli espandibili.
+- **Azioni rapide**: Identifica & Aggiorna, Svuota cache metadati.
+- **Cosa è attivo**: riepilogo chips delle opzioni abilitate.
+- **Ricerca impostazioni live**: filtra e evidenzia i match in tempo reale su tutte le schede.
 
 ### Metadati
 | Opzione | Default | Descrizione |
@@ -102,7 +109,7 @@ La pagina di configurazione è organizzata in **4 schede**:
 | Cache negativa (ore) | `12` | Durata cache per risultati vuoti |
 | Delay richieste (ms) | `1000` | Pausa tra richieste HTTP |
 | URL base | `https://www.animeclick.it` | URL di AnimeClick |
-| User-Agent | `AnimeClick-Jellyfin-Plugin/0.2.10.0` | Identificativo per le richieste |
+| User-Agent | `AnimeClick-Jellyfin-Plugin/0.2.11.0` | Identificativo per le richieste |
 
 ### Strumenti
 La scheda **Strumenti** contiene:
@@ -205,6 +212,14 @@ L'output sarà in `pub/`.
 **Requisiti**: Jellyfin **10.11+**, .NET **9.0** runtime.
 
 ## 📝 Changelog
+
+### v0.2.11.0 (Total redesign dashboard glassmorphism)
+- 🎨 **Dashboard premium glassmorphism**: header sticky con chip versione e link rapidi, tab bar a pillole con icone Material, dashboard Overview con tile stato provider, quick actions e riepilogo opzioni attive. Card glassmorphism su Metadati, Sinossi e Strumenti; save dock fisso in basso a destra.
+- 🔍 **Ricerca impostazioni live**: filtra label/descrizioni, evidenzia i match e nasconde le card non pertinenti.
+- ⚡ **Quick actions in Overview**: Identifica & Aggiorna e Svuota cache metadati accessibili direttamente dalla dashboard.
+- 💾 **Save dock flottante**: pulsante Salva sempre visibile in basso a destra.
+- 🧹 **UI pulita**: descrizioni toggleabili, nessun `<pre>` raw visibile di default, esiti umanizzati.
+- 🔧 Backend invariato; bump versione a 0.2.11.0.
 
 ### v0.2.10.0 (Redesign premium configPage)
 - 🎨 **Pagina di configurazione rinnovata**: 4 schede in alto (Metadati / Sinossi episodi / Ricerca / Strumenti) con card raggruppate, icone e header premium (chip versione + link repo/issues). Pattern tab JS-driven riusato da KometaThemes, CSS inline.
