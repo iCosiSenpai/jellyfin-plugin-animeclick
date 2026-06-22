@@ -66,8 +66,9 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 - **ID TMDB risolto on-demand** (search/tv by titolo originale + anno) per il fallback delle sinossi episodi; **ID TVDB risolto on-demand** (search series) per la fonte preferita IT diretta.
 - **Identificazione manuale** tramite ID AnimeClick (formato: `72/naruto` dall'URL) + pulsante **Identify & Refresh** (vedi sotto)
 - **Link esterno** diretto alla pagina AnimeClick nella sidebar
-- **Pagina di configurazione** completa nella dashboard Jellyfin
-- **Diagnostica admin** per provare lookup, preview episodi normalizzati e pulizia mirata della cache
+- **Pagina di configurazione** premium nella dashboard Jellyfin: 4 schede (Metadati / Sinossi episodi / Ricerca / Strumenti), card raggruppate, header con versione + link al repo/issues
+- **Tab Strumenti**: **Identifica & Aggiorna** (workaround bug Jellyfin 10.11.x, output umanizzato) e **Svuota cache metadati** con un clic
+- **Card "Stato connessione provider"** con badge ✓/✗ + dettagli espandibili per testare TMDB, Ollama e TVDB
 
 ## 📦 Installazione
 
@@ -85,9 +86,9 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 
 1. Scarica l'ultima release dalla [pagina Releases](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases)
 2. Estrai lo zip nella cartella plugin di Jellyfin:
-   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.2.9.0/`
-   - **Docker**: `/config/plugins/AnimeClick Metadata_0.2.9.0/`
-   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.2.9.0\`
+   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.2.10.0/`
+   - **Docker**: `/config/plugins/AnimeClick Metadata_0.2.10.0/`
+   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.2.10.0\`
 3. Riavvia Jellyfin
 
 > **💡 Altri miei plugin:** Nello stesso repository trovi anche [KometaThemes](https://github.com/iCosiSenpai/KometaTheme), che scarica automaticamente le sigle OP/ED degli anime da animethemes.moe.
@@ -124,7 +125,7 @@ Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** pe
 | Endpoint Ollama Cloud | `https://ollama.com/api/chat` | Endpoint chat Ollama Cloud |
 | Modello cloud | `gemma4:cloud` | Modello Ollama Cloud per la traduzione EN→IT (dropdown con modelli consigliati + personalizzato) |
 | Timeout traduzione (sec) | `30` | Timeout per una singola chiamata di traduzione Ollama / TVDB |
-| **Test TMDB / Test Ollama / Test TVDB** | — | Pulsanti di diagnostica: validano le credenziali inserite (status HTTP, body, errore) senza salvare |
+| **Test TMDB / Test Ollama / Test TVDB** | — | Card "Stato connessione provider" con badge ✓/✗ + dettagli espandibili: validano le credenziali inserite (status HTTP, body, errore) senza salvare |
 
 ### Ricerca
 | Opzione | Default | Descrizione |
@@ -143,13 +144,12 @@ Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** pe
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
 | URL base | `https://www.animeclick.it` | URL di AnimeClick |
-| User-Agent | `AnimeClick-Jellyfin-Plugin/0.2.9.0` | Identificativo per le richieste |
+| User-Agent | `AnimeClick-Jellyfin-Plugin/0.2.10.0` | Identificativo per le richieste |
 
-### Diagnostica
-La pagina plugin include strumenti admin per:
-- testare il ranking lookup con titolo e anno;
-- vedere episodi normalizzati con numero assoluto, progressivo di stagione e ID episodio;
-- pulire in modo mirato cache episodi, mappa stagioni e metadati AnimeClick.
+### Strumenti
+La scheda **Strumenti** della pagina plugin include:
+- **Identifica & Aggiorna**: applica subito i metadati AnimeClick a un item dopo l'Identify (workaround bug Jellyfin 10.11.x che non triggera il refresh). Output umanizzato (✓/✗) con riepilogo immagini scaricate.
+- **Svuota cache metadati**: rimuove con un clic tutti i dati cacheati localmente (ricerche, schede anime, episodi, sinossi TVDB/TMDB, traduzioni Ollama) per forzare un refresh fresco al prossimo scan.
 
 ## 🔍 Identificazione Manuale
 
@@ -174,11 +174,11 @@ identificato l'item in passato e stai solo ri-applicando lo stesso ID), Jellyfin
 considera la modifica un no-op e non fa partire nessun refresh automatico.
 
 Questo plugin (dalla v0.2.2.0) risolve il problema con un pulsante dedicato
-**"Identify & Refresh"** nella pagina di configurazione del plugin (sezione
-*Diagnostica*):
+**"Identifica & Aggiorna"** nella pagina di configurazione del plugin (scheda
+*Strumenti*):
 
-1. Apri Dashboard → Plugin → AnimeClick Metadata
-2. Scorri fino a **Diagnostica → Identify & Refresh**
+1. Apri Dashboard → Plugin → AnimeClick Metadata → scheda **Strumenti**
+2. Vai alla card **Identifica & Aggiorna**
 3. Inserisci:
    - **Item ID Jellyfin**: l'UUID dell'item (lo trovi nell'URL della pagina del film)
    - **AnimeClick ID**: l'ID nel formato `numeroslug` (es. `4371/hanasaku-iroha-movie-2013`)
@@ -188,15 +188,13 @@ Questo plugin (dalla v0.2.2.0) risolve il problema con un pulsante dedicato
    riscaricare artwork migliore. Le immagini locali (`folder.jpg`,
    `poster.jpg`, `backdrop.jpg` nella cartella del film) sono sempre
    preservate.
-5. Clicca **Identify & Refresh**: il plugin salva l'ID e triggera immediatamente
+5. Clicca **Identifica & Aggiorna**: il plugin salva l'ID e triggera immediatamente
    un `MetadataRefreshOptions { MetadataRefreshMode = FullRefresh, ReplaceAllMetadata = true, ReplaceAllImages = <come checkbox> }`
 6. Attendi qualche secondo (3-5 secondi per un film con cast, 5-10 secondi
    se hai spuntato anche le immagini): titolo italiano, trama, generi, cast
    e staff compaiono sulla pagina dell'item, e (se richiesto) le copertine
-   vengono aggiornate.
-
-C'è anche un pulsante **Stato Identify** per verificare velocemente se un item
-ha già l'ID provider AnimeClick impostato.
+   vengono aggiornate. Un box di risultato ✓/✗ mostra l'esito e l'elenco
+   delle immagini scaricate.
 
 > **Alternativa manuale**: clicca sul film → ⋮ → "Refresh & replace metadata".
 > Funziona anche senza il pulsante del plugin, ma devi farlo esplicitamente.
@@ -391,7 +389,7 @@ Nella stessa sezione ci sono tre pulsanti che validano le credenziali **attualme
 - **Test Ollama** — invia un prompt banale all'endpoint Ollama configurato e mostra la reply del modello, oppure l'errore (status, body, eccezione).
 - **Test TVDB** — fa login su TheTVDB + una `search` di prova e mostra se il token è stato ottenuto + una serie di esempio, oppure l'errore.
 
-Il risultato (successo o fallimento) appare in un box di testo sotto i pulsanti, con status HTTP, corpo della risposta e messaggio di eventuale eccezione — utile per capire esattamente cosa non va (key errata, endpoint sbagliato, modello inesistente, timeout).
+Il risultato appare come badge colorato accanto al pulsante (`✓ Connesso` o `✗ Errore HTTP …`); espandi "Dettagli risposta" per vedere status HTTP, corpo della risposta e messaggio di eventuale eccezione — utile per capire esattamente cosa non va (key errata, endpoint sbagliato, modello inesistente, timeout).
 
 ### Come funziona (e quando non funziona)
 - **TVDB prima**: il plugin risolve l'ID TVDB della serie cercando per **titolo originale (romaji) + anno** (fallback titolo italiano), cached per serie; poi fetcha la lista episodi tradotta (cached per serie+lingua, una chiamata paginata) e cerca la sinossi IT per stagione/episodio. Se esiste → `Overview` settato in IT, fine.
@@ -422,6 +420,14 @@ L'output sarà in `pub/`.
 - .NET **9.0** runtime
 
 ## 📝 Changelog
+
+### v0.2.10.0 (Redesign premium configPage: tab + card + stato provider)
+- 🎨 **Redesign completo della pagina di configurazione**: 4 schede in alto (Metadati / Sinossi episodi / Ricerca / Strumenti), card raggruppate con icone, header premium con chip versione + link al repo e alle issues. Pattern tab JS-driven riusato da KometaThemes (`.ac-tabs`/`.ac-panel`), CSS inline (niente asset esterni — la configPage resta un singolo `EmbeddedResource`).
+- 🧹 **Rimossa la sezione "Diagnostica" developer-facing**: eliminati Test lookup candidati, Preview episodi raw JSON, Stato Identify e i relativi campi/`<pre>` raw. Rimpiazzati con strumenti user-friendly.
+- 🛠️ **Tab Strumenti**: card **Identifica & Aggiorna** (workaround bug Jellyfin 10.11.x, ora con output umanizzato ✓/✗ + riepilogo immagini scaricate invece del summary tecnico multi-riga) e card **Svuota cache metadati** (un solo pulsante, nessun ID da inserire). Nuovo metodo `AnimeClickCacheService.ClearAll()` + ramo "corpo vuoto → clear all" in `POST /Plugins/AnimeClick/ClearCache`.
+- 📡 **Card "Stato connessione provider"** (tab Sinossi): i 3 test TMDB/Ollama/TVDB ora mostrano un **badge** colorato (`✓ Connesso` / `✗ Errore HTTP …` / `— non testato`) + dettagli risposta espandibili, al posto del `<pre>` raw.
+- 🐛 **Fix `{}` sui pulsanti di test** (già in source dalla v0.2.9.0 patch in-place, ora formalizzato in release): `animeClickApi` setta `dataType:'json'` sui POST e l'helper `showProviderError` legge il body della `Response` raw, così i test non restituiscono più `{}` ma il DTO reale o l'errore HTTP dettagliato.
+- 📝 **README**: sezione "Impostazioni" riscritta sui 4 tab + card stato provider + Strumenti; tutorial sinossi e Identify & Refresh aggiornati ai nuovi percorsi UI; bump riferimenti versione a 0.2.10.0.
 
 ### v0.2.9.0 (TVDB sinossi IT dirette + pulsanti di test TMDB/Ollama/TVDB)
 - 🌐 **TheTVDB come fonte preferita di sinossi episodi in italiano**: nuovo servizio `AnimeClickTvdbClient` che fa login su TVDB v4 (`POST /login`, token cached 24h), risolve l'ID serie (`/search?type=series`, cached) e fetcha la lista episodi tradotta in una sola chiamata paginata (`/series/{id}/episodes/default/{lang}`, cached per serie+lingua). Quando TVDB ha la sinossi IT la usa **direttamente** — zero chiamate Ollama, zero compute sul NAS. Se TVDB non ha la traduzione, **fallback** sul flusso esistente TMDB EN + Ollama IT. Nuovi toggle `EnableTvdbSynopsis` + `TvdbApiKey` + `TvdbLanguage` (default `ita`), opt-in. Best-effort, mai crasha, empty-guard.

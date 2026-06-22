@@ -109,24 +109,36 @@ public class AnimeClickDiagnosticsController : ControllerBase
             return BadRequest(new { error = "request body is required" });
         }
 
+        // Corpo vuoto (nessun Key/Prefix/AnimeClickId) = svuota l'intera cache metadati,
+        // usato dal pulsante "Svuota cache metadati" della config page.
         var removed = 0;
-        if (!string.IsNullOrWhiteSpace(request.Key))
+        var hasKey = !string.IsNullOrWhiteSpace(request.Key);
+        var hasPrefix = !string.IsNullOrWhiteSpace(request.Prefix);
+        var hasAnimeClickId = !string.IsNullOrWhiteSpace(request.AnimeClickId);
+
+        if (!hasKey && !hasPrefix && !hasAnimeClickId)
         {
-            removed += _cache.ClearKey(request.Key);
+            removed += _cache.ClearAll();
+            return Ok(new ClearCacheResponse { Removed = removed });
         }
 
-        if (!string.IsNullOrWhiteSpace(request.Prefix))
+        if (hasKey)
         {
-            removed += _cache.ClearByPrefix(request.Prefix);
+            removed += _cache.ClearKey(request.Key!);
         }
 
-        if (!string.IsNullOrWhiteSpace(request.AnimeClickId))
+        if (hasPrefix)
+        {
+            removed += _cache.ClearByPrefix(request.Prefix!);
+        }
+
+        if (hasAnimeClickId)
         {
             removed += _cache.ClearByPrefix($"episodes:v2::{request.AnimeClickId}");
             removed += _cache.ClearByPrefix($"episodes::{request.AnimeClickId}");
             removed += _cache.ClearByPrefix($"seasonMap:v2::{request.AnimeClickId}");
             removed += _cache.ClearByPrefix($"seasonMap::{request.AnimeClickId}");
-            removed += _cache.ClearByPrefix($"anime::{AnimeClickClient.BuildAnimeUrl((Plugin.Instance?.Configuration ?? new PluginConfiguration()).BaseUrl, request.AnimeClickId)}");
+            removed += _cache.ClearByPrefix($"anime::{AnimeClickClient.BuildAnimeUrl((Plugin.Instance?.Configuration ?? new PluginConfiguration()).BaseUrl, request.AnimeClickId!)}");
         }
 
         return Ok(new ClearCacheResponse { Removed = removed });

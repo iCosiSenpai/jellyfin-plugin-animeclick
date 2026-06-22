@@ -2,6 +2,114 @@
 <html lang="it">
 <head>
     <title>AnimeClick Metadata</title>
+    <style>
+        /* ── Variabili tema (Jellyfin con fallback espliciti) ── */
+        #AnimeClickConfigPage {
+            --ac-surface: var(--cardbox-bg, #181818);
+            --ac-surface-2: var(--cardbox-bg-hl, #222);
+            --ac-border: var(--cardbox-border, rgba(255,255,255,0.08));
+            --ac-text: var(--text-color, #eee);
+            --ac-text-muted: var(--text-muted-color, #9aa0a6);
+            --ac-brand: var(--theme-color, #00a4dc);
+            --ac-ok: #43a047;
+            --ac-err: #ef5350;
+            --ac-idle: #888;
+        }
+
+        /* ── Pill tabs (modello KometaThemes) ── */
+        .ac-tabs {
+            display: flex; gap: 6px; flex-wrap: wrap;
+            padding: 5px; margin: 0 0 1.4em 0;
+            border: 1px solid var(--ac-border);
+            border-radius: 999px;
+            background: var(--ac-surface);
+            width: fit-content; max-width: 100%;
+        }
+        .ac-tab {
+            appearance: none; border: 1px solid transparent; cursor: pointer;
+            padding: 7px 16px; border-radius: 999px;
+            background: transparent; color: var(--ac-text-muted);
+            font: inherit; font-size: 0.92em; font-weight: 600; white-space: nowrap;
+            transition: color .15s, background .15s, border-color .15s;
+        }
+        .ac-tab:hover { color: var(--ac-text); background: var(--ac-surface-2); }
+        .ac-tab[aria-selected='true'] {
+            color: #fff; background: var(--ac-brand); border-color: transparent;
+            box-shadow: 0 2px 10px rgba(0, 164, 220, 0.35);
+        }
+        .ac-panel { display: none; }
+        .ac-panel.active { display: block; animation: ac-fade .25s ease both; }
+        @keyframes ac-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+        /* ── Card ── */
+        .ac-card {
+            background: var(--ac-surface);
+            border: 1px solid var(--ac-border);
+            border-radius: 10px;
+            padding: 1.1em 1.3em 1.2em;
+            margin-bottom: 1em;
+        }
+        .ac-card-title {
+            display: flex; align-items: center; gap: 0.45em;
+            font-size: 1.02em; font-weight: 700; margin: 0 0 0.7em 0;
+            color: var(--ac-text);
+        }
+        .ac-card-title .ac-icon { font-size: 1.1em; line-height: 1; }
+        .ac-card .fieldDescription { color: var(--ac-text-muted); }
+
+        /* Griglia a 2 colonne per le checkbox "Dettagli opzionali" */
+        .ac-grid2 {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 0.3em 1.5em;
+        }
+        @media (max-width: 540px) { .ac-grid2 { grid-template-columns: 1fr; } }
+
+        /* ── Stato connessione provider ── */
+        .ac-status-row {
+            padding: 0.6em 0;
+            border-bottom: 1px solid var(--ac-border);
+        }
+        .ac-status-row:last-child { border-bottom: none; }
+        .ac-status-main {
+            display: flex; align-items: center; gap: 0.8em; flex-wrap: wrap;
+        }
+        .ac-status-label { min-width: 64px; font-weight: 600; color: var(--ac-text); }
+        .ac-test-btn { margin: 0; min-width: 80px; }
+        .ac-badge {
+            display: inline-block; padding: 2px 10px; border-radius: 999px;
+            font-size: 0.85em; font-weight: 600;
+        }
+        .ac-badge.ok { background: rgba(67,160,71,0.18); color: var(--ac-ok); border: 1px solid rgba(67,160,71,0.4); }
+        .ac-badge.err { background: rgba(239,83,80,0.16); color: var(--ac-err); border: 1px solid rgba(239,83,80,0.4); }
+        .ac-badge.idle { background: rgba(136,136,136,0.12); color: var(--ac-idle); border: 1px solid rgba(136,136,136,0.3); }
+        .ac-status-details { margin-top: 0.5em; }
+        .ac-status-details > summary { cursor: pointer; color: var(--ac-text-muted); font-size: 0.88em; }
+        .ac-raw {
+            white-space: pre-wrap; overflow-x: auto; margin: 0.5em 0 0; font-size: 0.82em;
+            background: rgba(0,0,0,0.25); border: 1px solid var(--ac-border);
+            border-radius: 6px; padding: 0.6em; max-height: 320px; overflow-y: auto;
+        }
+
+        /* ── Box risultato (Identify / Svuota cache / Save) ── */
+        .ac-result {
+            margin-top: 0.8em; padding: 0.7em 0.9em; border-radius: 8px;
+            font-size: 0.92em; white-space: pre-wrap; line-height: 1.45;
+        }
+        .ac-result.ok { background: rgba(67,160,71,0.12); border: 1px solid rgba(67,160,71,0.35); color: #bfe8c2; }
+        .ac-result.err { background: rgba(239,83,80,0.12); border: 1px solid rgba(239,83,80,0.35); color: #f6c7c6; }
+
+        /* ── Header premium ── */
+        .ac-header { margin-bottom: 1.2em; }
+        .ac-meta-row {
+            display: flex; flex-wrap: wrap; gap: 0.6em; align-items: center;
+            margin-top: 0.6em; font-size: 0.88em; color: var(--ac-text-muted);
+        }
+        .ac-version-chip {
+            display: inline-block; padding: 2px 9px; border-radius: 999px;
+            background: rgba(0,164,220,0.14); color: var(--ac-brand);
+            border: 1px solid rgba(0,164,220,0.3); font-weight: 600; font-size: 0.82em;
+        }
+        .ac-meta-row a { color: var(--ac-brand); }
+    </style>
 </head>
 <body>
     <div id="AnimeClickConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
@@ -11,555 +119,405 @@
             <div class="content-primary">
                 <form id="AnimeClickConfigForm">
 
-                    <div style="text-align: center; margin-bottom: 2em; margin-top: 1em;">
-                        <img src="https://raw.githubusercontent.com/iCosiSenpai/jellyfin-plugin-animeclick/main/assets/banner-plugin-interno.png" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);" alt="AnimeClick Banner" />
-                    </div>
-
-                    <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">AnimeClick Metadata</h2>
-                    </div>
-
-                    <div class="verticalSection">
-                        <p class="description">
-                            Provider di metadati anime in italiano da <a href="https://www.animeclick.it" target="_blank">AnimeClick.it</a>.
-                            Tutte le richieste sono rate-limited e i dati vengono cacheati localmente per rispettare il sito.
+                    <!-- ════════════════ HEADER ════════════════ -->
+                    <div class="ac-header">
+                        <div style="text-align: center; margin: 1em 0;">
+                            <img src="https://raw.githubusercontent.com/iCosiSenpai/jellyfin-plugin-animeclick/main/assets/banner-plugin-interno.png" style="max-width: 100%; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);" alt="AnimeClick Banner" />
+                        </div>
+                        <div class="sectionTitleContainer flex align-items-center">
+                            <h2 class="sectionTitle">AnimeClick Metadata</h2>
+                        </div>
+                        <p class="description" style="margin: 0;">
+                            Provider di metadati anime in italiano da <a href="https://www.animeclick.it" target="_blank" rel="noopener noreferrer">AnimeClick.it</a>.
+                            Richieste rate-limited e dati cacheati localmente per rispettare il sito.
                         </p>
-                    </div>
-
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <!-- METADATI -->
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">Metadati</h2>
-                    </div>
-
-                    <div class="verticalSection">
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkPreferItalianTitle" />
-                                <span>Preferisci titolo italiano</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Usa il titolo italiano come nome della serie. Se disattivato, viene usato il titolo originale giapponese.
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnablePlot" />
-                                <span>Importa trama</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Importa la sinossi/trama in italiano dalla pagina dell'anime.
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkOverwriteNonItalianFields" />
-                                <span>Sovrascrivi campi non-italiani</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Se attivo, AnimeClick sovrascrive anche titolo originale, studio, rating, data e classificazione (campi che AniList/TMDB/OMDb gestiscono meglio). Se spento (default), AnimeClick fornisce solo i campi localizzati (titolo, trama, generi, tag, cast IT) e lascia i buchi agli altri provider.
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableAnimeClickImages" />
-                                <span>Usa locandina AnimeClick come fallback</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Fornisce la locandina italiana di AnimeClick come immagine di fallback per serie/film. Priorità bassa: AniList/Fanart/altro vincono se hanno immagini; AnimeClick riempie solo i buchi.
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableGenres" />
-                                <span>Importa generi</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Importa i generi in italiano (es. Commedia, Fantascienza, Scolastico).
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableStudios" />
-                                <span>Importa studi di animazione</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Importa gli studi di produzione (es. MAPPA, ufotable, Kyoto Animation).
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableCommunityRating" />
-                                <span>Importa valutazione community</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Importa il rating medio della community di AnimeClick (scala 1-10).
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableCast" />
-                                <span>Importa cast e staff</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Importa doppiatori (JP + IT), registi, autori e compositori dalla scheda dell'anime.
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableTags" />
-                                <span>Importa tag</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Importa tag come Shounen, Seinen, Mecha, Isekai dalla scheda dell'anime.
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableEpisodeTitles" />
-                                <span>Importa titoli episodi in italiano</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Scarica i titoli degli episodi in italiano dalla pagina /episodi di AnimeClick.
-                                Se un titolo è generico ("Episodio X"), il plugin lo ignora e lascia che i provider inglesi (TMDB, TVDB) forniscano il titolo.
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableThemeSongs" />
-                                <span>Importa sigle AnimeClick best-effort</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Importa i nomi delle Opening ed Ending solo quando AnimeClick li espone in modo strutturato.
-                                Molte schede multimedia contengono solo trailer/PV e in quel caso il plugin lo segnala in diagnostica senza trattarlo come errore.
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableCollections" />
-                                <span>Crea collezioni automatiche (saghe)</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                ⚠️ Sperimentale — Raggruppa automaticamente sequel, prequel e spin-off nella stessa collezione.
-                                Disattivato di default perché potrebbe creare collezioni indesiderate.
-                            </div>
+                        <div class="ac-meta-row">
+                            <span class="ac-version-chip">v0.2.10.0</span>
+                            <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick">Codice sorgente</a>
+                            <span>·</span>
+                            <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues">Segnala un problema</a>
                         </div>
                     </div>
 
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <!-- SINOSSI EPISODI IT (TVDB / TMDB + Ollama Cloud) -->
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">Sinossi episodi in italiano (TVDB / TMDB + Ollama Cloud)</h2>
+                    <!-- ════════════════ TAB BAR ════════════════ -->
+                    <nav class="ac-tabs" role="tablist">
+                        <button type="button" class="ac-tab" role="tab" data-panel="metadati" aria-selected="true">Metadati</button>
+                        <button type="button" class="ac-tab" role="tab" data-panel="sinossi" aria-selected="false">Sinossi episodi</button>
+                        <button type="button" class="ac-tab" role="tab" data-panel="ricerca" aria-selected="false">Ricerca</button>
+                        <button type="button" class="ac-tab" role="tab" data-panel="strumenti" aria-selected="false">Strumenti</button>
+                    </nav>
+
+                    <!-- ════════════════ TAB 1 — METADATI ════════════════ -->
+                    <div class="ac-panel active" data-panel="metadati">
+
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">📖</span>Titoli &amp; Trama</div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input type="checkbox" is="emby-checkbox" id="chkPreferItalianTitle" />
+                                    <span>Preferisci titolo italiano</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Usa il titolo italiano come nome della serie. Se disattivato, viene usato il titolo originale giapponese.
+                                </div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input type="checkbox" is="emby-checkbox" id="chkEnablePlot" />
+                                    <span>Importa trama</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Importa la sinossi/trama in italiano dalla pagina dell'anime.
+                                </div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input type="checkbox" is="emby-checkbox" id="chkOverwriteNonItalianFields" />
+                                    <span>Sovrascrivi campi non-italiani</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Se attivo, AnimeClick sovrascrive anche titolo originale, studio, rating, data e classificazione (campi che AniList/TMDB/OMDb gestiscono meglio). Se spento (default), AnimeClick fornisce solo i campi localizzati e lascia i buchi agli altri provider.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">🖼️</span>Immagini</div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input type="checkbox" is="emby-checkbox" id="chkEnableAnimeClickImages" />
+                                    <span>Usa locandina AnimeClick come fallback</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Usa le copertine di AnimeClick come immagine di fallback per serie/film. Priorità bassa: AniList/Fanart/TMDB vincono se hanno immagini; AnimeClick riempie solo i buchi.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">⚙️</span>Dettagli opzionali</div>
+                            <div class="ac-grid2">
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input type="checkbox" is="emby-checkbox" id="chkEnableGenres" />
+                                        <span>Importa generi</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Generi in italiano (es. Commedia, Fantascienza, Scolastico).</div>
+                                </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input type="checkbox" is="emby-checkbox" id="chkEnableStudios" />
+                                        <span>Importa studi di animazione</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Studi di produzione (es. MAPPA, ufotable, Kyoto Animation).</div>
+                                </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input type="checkbox" is="emby-checkbox" id="chkEnableCommunityRating" />
+                                        <span>Importa valutazione community</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Rating medio della community AnimeClick (scala 1-10).</div>
+                                </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input type="checkbox" is="emby-checkbox" id="chkEnableCast" />
+                                        <span>Importa cast e staff</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Doppiatori (JP + IT), registi, autori e compositori.</div>
+                                </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input type="checkbox" is="emby-checkbox" id="chkEnableTags" />
+                                        <span>Importa tag</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Tag come Shounen, Seinen, Mecha, Isekai.</div>
+                                </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input type="checkbox" is="emby-checkbox" id="chkEnableEpisodeTitles" />
+                                        <span>Importa titoli episodi IT</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Titoli episodi in italiano da /episodi. I titoli generici ("Episodio X") sono ignorati.</div>
+                                </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input type="checkbox" is="emby-checkbox" id="chkEnableThemeSongs" />
+                                        <span>Importa sigle (OP/ED)</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">Nomi di Opening/Ending quando AnimeClick li espone in modo strutturato.</div>
+                                </div>
+                                <div class="checkboxContainer checkboxContainer-withDescription">
+                                    <label class="emby-checkbox-label">
+                                        <input type="checkbox" is="emby-checkbox" id="chkEnableCollections" />
+                                        <span>Crea collezioni (sperimentale)</span>
+                                    </label>
+                                    <div class="fieldDescription checkboxFieldDescription">⚠️ Raggruppa sequel/prequel/spin-off in collezioni. Disattivato di default.</div>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
 
-                    <div class="verticalSection">
-                        <div class="checkboxContainer checkboxContainer-withDescription">
+                    <!-- ════════════════ TAB 2 — SINOSSI EPISODI ════════════════ -->
+                    <div class="ac-panel" data-panel="sinossi">
+
+                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin-bottom: 1em;">
                             <label class="emby-checkbox-label">
                                 <input type="checkbox" is="emby-checkbox" id="chkEnableEpisodeSynopsisTranslation" />
-                                <span>Recupera le sinossi degli episodi in italiano</span>
+                                <span>Abilita sinossi episodi in italiano</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
-                                AnimeClick non pubblica sinossi per-episodio. Il plugin usa <strong>TVDB</strong> come fonte preferita
-                                (sinossi IT dirette, zero traduzione/compute) quando abilitato sotto, e in fallback <strong>TMDB</strong>
-                                (overview EN) + <strong>Ollama Cloud</strong> (traduzione IT). Disattivato di default.
-                                Senza questa opzione, le sinossi restano in inglese dai provider nativi Jellyfin (fill-gaps).
-                                Carico NAS: solo HTTPS in uscita, zero compute locale; cache per-episodio.
+                                AnimeClick non pubblica sinossi per-episodio. Il plugin usa <strong>TVDB</strong> come fonte preferita (sinossi IT dirette, zero compute) quando abilitato sotto, e in fallback <strong>TMDB</strong> (overview EN) + <strong>Ollama Cloud</strong> (traduzione IT). Disattivato di default; senza, le sinossi restano in inglese dai provider nativi (fill-gaps).
                             </div>
                         </div>
 
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">
-                                TMDB API key
-                            </label>
-                            <input id="txtTmdbApiKey" type="text" is="emby-input" />
-                            <div class="fieldDescription">
-                                Ottieni una API key gratuita su
-                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://www.themoviedb.org/settings/api">themoviedb.org/settings/api</a>
-                                (tipo Personal / Developer). Lascia vuoto per disabilitare la fonte inglese.
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">🌐</span>TheTVDB — fonte preferita</div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input type="checkbox" is="emby-checkbox" id="chkEnableTvdbSynopsis" />
+                                    <span>Usa TheTVDB (sinossi IT dirette)</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    TheTVDB espone le sinossi degli episodi già tradotte in italiano: quando la traduzione esiste viene usata <strong>direttamente</strong>, senza chiamate Ollama e senza compute sul NAS. Se TVDB non ha la traduzione per un episodio, il plugin ricade su TMDB + Ollama (se configurati sotto). Richiede una API key TheTVDB v4.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtTvdbApiKey">TheTVDB API key</label>
+                                <input id="txtTvdbApiKey" type="password" is="emby-input" />
+                                <div class="fieldDescription">
+                                    Registrati su <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://www.thetvdb.com/signup">thetvdb.com</a> e crea una API key gratuita dalla tua dashboard. Lascia vuoto per disabilitare la fonte TVDB.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtTvdbLanguage">Lingua TheTVDB (codice 3-char)</label>
+                                <input id="txtTvdbLanguage" type="text" is="emby-input" placeholder="ita" />
+                                <div class="fieldDescription">
+                                    Codice lingua TheTVDB per le sinossi episodi (default: <code>ita</code>). Esempi: <code>ita</code>, <code>eng</code>, <code>jpn</code>.
+                                </div>
                             </div>
                         </div>
 
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtOllamaCloudApiKey">
-                                Ollama Cloud API key
-                            </label>
-                            <input id="txtOllamaCloudApiKey" type="password" is="emby-input" />
-                            <div class="fieldDescription">
-                                Crea la tua API key su
-                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://ollama.com/settings/keys">ollama.com/settings/keys</a>
-                                (account gratuito). Lascia vuoto per disabilitare la traduzione.
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">🔁</span>TMDB + Ollama Cloud — fallback</div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">TMDB API key</label>
+                                <input id="txtTmdbApiKey" type="text" is="emby-input" />
+                                <div class="fieldDescription">
+                                    Ottieni una API key gratuita su <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://www.themoviedb.org/settings/api">themoviedb.org/settings/api</a> (tipo Personal / Developer). Lascia vuoto per disabilitare la fonte inglese.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtOllamaCloudApiKey">Ollama Cloud API key</label>
+                                <input id="txtOllamaCloudApiKey" type="password" is="emby-input" />
+                                <div class="fieldDescription">
+                                    Crea la tua API key su <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://ollama.com/settings/keys">ollama.com/settings/keys</a> (account gratuito). Lascia vuoto per disabilitare la traduzione.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtOllamaCloudEndpoint">Endpoint Ollama Cloud</label>
+                                <input id="txtOllamaCloudEndpoint" type="text" is="emby-input" />
+                                <div class="fieldDescription">
+                                    Endpoint chat di Ollama Cloud (default: <code>https://ollama.com/api/chat</code>).
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="selOllamaCloudModel">Modello cloud per la traduzione</label>
+                                <select id="selOllamaCloudModel" is="emby-select">
+                                    <optgroup label="Consigliati per traduzione anime EN→IT">
+                                        <option value="gemma4:cloud">gemma4:cloud (consigliato, solido multilingua)</option>
+                                        <option value="minimax-m2.1:cloud">minimax-m2.1:cloud (multilingual capabilities)</option>
+                                        <option value="qwen3.5:cloud">qwen3.5:cloud</option>
+                                        <option value="gpt-oss:cloud">gpt-oss:cloud</option>
+                                    </optgroup>
+                                    <optgroup label="Altri modelli cloud">
+                                        <option value="glm-5.2:cloud">glm-5.2:cloud</option>
+                                        <option value="minimax-m3:cloud">minimax-m3:cloud</option>
+                                        <option value="kimi-k2.7-code:cloud">kimi-k2.7-code:cloud</option>
+                                        <option value="nemotron-3-ultra:cloud">nemotron-3-ultra:cloud</option>
+                                        <option value="glm-5.1:cloud">glm-5.1:cloud</option>
+                                        <option value="minimax-m2.7:cloud">minimax-m2.7:cloud</option>
+                                        <option value="nemotron-3-super:cloud">nemotron-3-super:cloud</option>
+                                        <option value="glm-5:cloud">glm-5:cloud</option>
+                                        <option value="minimax-m2.5:cloud">minimax-m2.5:cloud</option>
+                                        <option value="kimi-k2.6:cloud">kimi-k2.6:cloud</option>
+                                        <option value="deepseek-v4-pro:cloud">deepseek-v4-pro:cloud</option>
+                                        <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud</option>
+                                        <option value="kimi-k2.5:cloud">kimi-k2.5:cloud</option>
+                                        <option value="qwen3-coder:cloud">qwen3-coder:cloud</option>
+                                        <option value="glm-4.7:cloud">glm-4.7:cloud</option>
+                                        <option value="gemini-3-flash-preview:cloud">gemini-3-flash-preview:cloud</option>
+                                    </optgroup>
+                                    <option value="__custom__">Personalizzato… (inserisci sotto)</option>
+                                </select>
+                                <div class="fieldDescription">
+                                    I modelli cloud Ollama sono gated per <strong>tier di abbonamento</strong> (Free/Pro/Max). Il Free ha concurrency 1 e limiti di utilizzo (sufficienti per traduzioni cached brevi); il Pro sblocca modelli più grandi e ~50× più utilizzo. Vedi <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://ollama.com/pricing">ollama.com/pricing</a> e il catalogo su <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://ollama.com/search?c=cloud">ollama.com/search?c=cloud</a>.
+                                </div>
+                            </div>
+                            <div class="inputContainer" id="customModelContainer" style="display:none;">
+                                <label class="inputLabel inputLabelUnfocused" for="txtOllamaCloudModelCustom">Modello personalizzato</label>
+                                <input id="txtOllamaCloudModelCustom" type="text" is="emby-input" placeholder="es: gemma4:cloud" />
+                                <div class="fieldDescription">
+                                    Inserisci il tag esatto del modello cloud Ollama (formato <code>nome:cloud</code>).
+                                </div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="numEpisodeTranslationTimeoutSec">Timeout traduzione (secondi)</label>
+                                <input id="numEpisodeTranslationTimeoutSec" type="number" is="emby-input" min="5" max="300" step="1" />
+                                <div class="fieldDescription">
+                                    Timeout per una singola chiamata di traduzione Ollama (default: 30).
+                                </div>
                             </div>
                         </div>
 
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtOllamaCloudEndpoint">
-                                Endpoint Ollama Cloud
-                            </label>
-                            <input id="txtOllamaCloudEndpoint" type="text" is="emby-input" />
-                            <div class="fieldDescription">
-                                Endpoint chat di Ollama Cloud (default: <code>https://ollama.com/api/chat</code>).
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="selOllamaCloudModel">
-                                Modello cloud per la traduzione
-                            </label>
-                            <select id="selOllamaCloudModel" is="emby-select">
-                                <optgroup label="Consigliati per traduzione anime EN→IT">
-                                    <option value="gemma4:cloud">gemma4:cloud (consigliato, solido multilingua)</option>
-                                    <option value="minimax-m2.1:cloud">minimax-m2.1:cloud (multilingual capabilities)</option>
-                                    <option value="qwen3.5:cloud">qwen3.5:cloud</option>
-                                    <option value="gpt-oss:cloud">gpt-oss:cloud</option>
-                                </optgroup>
-                                <optgroup label="Altri modelli cloud">
-                                    <option value="glm-5.2:cloud">glm-5.2:cloud</option>
-                                    <option value="minimax-m3:cloud">minimax-m3:cloud</option>
-                                    <option value="kimi-k2.7-code:cloud">kimi-k2.7-code:cloud</option>
-                                    <option value="nemotron-3-ultra:cloud">nemotron-3-ultra:cloud</option>
-                                    <option value="glm-5.1:cloud">glm-5.1:cloud</option>
-                                    <option value="minimax-m2.7:cloud">minimax-m2.7:cloud</option>
-                                    <option value="nemotron-3-super:cloud">nemotron-3-super:cloud</option>
-                                    <option value="glm-5:cloud">glm-5:cloud</option>
-                                    <option value="minimax-m2.5:cloud">minimax-m2.5:cloud</option>
-                                    <option value="kimi-k2.6:cloud">kimi-k2.6:cloud</option>
-                                    <option value="deepseek-v4-pro:cloud">deepseek-v4-pro:cloud</option>
-                                    <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud</option>
-                                    <option value="kimi-k2.5:cloud">kimi-k2.5:cloud</option>
-                                    <option value="qwen3-coder:cloud">qwen3-coder:cloud</option>
-                                    <option value="glm-4.7:cloud">glm-4.7:cloud</option>
-                                    <option value="gemini-3-flash-preview:cloud">gemini-3-flash-preview:cloud</option>
-                                </optgroup>
-                                <option value="__custom__">Personalizzato… (inserisci sotto)</option>
-                            </select>
-                            <div class="fieldDescription">
-                                I modelli cloud Ollama sono gated per <strong>tier di abbonamento</strong> (Free/Pro/Max), non per singolo modello:
-                                il Free ha concurrency 1 e limiti di utilizzo (sessione/7gg) — sufficienti per traduzioni cached brevi;
-                                il Pro ($20/mese) sblocca modelli più grandi e ~50× più utilizzo. Vedi
-                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://ollama.com/pricing">ollama.com/pricing</a>
-                                e il catalogo su
-                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://ollama.com/search?c=cloud">ollama.com/search?c=cloud</a>.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer" id="customModelContainer" style="display:none;">
-                            <label class="inputLabel inputLabelUnfocused" for="txtOllamaCloudModelCustom">
-                                Modello personalizzato
-                            </label>
-                            <input id="txtOllamaCloudModelCustom" type="text" is="emby-input" placeholder="es: gemma4:cloud" />
-                            <div class="fieldDescription">
-                                Inserisci il tag esatto del modello cloud Ollama (formato <code>nome:cloud</code>).
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="numEpisodeTranslationTimeoutSec">
-                                Timeout traduzione (secondi)
-                            </label>
-                            <input id="numEpisodeTranslationTimeoutSec" type="number" is="emby-input" min="5" max="300" step="1" />
-                            <div class="fieldDescription">
-                                Timeout per una singola chiamata di traduzione Ollama (default: 30).
-                            </div>
-                        </div>
-
-                        <!-- ── TVDB (fonte preferita: sinossi IT dirette) ── -->
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkEnableTvdbSynopsis" />
-                                <span>Usa TheTVDB come fonte preferita (sinossi IT dirette)</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                TheTVDB espone le sinossi degli episodi già tradotte in italiano: quando la traduzione esiste viene
-                                usata <strong>direttamente</strong>, senza chiamate Ollama e senza compute sul NAS. Se TVDB non ha la
-                                traduzione per un episodio, il plugin ricade su TMDB + Ollama (se configurati sotto). Richiede una
-                                API key TheTVDB v4.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtTvdbApiKey">
-                                TheTVDB API key
-                            </label>
-                            <input id="txtTvdbApiKey" type="password" is="emby-input" />
-                            <div class="fieldDescription">
-                                Registrati su
-                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://www.thetvdb.com/signup">thetvdb.com</a>
-                                e crea una API key gratuita dalla tua dashboard. Lascia vuoto per disabilitare la fonte TVDB.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtTvdbLanguage">
-                                Lingua TheTVDB (codice 3-char)
-                            </label>
-                            <input id="txtTvdbLanguage" type="text" is="emby-input" placeholder="ita" />
-                            <div class="fieldDescription">
-                                Codice lingua TheTVDB per le sinossi episodi (default: <code>ita</code>). Esempi: <code>ita</code>, <code>eng</code>, <code>jpn</code>.
-                            </div>
-                        </div>
-
-                        <!-- ── Pulsanti di test connessione (diagnostica dettagliata) ── -->
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused">Test connessione provider</label>
-                            <div style="display:flex; flex-wrap:wrap; gap:0.5em;">
-                                <button is="emby-button" type="button" id="btnTestTmdb" class="raised emby-button">
-                                    <span>Test TMDB</span>
-                                </button>
-                                <button is="emby-button" type="button" id="btnTestOllama" class="raised emby-button">
-                                    <span>Test Ollama</span>
-                                </button>
-                                <button is="emby-button" type="button" id="btnTestTvdb" class="raised emby-button">
-                                    <span>Test TVDB</span>
-                                </button>
-                            </div>
-                            <div class="fieldDescription">
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">📡</span>Stato connessione provider</div>
+                            <div class="fieldDescription" style="margin-bottom: 0.6em;">
                                 Verifica le credenziali <em>attualmente inserite nei campi sopra</em> (non serve salvare prima).
-                                Mostra status HTTP, corpo della risposta ed eventuali errori dettagliati.
                             </div>
-                            <pre id="txtSynopsisTestOutput" style="white-space: pre-wrap; overflow-x: auto; margin-top: 1em;"></pre>
+
+                            <div class="ac-status-row">
+                                <div class="ac-status-main">
+                                    <span class="ac-status-label">TMDB</span>
+                                    <button is="emby-button" type="button" id="btnTestTmdb" class="raised emby-button ac-test-btn"><span>Test</span></button>
+                                    <span class="ac-badge idle" id="badgeTmdb">— non testato</span>
+                                </div>
+                                <details class="ac-status-details" id="detailsTmdb" hidden>
+                                    <summary>Dettagli risposta</summary>
+                                    <pre class="ac-raw" id="preTmdb"></pre>
+                                </details>
+                            </div>
+
+                            <div class="ac-status-row">
+                                <div class="ac-status-main">
+                                    <span class="ac-status-label">Ollama</span>
+                                    <button is="emby-button" type="button" id="btnTestOllama" class="raised emby-button ac-test-btn"><span>Test</span></button>
+                                    <span class="ac-badge idle" id="badgeOllama">— non testato</span>
+                                </div>
+                                <details class="ac-status-details" id="detailsOllama" hidden>
+                                    <summary>Dettagli risposta</summary>
+                                    <pre class="ac-raw" id="preOllama"></pre>
+                                </details>
+                            </div>
+
+                            <div class="ac-status-row">
+                                <div class="ac-status-main">
+                                    <span class="ac-status-label">TVDB</span>
+                                    <button is="emby-button" type="button" id="btnTestTvdb" class="raised emby-button ac-test-btn"><span>Test</span></button>
+                                    <span class="ac-badge idle" id="badgeTvdb">— non testato</span>
+                                </div>
+                                <details class="ac-status-details" id="detailsTvdb" hidden>
+                                    <summary>Dettagli risposta</summary>
+                                    <pre class="ac-raw" id="preTvdb"></pre>
+                                </details>
+                            </div>
                         </div>
+
                     </div>
 
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <!-- RICERCA -->
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">Ricerca</h2>
+                    <!-- ════════════════ TAB 3 — RICERCA ════════════════ -->
+                    <div class="ac-panel" data-panel="ricerca">
+
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">🔎</span>Ricerca</div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtMaxSearchResults">Risultati massimi per ricerca</label>
+                                <input id="txtMaxSearchResults" type="number" is="emby-input" min="1" max="25" step="1" />
+                                <div class="fieldDescription">Numero massimo di risultati restituiti da ogni ricerca su AnimeClick (default: 10).</div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
+                                    <input type="checkbox" is="emby-checkbox" id="chkFilterToAnimeOnly" />
+                                    <span>Filtra solo anime</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">Esclude automaticamente manga, novel e drama dai risultati di ricerca.</div>
+                            </div>
+                        </div>
+
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">💾</span>Cache &amp; Performance</div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtCacheHours">Durata cache metadati (ore)</label>
+                                <input id="txtCacheHours" type="number" is="emby-input" min="1" max="720" step="1" />
+                                <div class="fieldDescription">Durata in ore della cache locale per i metadati scaricati. Valori più alti riducono il traffico verso AnimeClick (default: 48).</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtNegativeCacheHours">Durata cache negativa (ore)</label>
+                                <input id="txtNegativeCacheHours" type="number" is="emby-input" min="1" max="168" step="1" />
+                                <div class="fieldDescription">Per quanto tempo cacheare i risultati vuoti (anime non trovato). Evita richieste ripetute per titoli assenti su AnimeClick (default: 12).</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtRequestDelay">Delay tra richieste (ms)</label>
+                                <input id="txtRequestDelay" type="number" is="emby-input" min="500" max="10000" step="100" />
+                                <div class="fieldDescription">Pausa in millisecondi tra ogni richiesta HTTP verso AnimeClick. Rispetta il rate limiting etico richiesto dallo staff (default: 1000).</div>
+                            </div>
+                        </div>
+
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">🛠️</span>Avanzate</div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtBaseUrl">URL base AnimeClick</label>
+                                <input id="txtBaseUrl" type="url" is="emby-input" />
+                                <div class="fieldDescription">URL del sito AnimeClick. Non modificare a meno che non sia strettamente necessario.</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtUserAgent">User-Agent personalizzato</label>
+                                <input id="txtUserAgent" type="text" is="emby-input" />
+                                <div class="fieldDescription">Stringa User-Agent utilizzata per le richieste HTTP. Identifica il plugin verso AnimeClick per trasparenza.</div>
+                            </div>
+                        </div>
+
                     </div>
 
-                    <div class="verticalSection">
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtMaxSearchResults">
-                                Risultati massimi per ricerca
-                            </label>
-                            <input id="txtMaxSearchResults" type="number" is="emby-input"
-                                   min="1" max="25" step="1" />
-                            <div class="fieldDescription">
-                                Numero massimo di risultati restituiti da ogni ricerca su AnimeClick (default: 10).
+                    <!-- ════════════════ TAB 4 — STRUMENTI ════════════════ -->
+                    <div class="ac-panel" data-panel="strumenti">
+
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">✨</span>Identifica &amp; Aggiorna</div>
+                            <div class="fieldDescription" style="margin-bottom: 0.9em;">
+                                Dopo aver identificato un anime con AnimeClick (Identify di Jellyfin), usa questo pulsante per applicare subito titoli, trama, cast e immagini senza dover fare un refresh manuale. Risolve il bug di Jellyfin 10.11.x che non triggera il refresh automatico dopo l'Identify.
                             </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtIdentifyItemId">Item ID Jellyfin</label>
+                                <input id="txtIdentifyItemId" type="text" is="emby-input" placeholder="es. cb31a96c-a9c6-dc99-c9a6-6554d90bb453" />
+                                <div class="fieldDescription">L'UUID dell'item Jellyfin. Lo trovi nell'URL della pagina del film/serie (Dashboard → libreria → item, copia l'UUID dall'indirizzo).</div>
+                            </div>
+                            <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtIdentifyAnimeClickId">AnimeClick ID</label>
+                                <input id="txtIdentifyAnimeClickId" type="text" is="emby-input" placeholder="es. 4371/hanasaku-iroha-movie-2013" />
+                                <div class="fieldDescription">ID AnimeClick nel formato <code>numero/slug</code> o solo numerico.</div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription" style="margin: 0.5em 0;">
+                                <label class="emby-checkbox-label">
+                                    <input type="checkbox" is="emby-checkbox" id="chkReplaceAllImages" />
+                                    <span>Aggiorna anche copertine e immagini</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Le immagini locali (folder.jpg, poster.jpg, backdrop.jpg nella cartella dell'item) sono preservate. Le immagini remote già scaricate vengono rimosse e riscaricate dagli ImageFetcher (Fanart, AniList, TMDB, OMDb). Lascia deselezionato per popolare solo i metadati testuali.
+                                </div>
+                            </div>
+                            <button is="emby-button" type="button" id="btnIdentifyAndRefresh" class="raised emby-button">
+                                <span>Identifica &amp; Aggiorna</span>
+                            </button>
+                            <div class="ac-result" id="resultIdentify" hidden></div>
                         </div>
 
-                        <div class="checkboxContainer checkboxContainer-withDescription">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkFilterToAnimeOnly" />
-                                <span>Filtra solo anime</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Esclude automaticamente manga, novel e drama dai risultati di ricerca.
+                        <div class="ac-card">
+                            <div class="ac-card-title"><span class="ac-icon">🧹</span>Svuota cache</div>
+                            <div class="fieldDescription" style="margin-bottom: 0.9em;">
+                                Rimuove tutti i dati metadati cacheati localmente (ricerche, schede anime, episodi, sinossi TVDB/TMDB, traduzioni Ollama). Al prossimo scan i dati verranno riscaricati freschi. Utile se AnimeClick ha aggiornato una scheda e vuoi forzare il refresh.
                             </div>
+                            <button is="emby-button" type="button" id="btnClearAllCache" class="raised emby-button">
+                                <span>Svuota cache metadati</span>
+                            </button>
+                            <div class="ac-result" id="resultCache" hidden></div>
                         </div>
+
                     </div>
 
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <!-- CACHE & PERFORMANCE -->
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">Cache e Performance</h2>
-                    </div>
-
-                    <div class="verticalSection">
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtCacheHours">
-                                Durata cache metadati (ore)
-                            </label>
-                            <input id="txtCacheHours" type="number" is="emby-input"
-                                   min="1" max="720" step="1" />
-                            <div class="fieldDescription">
-                                Durata in ore della cache locale per i metadati scaricati.
-                                Valori più alti riducono il traffico verso AnimeClick (default: 48).
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtNegativeCacheHours">
-                                Durata cache negativa (ore)
-                            </label>
-                            <input id="txtNegativeCacheHours" type="number" is="emby-input"
-                                   min="1" max="168" step="1" />
-                            <div class="fieldDescription">
-                                Per quanto tempo cacheare i risultati vuoti (anime non trovato).
-                                Evita richieste ripetute per titoli che non esistono su AnimeClick (default: 12).
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtRequestDelay">
-                                Delay tra richieste (ms)
-                            </label>
-                            <input id="txtRequestDelay" type="number" is="emby-input"
-                                   min="500" max="10000" step="100" />
-                            <div class="fieldDescription">
-                                Pausa in millisecondi tra ogni richiesta HTTP verso AnimeClick.
-                                Rispetta il rate limiting etico richiesto dallo staff (default: 1000).
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <!-- AVANZATE -->
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">Avanzate</h2>
-                    </div>
-
-                    <div class="verticalSection">
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtBaseUrl">
-                                URL base AnimeClick
-                            </label>
-                            <input id="txtBaseUrl" type="url" is="emby-input" />
-                            <div class="fieldDescription">
-                                URL del sito AnimeClick. Non modificare a meno che non sia strettamente necessario.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtUserAgent">
-                                User-Agent personalizzato
-                            </label>
-                            <input id="txtUserAgent" type="text" is="emby-input" />
-                            <div class="fieldDescription">
-                                Stringa User-Agent utilizzata per le richieste HTTP.
-                                Identifica il plugin verso AnimeClick per trasparenza.
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <!-- DIAGNOSTICA -->
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">Diagnostica</h2>
-                    </div>
-
-                    <div class="verticalSection">
-                        <div class="paperList" style="background: rgba(255,193,7,0.12); border-left: 4px solid #ffc107; padding: 1em; border-radius: 4px; margin-bottom: 1.5em;">
-                            <p style="margin: 0 0 0.5em 0;">
-                                <strong>Flusso Identify → Save → Refresh</strong>
-                            </p>
-                            <p style="margin: 0; font-size: 0.9em; line-height: 1.5;">
-                                Jellyfin 10.11.x salva l'ID provider con Identify → Save, ma
-                                <strong>NON</strong> triggera automaticamente un metadata refresh.
-                                Per popolare titolo italiano, trama, cast, ecc. subito dopo aver salvato
-                                l'ID AnimeClick su un item, usa il pulsante <em>Identify &amp; Refresh</em>
-                                qui sotto (inserisci l'ID item Jellyfin e l'ID AnimeClick).
-                            </p>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtIdentifyItemId">
-                                Item ID Jellyfin
-                            </label>
-                            <input id="txtIdentifyItemId" type="text" is="emby-input"
-                                   placeholder="es. cb31a96c-a9c6-dc99-c9a6-6554d90bb453" />
-                            <div class="fieldDescription">
-                                L'UUID dell'item Jellyfin. Lo trovi nell'URL della pagina del film
-                                (Dashboard → libreria → film, copia l'UUID dall'indirizzo).
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtIdentifyAnimeClickId">
-                                AnimeClick ID
-                            </label>
-                            <input id="txtIdentifyAnimeClickId" type="text" is="emby-input"
-                                   placeholder="es. 4371/hanasaku-iroha-movie-2013" />
-                            <div class="fieldDescription">
-                                ID AnimeClick nel formato <code>numeroslug</code> o solo numerico.
-                            </div>
-                        </div>
-
-                        <div class="checkboxContainer checkboxContainer-withDescription" style="margin: 0.5em 0;">
-                            <label class="emby-checkbox-label">
-                                <input type="checkbox" is="emby-checkbox" id="chkReplaceAllImages" />
-                                <span>Sostituisci anche le immagini (rimuove cover/poster/backdrop remoti esistenti prima del refresh)</span>
-                            </label>
-                            <div class="fieldDescription checkboxFieldDescription">
-                                Le immagini locali (folder.jpg, poster.jpg, backdrop.jpg nella cartella del film) sono
-                                preservate. Le immagini remote già scaricate (poster, backdrop, logo) sono rimosse
-                                e riscaricate dagli ImageFetchers (Fanart, AniList, TMDB, OMDb). Lascia deselezionato
-                                per popolare solo i metadata testuali (titolo italiano, trama, cast, …).
-                            </div>
-                        </div>
-
-                        <button is="emby-button" type="button" id="btnIdentifyAndRefresh" class="raised emby-button">
-                            <span>Identify &amp; Refresh</span>
-                        </button>
-                        <button is="emby-button" type="button" id="btnIdentifyStatus" class="raised emby-button">
-                            <span>Stato Identify</span>
-                        </button>
-
-                        <hr style="margin: 2em 0; border: none; border-top: 1px solid rgba(255,255,255,0.1);" />
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtDiagLookup">
-                                Test lookup serie
-                            </label>
-                            <input id="txtDiagLookup" type="text" is="emby-input" placeholder="The Dangers in My Heart" />
-                            <div class="fieldDescription">
-                                Mostra i candidati scelti dal provider dopo scoring per titolo, anno e tipo.
-                            </div>
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtDiagYear">
-                                Anno opzionale
-                            </label>
-                            <input id="txtDiagYear" type="number" is="emby-input" min="1900" max="2100" step="1" />
-                        </div>
-
-                        <button is="emby-button" type="button" id="btnDiagLookup" class="raised emby-button">
-                            <span>Test lookup</span>
-                        </button>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtDiagAnimeClickId">
-                                AnimeClick ID
-                            </label>
-                            <input id="txtDiagAnimeClickId" type="text" is="emby-input" placeholder="44780/boku-no-kokoro-no-yabai-yatsu" />
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtDiagSeason">
-                                Stagione
-                            </label>
-                            <input id="txtDiagSeason" type="number" is="emby-input" min="1" max="99" step="1" />
-                        </div>
-
-                        <div class="inputContainer">
-                            <label class="inputLabel inputLabelUnfocused" for="txtDiagEpisode">
-                                Episodio
-                            </label>
-                            <input id="txtDiagEpisode" type="number" is="emby-input" min="1" max="999" step="1" />
-                        </div>
-
-                        <button is="emby-button" type="button" id="btnDiagEpisodes" class="raised emby-button">
-                            <span>Preview episodi</span>
-                        </button>
-                        <button is="emby-button" type="button" id="btnDiagClearCache" class="raised emby-button">
-                            <span>Pulisci cache ID</span>
-                        </button>
-
-                        <pre id="txtDiagOutput" style="white-space: pre-wrap; overflow-x: auto; margin-top: 1em;"></pre>
-                    </div>
-
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <!-- BOTTONE SALVA -->
-                    <!-- ═══════════════════════════════════════════════ -->
-                    <div>
+                    <!-- ════════════════ BOTTONE SALVA ════════════════ -->
+                    <div class="ac-result" id="resultSave" hidden></div>
+                    <div style="margin-top: 1.2em;">
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                             <span>Salva</span>
                         </button>
@@ -572,15 +530,154 @@
         <script type="text/javascript">
             var AnimeClickPluginId = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
 
+            /* ── Tabs (modello KometaThemes) ── */
+            function selectTab(name) {
+                document.querySelectorAll('#AnimeClickConfigPage .ac-tab').forEach(function (tab) {
+                    tab.setAttribute('aria-selected', tab.dataset.panel === name ? 'true' : 'false');
+                });
+                document.querySelectorAll('#AnimeClickConfigPage .ac-panel').forEach(function (panel) {
+                    panel.classList.toggle('active', panel.dataset.panel === name);
+                });
+            }
+            function bindTabs() {
+                document.querySelectorAll('#AnimeClickConfigPage .ac-tab').forEach(function (tab) {
+                    tab.addEventListener('click', function () { selectTab(tab.dataset.panel); });
+                });
+            }
+
+            /* ── Helper numerici / URL ── */
+            function clampInt(selector, fallback, min, max) {
+                var raw = parseInt(document.querySelector(selector).value, 10);
+                if (isNaN(raw)) { raw = fallback; }
+                return Math.max(min, Math.min(max, raw));
+            }
+            function optionalInt(selector) {
+                var raw = parseInt(document.querySelector(selector).value, 10);
+                return isNaN(raw) ? null : raw;
+            }
+            function optionalIntValue(selector, fallback) {
+                var v = parseInt(document.querySelector(selector).value, 10);
+                return isNaN(v) ? fallback : v;
+            }
+            function validateBaseUrl(value) {
+                try {
+                    var url = new URL(value);
+                    if (url.protocol !== 'https:' && url.protocol !== 'http:') { return null; }
+                    return url.origin;
+                } catch (err) { return null; }
+            }
+            function currentOllamaModel() {
+                var sel = document.querySelector('#selOllamaCloudModel');
+                if (sel.value === '__custom__') {
+                    return document.querySelector('#txtOllamaCloudModelCustom').value.trim() || 'gemma4:cloud';
+                }
+                return sel.value;
+            }
+
+            /* ── API wrapper: POST con dataType:'json' (fix bug Response raw "{}") ── */
+            function animeClickApi(path, method, body) {
+                var opts = {
+                    type: method || 'GET',
+                    url: ApiClient.getUrl(path),
+                    data: body ? JSON.stringify(body) : null,
+                    contentType: 'application/json'
+                };
+                if ((method || 'GET') !== 'GET') { opts.dataType = 'json'; }
+                return ApiClient.ajax(opts);
+            }
+
+            /* ── Box risultato user-friendly ── */
+            function setResult(targetId, ok, message) {
+                var box = document.querySelector('#' + targetId);
+                if (!box) { return; }
+                box.className = 'ac-result ' + (ok ? 'ok' : 'err');
+                box.textContent = message;
+                box.hidden = false;
+            }
+
+            /* ── Stato provider: badge + dettagli espandibili ── */
+            function truncate(s, n) {
+                if (!s) { return ''; }
+                return s.length > n ? s.slice(0, n - 1) + '…' : s;
+            }
+            function renderProviderStatus(prefix, result) {
+                var badge = document.querySelector('#badge' + prefix);
+                var details = document.querySelector('#details' + prefix);
+                var pre = document.querySelector('#pre' + prefix);
+                if (!badge) { return; }
+                if (!result) {
+                    badge.className = 'ac-badge err'; badge.textContent = '✗ Nessuna risposta';
+                    return;
+                }
+                // ASP.NET serializza in camelCase anche se il DTO C# usa PascalCase:
+                // leggiamo entrambi per sicurezza.
+                function pick(camel, pascal) {
+                    return result[camel] !== undefined ? result[camel] : result[pascal];
+                }
+                var ok = pick('success', 'Success') === true;
+                var statusCode = pick('statusCode', 'StatusCode');
+                var errorMessage = pick('errorMessage', 'ErrorMessage');
+                var endpoint = pick('endpoint', 'Endpoint');
+                var model = pick('model', 'Model');
+                var tokenObtained = pick('tokenObtained', 'TokenObtained');
+                var sampleName = pick('sampleName', 'SampleName') || pick('sampleSeriesName', 'SampleSeriesName');
+                var sampleId = pick('sampleId', 'SampleId') || pick('sampleSeriesId', 'SampleSeriesId');
+                var reply = pick('reply', 'Reply');
+                var responseBody = pick('responseBody', 'ResponseBody');
+
+                badge.className = 'ac-badge ' + (ok ? 'ok' : 'err');
+                badge.textContent = ok ? '✓ Connesso' : ('✗ ' + truncate(errorMessage || ('HTTP ' + (statusCode || '?')), 46));
+
+                var lines = [];
+                lines.push('Stato: ' + (ok ? 'Connesso' : 'Errore') + (statusCode ? ' (HTTP ' + statusCode + ')' : ''));
+                if (endpoint) { lines.push('Endpoint: ' + endpoint); }
+                if (model) { lines.push('Modello: ' + model); }
+                if (tokenObtained !== undefined && tokenObtained !== null) { lines.push('Token ottenuto: ' + (tokenObtained ? 'sì' : 'no')); }
+                if (sampleName) { lines.push('Esempio: ' + sampleName + (sampleId ? ' (' + sampleId + ')' : '')); }
+                if (reply) { lines.push('Risposta Ollama: ' + reply); }
+                if (errorMessage) { lines.push('Errore: ' + errorMessage); }
+                if (responseBody) { lines.push('\nCorpo risposta:\n' + responseBody); }
+                pre.textContent = lines.join('\n');
+                details.hidden = false;
+            }
+            function showProviderError(prefix, label, err) {
+                var badge = document.querySelector('#badge' + prefix);
+                var details = document.querySelector('#details' + prefix);
+                var pre = document.querySelector('#pre' + prefix);
+                var status = (err && err.status) || '?';
+                if (badge) { badge.className = 'ac-badge err'; badge.textContent = '✗ Errore HTTP ' + status; }
+                function fill(txt) {
+                    if (pre) { pre.textContent = label + ' FALLITO (HTTP ' + status + '):\n' + txt; }
+                    if (details) { details.hidden = false; }
+                }
+                if (err && typeof err.text === 'function') {
+                    err.text().then(fill).catch(function () { fill('<no response body>'); });
+                } else {
+                    fill(err && err.responseText ? err.responseText : String(err));
+                }
+            }
+
+            /* ── Load ── */
             document.querySelector('#AnimeClickConfigPage')
                 .addEventListener('pageshow', function () {
                     Dashboard.showLoadingMsg();
+                    bindTabs();
                     ApiClient.getPluginConfiguration(AnimeClickPluginId).then(function (config) {
                         // Metadati
                         document.querySelector('#chkPreferItalianTitle').checked = config.PreferItalianTitle;
                         document.querySelector('#chkEnablePlot').checked = config.EnablePlot;
                         document.querySelector('#chkOverwriteNonItalianFields').checked = config.OverwriteNonItalianFields;
                         document.querySelector('#chkEnableAnimeClickImages').checked = config.EnableAnimeClickImages;
+                        document.querySelector('#chkEnableGenres').checked = config.EnableGenres;
+                        document.querySelector('#chkEnableStudios').checked = config.EnableStudios;
+                        document.querySelector('#chkEnableCommunityRating').checked = config.EnableCommunityRating;
+                        document.querySelector('#chkEnableCast').checked = config.EnableCast;
+                        document.querySelector('#chkEnableTags').checked = config.EnableTags;
+                        document.querySelector('#chkEnableEpisodeTitles').checked = config.EnableEpisodeTitles;
+                        document.querySelector('#chkEnableThemeSongs').checked = config.EnableThemeSongs;
+                        document.querySelector('#chkEnableCollections').checked = config.EnableCollections;
+
+                        // Sinossi episodi IT
                         document.querySelector('#chkEnableEpisodeSynopsisTranslation').checked = config.EnableEpisodeSynopsisTranslation;
                         document.querySelector('#txtTmdbApiKey').value = config.TmdbApiKey || '';
                         document.querySelector('#txtOllamaCloudApiKey').value = config.OllamaCloudApiKey || '';
@@ -590,14 +687,13 @@
                         document.querySelector('#txtTvdbApiKey').value = config.TvdbApiKey || '';
                         document.querySelector('#txtTvdbLanguage').value = config.TvdbLanguage || 'ita';
 
-                        // Model dropdown: if the configured model isn't in the preset list, select "Personalizzato…"
-                        // and show the custom input prefilled with the configured value.
-                        const selModel = document.querySelector('#selOllamaCloudModel');
-                        const customModelContainer = document.querySelector('#customModelContainer');
-                        const customModelInput = document.querySelector('#txtOllamaCloudModelCustom');
-                        const configuredModel = config.OllamaCloudModel || 'gemma4:cloud';
-                        const presetOptions = Array.from(selModel.options).filter(o => o.value !== '__custom__').map(o => o.value);
-                        if (presetOptions.includes(configuredModel)) {
+                        // Model dropdown: se il modello configurato non è tra i preset, seleziona "Personalizzato…"
+                        var selModel = document.querySelector('#selOllamaCloudModel');
+                        var customModelContainer = document.querySelector('#customModelContainer');
+                        var customModelInput = document.querySelector('#txtOllamaCloudModelCustom');
+                        var configuredModel = config.OllamaCloudModel || 'gemma4:cloud';
+                        var presetOptions = Array.from(selModel.options).filter(function (o) { return o.value !== '__custom__'; }).map(function (o) { return o.value; });
+                        if (presetOptions.indexOf(configuredModel) !== -1) {
                             selModel.value = configuredModel;
                             customModelContainer.style.display = 'none';
                         } else {
@@ -605,18 +701,9 @@
                             customModelContainer.style.display = '';
                             customModelInput.value = configuredModel;
                         }
-                        // Toggle the custom-model input visibility when the dropdown changes.
                         selModel.addEventListener('change', function () {
                             customModelContainer.style.display = selModel.value === '__custom__' ? '' : 'none';
                         });
-                        document.querySelector('#chkEnableGenres').checked = config.EnableGenres;
-                        document.querySelector('#chkEnableStudios').checked = config.EnableStudios;
-                        document.querySelector('#chkEnableCommunityRating').checked = config.EnableCommunityRating;
-                        document.querySelector('#chkEnableCast').checked = config.EnableCast;
-                        document.querySelector('#chkEnableTags').checked = config.EnableTags;
-                        document.querySelector('#chkEnableEpisodeTitles').checked = config.EnableEpisodeTitles;
-                        document.querySelector('#chkEnableThemeSongs').checked = config.EnableThemeSongs;
-                        document.querySelector('#chkEnableCollections').checked = config.EnableCollections;
 
                         // Ricerca
                         document.querySelector('#txtMaxSearchResults').value = config.MaxSearchResults;
@@ -635,136 +722,64 @@
                     });
                 });
 
-            function clampInt(selector, fallback, min, max) {
-                var raw = parseInt(document.querySelector(selector).value, 10);
-                if (isNaN(raw)) {
-                    raw = fallback;
-                }
-                return Math.max(min, Math.min(max, raw));
-            }
-
-            function optionalInt(selector) {
-                var raw = parseInt(document.querySelector(selector).value, 10);
-                return isNaN(raw) ? null : raw;
-            }
-
-            function validateBaseUrl(value) {
-                try {
-                    var url = new URL(value);
-                    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-                        return null;
-                    }
-                    return url.origin;
-                } catch (err) {
-                    return null;
-                }
-            }
-
-            function animeClickApi(path, method, body) {
-                return ApiClient.ajax({
-                    type: method || 'GET',
-                    url: ApiClient.getUrl(path),
-                    data: body ? JSON.stringify(body) : null,
-                    contentType: 'application/json'
-                });
-            }
-
-            function setDiagOutput(value) {
-                document.querySelector('#txtDiagOutput').textContent =
-                    typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-            }
-
-            function setSynopsisTestOutput(value) {
-                document.querySelector('#txtSynopsisTestOutput').textContent =
-                    typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-            }
-
-            // Reads the currently-entered Ollama model (preset dropdown, or the custom
-            // input when "Personalizzato…" is selected).
-            function currentOllamaModel() {
-                var sel = document.querySelector('#selOllamaCloudModel');
-                if (sel.value === '__custom__') {
-                    return document.querySelector('#txtOllamaCloudModelCustom').value.trim() || 'gemma4:cloud';
-                }
-                return sel.value;
-            }
-
-            function optionalIntValue(selector, fallback) {
-                var v = parseInt(document.querySelector(selector).value, 10);
-                return isNaN(v) ? fallback : v;
-            }
-
+            /* ── Test provider handlers ── */
             document.querySelector('#btnTestTmdb')
                 .addEventListener('click', function () {
                     Dashboard.showLoadingMsg();
-                    setSynopsisTestOutput('Test TMDB in corso…');
+                    document.querySelector('#badgeTmdb').className = 'ac-badge idle';
+                    document.querySelector('#badgeTmdb').textContent = '… in corso';
+                    document.querySelector('#detailsTmdb').hidden = true;
                     animeClickApi('Plugins/AnimeClick/TestTmdb', 'POST', {
                         ApiKey: document.querySelector('#txtTmdbApiKey').value.trim()
                     })
-                        .then(setSynopsisTestOutput)
-                        .catch(function (err) { setSynopsisTestOutput('Test TMDB FAILED:\n' + (err && err.responseText ? err.responseText : String(err))); })
+                        .then(function (r) { renderProviderStatus('Tmdb', r); })
+                        .catch(function (err) { showProviderError('Tmdb', 'Test TMDB', err); })
                         .finally(function () { Dashboard.hideLoadingMsg(); });
                 });
 
             document.querySelector('#btnTestOllama')
                 .addEventListener('click', function () {
                     Dashboard.showLoadingMsg();
-                    setSynopsisTestOutput('Test Ollama in corso…');
+                    document.querySelector('#badgeOllama').className = 'ac-badge idle';
+                    document.querySelector('#badgeOllama').textContent = '… in corso';
+                    document.querySelector('#detailsOllama').hidden = true;
                     animeClickApi('Plugins/AnimeClick/TestOllama', 'POST', {
                         Endpoint: document.querySelector('#txtOllamaCloudEndpoint').value.trim(),
                         ApiKey: document.querySelector('#txtOllamaCloudApiKey').value.trim(),
                         Model: currentOllamaModel(),
                         TimeoutSec: optionalIntValue('#numEpisodeTranslationTimeoutSec', 30)
                     })
-                        .then(setSynopsisTestOutput)
-                        .catch(function (err) { setSynopsisTestOutput('Test Ollama FAILED:\n' + (err && err.responseText ? err.responseText : String(err))); })
+                        .then(function (r) { renderProviderStatus('Ollama', r); })
+                        .catch(function (err) { showProviderError('Ollama', 'Test Ollama', err); })
                         .finally(function () { Dashboard.hideLoadingMsg(); });
                 });
 
             document.querySelector('#btnTestTvdb')
                 .addEventListener('click', function () {
                     Dashboard.showLoadingMsg();
-                    setSynopsisTestOutput('Test TVDB in corso…');
+                    document.querySelector('#badgeTvdb').className = 'ac-badge idle';
+                    document.querySelector('#badgeTvdb').textContent = '… in corso';
+                    document.querySelector('#detailsTvdb').hidden = true;
                     animeClickApi('Plugins/AnimeClick/TestTvdb', 'POST', {
                         ApiKey: document.querySelector('#txtTvdbApiKey').value.trim(),
                         Language: document.querySelector('#txtTvdbLanguage').value.trim() || 'ita'
                     })
-                        .then(setSynopsisTestOutput)
-                        .catch(function (err) { setSynopsisTestOutput('Test TVDB FAILED:\n' + (err && err.responseText ? err.responseText : String(err))); })
+                        .then(function (r) { renderProviderStatus('Tvdb', r); })
+                        .catch(function (err) { showProviderError('Tvdb', 'Test TVDB', err); })
                         .finally(function () { Dashboard.hideLoadingMsg(); });
                 });
 
-            document.querySelector('#btnDiagLookup')
-                .addEventListener('click', function () {
-                    var name = document.querySelector('#txtDiagLookup').value.trim();
-                    if (!name) {
-                        setDiagOutput('Inserisci un titolo da cercare.');
-                        return;
-                    }
-
-                    Dashboard.showLoadingMsg();
-                    var year = optionalInt('#txtDiagYear');
-                    var path = 'Plugins/AnimeClick/TestLookup?name=' + encodeURIComponent(name);
-                    if (year) {
-                        path += '&year=' + encodeURIComponent(year);
-                    }
-
-                    animeClickApi(path, 'GET')
-                        .then(setDiagOutput)
-                        .catch(function (err) { setDiagOutput(err && err.responseText ? err.responseText : String(err)); })
-                        .finally(function () { Dashboard.hideLoadingMsg(); });
-                });
-
+            /* ── Identify & Refresh (output umanizzato) ── */
             document.querySelector('#btnIdentifyAndRefresh')
                 .addEventListener('click', function () {
                     var itemId = document.querySelector('#txtIdentifyItemId').value.trim();
                     var animeClickId = document.querySelector('#txtIdentifyAnimeClickId').value.trim();
                     if (!itemId || !animeClickId) {
-                        setDiagOutput('Inserisci sia Item ID Jellyfin sia AnimeClick ID.');
+                        setResult('resultIdentify', false, '✗ Inserisci sia l’Item ID Jellyfin sia l’AnimeClick ID.');
                         return;
                     }
-
                     Dashboard.showLoadingMsg();
+                    document.querySelector('#resultIdentify').hidden = true;
                     var replaceAllImages = document.querySelector('#chkReplaceAllImages').checked;
                     animeClickApi('Plugins/AnimeClick/IdentifyAndRefresh', 'POST', {
                         ItemId: itemId,
@@ -773,98 +788,52 @@
                         ReplaceAllImages: replaceAllImages
                     })
                         .then(function (resp) {
-                            // ASP.NET Core serializes response in camelCase (itemId, name, …)
-                            // even though the C# DTO uses PascalCase. Read both for safety.
-                            function pick(o) { return [].concat.apply([], arguments).find(function (k) { return o && o[k] !== undefined; }) || arguments[0]; }
-                            var itemIdVal = resp.itemId || resp.ItemId;
-                            var nameVal = resp.name || resp.Name;
-                            var acIdVal = resp.animeClickId || resp.AnimeClickId;
-                            var prevAcIdVal = resp.previousAnimeClickId || resp.PreviousAnimeClickId;
-                            var replaceAllImagesVal = resp.replaceAllImages;
-                            if (replaceAllImagesVal === undefined) replaceAllImagesVal = resp.ReplaceAllImages;
-                            var deletedVal = resp.deletedImages;
-                            if (deletedVal === undefined) deletedVal = resp.DeletedImages;
-                            var successVal = resp.success;
-                            if (successVal === undefined) successVal = resp.Success;
-                            var errorVal = resp.error || resp.Error;
-                            var downloadedVal = resp.downloadedImages || resp.DownloadedImages || [];
+                            function pick(camel, pascal) { return (resp[camel] !== undefined ? resp[camel] : resp[pascal]); }
+                            var nameVal = pick('name', 'Name');
+                            var acIdVal = pick('animeClickId', 'AnimeClickId');
+                            var prevAcIdVal = pick('previousAnimeClickId', 'PreviousAnimeClickId');
+                            var successVal = pick('success', 'Success');
+                            var errorVal = pick('error', 'Error');
+                            var downloadedVal = pick('downloadedImages', 'DownloadedImages') || [];
+                            var deletedVal = pick('deletedImages', 'DeletedImages');
 
-                            var summary = 'Identify & Refresh OK\n'
-                                + '  ItemId:        ' + itemIdVal + '\n'
-                                + '  Name:          ' + nameVal + '\n'
-                                + '  AnimeClick:    ' + (prevAcIdVal || '<none>') + ' → ' + acIdVal + '\n'
-                                + '  ReplaceAllImages: ' + replaceAllImagesVal + '\n'
-                                + '  DeletedImages: ' + deletedVal + '\n'
-                                + '  DownloadedImages: ' + (downloadedVal.length || 0) + ' image(s)\n';
-                            if (downloadedVal.length) {
-                                downloadedVal.forEach(function (entry) {
-                                    summary += '    ' + entry + '\n';
-                                });
+                            if (successVal === false || errorVal) {
+                                setResult('resultIdentify', false, '✗ ' + (errorVal || 'Operazione non riuscita.'));
+                                return;
                             }
-                            summary += '  Success:       ' + successVal + (errorVal ? '\n  Error:         ' + errorVal : '');
-                            setDiagOutput(summary);
+                            var msg = '✓ Metadati aggiornati' + (nameVal ? ' per «' + nameVal + '»' : '');
+                            if (acIdVal) {
+                                msg += '\nAnimeClick ID: ' + (prevAcIdVal && prevAcIdVal !== acIdVal ? prevAcIdVal + ' → ' + acIdVal : acIdVal);
+                            }
+                            if (deletedVal) { msg += '\nImmagini remote rimosse: ' + deletedVal; }
+                            if (Array.isArray(downloadedVal) && downloadedVal.length) {
+                                msg += '\nImmagini scaricate: ' + downloadedVal.length + '\n  • ' + downloadedVal.join('\n  • ');
+                            }
+                            setResult('resultIdentify', true, msg);
                         })
                         .catch(function (err) {
-                            setDiagOutput('Identify & Refresh FAILED:\n' + (err && err.responseText ? err.responseText : String(err)));
+                            setResult('resultIdentify', false, '✗ Identify & Aggiorna fallito: ' + (err && err.responseText ? err.responseText : String(err)));
                         })
                         .finally(function () { Dashboard.hideLoadingMsg(); });
                 });
 
-            document.querySelector('#btnIdentifyStatus')
+            /* ── Svuota cache metadati ── */
+            document.querySelector('#btnClearAllCache')
                 .addEventListener('click', function () {
-                    var itemId = document.querySelector('#txtIdentifyItemId').value.trim();
-                    if (!itemId) {
-                        setDiagOutput('Inserisci un Item ID Jellyfin.');
-                        return;
-                    }
-
                     Dashboard.showLoadingMsg();
-                    animeClickApi('Plugins/AnimeClick/IdentifyStatus?itemId=' + encodeURIComponent(itemId), 'GET')
-                        .then(setDiagOutput)
-                        .catch(function (err) { setDiagOutput(err && err.responseText ? err.responseText : String(err)); })
+                    document.querySelector('#resultCache').hidden = true;
+                    animeClickApi('Plugins/AnimeClick/ClearCache', 'POST', {})
+                        .then(function (r) {
+                            var removed = (r && (r.removed !== undefined ? r.removed : r.Removed)) || 0;
+                            setResult('resultCache', true, '✓ ' + removed + ' ' + (removed === 1 ? 'voce rimossa' : 'voci rimosse') + ' dalla cache metadati.');
+                        })
+                        .catch(function (err) {
+                            setResult('resultCache', false, '✗ Svuotamento cache fallito: ' + (err && err.responseText ? err.responseText : String(err)));
+                        })
                         .finally(function () { Dashboard.hideLoadingMsg(); });
                 });
 
-            document.querySelector('#btnDiagEpisodes')
-                .addEventListener('click', function () {
-                    var id = document.querySelector('#txtDiagAnimeClickId').value.trim();
-                    if (!id) {
-                        setDiagOutput('Inserisci un AnimeClick ID.');
-                        return;
-                    }
-
-                    Dashboard.showLoadingMsg();
-                    var path = 'Plugins/AnimeClick/TestEpisodes?animeClickId=' + encodeURIComponent(id);
-                    var season = optionalInt('#txtDiagSeason');
-                    var episode = optionalInt('#txtDiagEpisode');
-                    if (season) {
-                        path += '&season=' + encodeURIComponent(season);
-                    }
-                    if (episode) {
-                        path += '&episode=' + encodeURIComponent(episode);
-                    }
-
-                    animeClickApi(path, 'GET')
-                        .then(setDiagOutput)
-                        .catch(function (err) { setDiagOutput(err && err.responseText ? err.responseText : String(err)); })
-                        .finally(function () { Dashboard.hideLoadingMsg(); });
-                });
-
-            document.querySelector('#btnDiagClearCache')
-                .addEventListener('click', function () {
-                    var id = document.querySelector('#txtDiagAnimeClickId').value.trim();
-                    if (!id) {
-                        setDiagOutput('Inserisci un AnimeClick ID da pulire.');
-                        return;
-                    }
-
-                    Dashboard.showLoadingMsg();
-                    animeClickApi('Plugins/AnimeClick/ClearCache', 'POST', { AnimeClickId: id })
-                        .then(setDiagOutput)
-                        .catch(function (err) { setDiagOutput(err && err.responseText ? err.responseText : String(err)); })
-                        .finally(function () { Dashboard.hideLoadingMsg(); });
-                });
-
+            /* ── Save ── */
             document.querySelector('#AnimeClickConfigForm')
                 .addEventListener('submit', function (e) {
                     e.preventDefault();
@@ -884,12 +853,12 @@
                         config.EnableThemeSongs = document.querySelector('#chkEnableThemeSongs').checked;
                         config.EnableCollections = document.querySelector('#chkEnableCollections').checked;
 
-                        // Sinossi episodi IT (TMDB + Ollama Cloud)
+                        // Sinossi episodi IT
                         config.EnableEpisodeSynopsisTranslation = document.querySelector('#chkEnableEpisodeSynopsisTranslation').checked;
                         config.TmdbApiKey = document.querySelector('#txtTmdbApiKey').value.trim();
                         config.OllamaCloudApiKey = document.querySelector('#txtOllamaCloudApiKey').value.trim();
                         config.OllamaCloudEndpoint = document.querySelector('#txtOllamaCloudEndpoint').value.trim() || 'https://ollama.com/api/chat';
-                        const selModelSave = document.querySelector('#selOllamaCloudModel');
+                        var selModelSave = document.querySelector('#selOllamaCloudModel');
                         if (selModelSave.value === '__custom__') {
                             config.OllamaCloudModel = document.querySelector('#txtOllamaCloudModelCustom').value.trim() || 'gemma4:cloud';
                         } else {
@@ -913,14 +882,14 @@
                         var baseUrl = validateBaseUrl(document.querySelector('#txtBaseUrl').value);
                         if (!baseUrl) {
                             Dashboard.hideLoadingMsg();
-                            setDiagOutput('URL base AnimeClick non valido. Usa un URL http/https completo.');
+                            setResult('resultSave', false, '✗ URL base AnimeClick non valido. Usa un URL http/https completo.');
                             return;
                         }
-
                         config.BaseUrl = baseUrl;
-                            config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.7.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
+                        config.UserAgent = document.querySelector('#txtUserAgent').value.trim() || 'AnimeClick-Jellyfin-Plugin/0.2.10.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)';
 
                         ApiClient.updatePluginConfiguration(AnimeClickPluginId, config).then(function () {
+                            setResult('resultSave', true, '✓ Impostazioni salvate.');
                             Dashboard.processPluginConfigurationUpdateResult();
                             Dashboard.hideLoadingMsg();
                         });
