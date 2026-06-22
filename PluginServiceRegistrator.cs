@@ -20,6 +20,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<AnimeClickHtmlParser>();
         services.AddSingleton<AnimeClickSeriesSearchProvider>();
         services.AddSingleton<AnimeClickAniListResolver>();
+        services.AddSingleton<AnimeClickTmdbClient>();
+        services.AddSingleton<AnimeClickOllamaTranslator>();
     }
 
     public void RegisterServices(IServiceCollection services, IServerApplicationHost applicationHost)

@@ -56,6 +56,26 @@
 
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkOverwriteNonItalianFields" />
+                                <span>Sovrascrivi campi non-italiani</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Se attivo, AnimeClick sovrascrive anche titolo originale, studio, rating, data e classificazione (campi che AniList/TMDB/OMDb gestiscono meglio). Se spento (default), AnimeClick fornisce solo i campi localizzati (titolo, trama, generi, tag, cast IT) e lascia i buchi agli altri provider.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableAnimeClickImages" />
+                                <span>Usa locandina AnimeClick come fallback</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Fornisce la locandina italiana di AnimeClick come immagine di fallback per serie/film. Priorità bassa: AniList/Fanart/altro vincono se hanno immagini; AnimeClick riempie solo i buchi.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
                                 <input type="checkbox" is="emby-checkbox" id="chkEnableGenres" />
                                 <span>Importa generi</span>
                             </label>
@@ -134,6 +154,123 @@
                             <div class="fieldDescription checkboxFieldDescription">
                                 ⚠️ Sperimentale — Raggruppa automaticamente sequel, prequel e spin-off nella stessa collezione.
                                 Disattivato di default perché potrebbe creare collezioni indesiderate.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <!-- SINOSSI EPISODI IT (TMDB + Ollama Cloud) -->
+                    <!-- ═══════════════════════════════════════════════ -->
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">Sinossi episodi in italiano (TMDB + Ollama Cloud)</h2>
+                    </div>
+
+                    <div class="verticalSection">
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableEpisodeSynopsisTranslation" />
+                                <span>Traduci le sinossi degli episodi in italiano</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                AnimeClick non pubblica sinossi per-episodio. Il plugin recupera l'overview inglese dell'episodio da TMDB e la traduce in italiano via Ollama Cloud.
+                                Richiede una API key TMDB e una API key Ollama Cloud (sotto). Disattivato di default.
+                                Senza questa opzione, le sinossi restano in inglese dai provider nativi Jellyfin (fill-gaps).
+                                Carico NAS: solo HTTPS in uscita, zero compute locale; cache per-episodio.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtTmdbApiKey">
+                                TMDB API key
+                            </label>
+                            <input id="txtTmdbApiKey" type="text" is="emby-input" />
+                            <div class="fieldDescription">
+                                Ottieni una API key gratuita su
+                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://www.themoviedb.org/settings/api">themoviedb.org/settings/api</a>
+                                (tipo Personal / Developer). Lascia vuoto per disabilitare la fonte inglese.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtOllamaCloudApiKey">
+                                Ollama Cloud API key
+                            </label>
+                            <input id="txtOllamaCloudApiKey" type="password" is="emby-input" />
+                            <div class="fieldDescription">
+                                Crea la tua API key su
+                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://ollama.com/settings/keys">ollama.com/settings/keys</a>
+                                (account gratuito). Lascia vuoto per disabilitare la traduzione.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtOllamaCloudEndpoint">
+                                Endpoint Ollama Cloud
+                            </label>
+                            <input id="txtOllamaCloudEndpoint" type="text" is="emby-input" />
+                            <div class="fieldDescription">
+                                Endpoint chat di Ollama Cloud (default: <code>https://ollama.com/api/chat</code>).
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="selOllamaCloudModel">
+                                Modello cloud per la traduzione
+                            </label>
+                            <select id="selOllamaCloudModel" is="emby-select">
+                                <optgroup label="Consigliati per traduzione anime EN→IT">
+                                    <option value="gemma4:cloud">gemma4:cloud (consigliato, solido multilingua)</option>
+                                    <option value="minimax-m2.1:cloud">minimax-m2.1:cloud (multilingual capabilities)</option>
+                                    <option value="qwen3.5:cloud">qwen3.5:cloud</option>
+                                    <option value="gpt-oss:cloud">gpt-oss:cloud</option>
+                                </optgroup>
+                                <optgroup label="Altri modelli cloud">
+                                    <option value="glm-5.2:cloud">glm-5.2:cloud</option>
+                                    <option value="minimax-m3:cloud">minimax-m3:cloud</option>
+                                    <option value="kimi-k2.7-code:cloud">kimi-k2.7-code:cloud</option>
+                                    <option value="nemotron-3-ultra:cloud">nemotron-3-ultra:cloud</option>
+                                    <option value="glm-5.1:cloud">glm-5.1:cloud</option>
+                                    <option value="minimax-m2.7:cloud">minimax-m2.7:cloud</option>
+                                    <option value="nemotron-3-super:cloud">nemotron-3-super:cloud</option>
+                                    <option value="glm-5:cloud">glm-5:cloud</option>
+                                    <option value="minimax-m2.5:cloud">minimax-m2.5:cloud</option>
+                                    <option value="kimi-k2.6:cloud">kimi-k2.6:cloud</option>
+                                    <option value="deepseek-v4-pro:cloud">deepseek-v4-pro:cloud</option>
+                                    <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud</option>
+                                    <option value="kimi-k2.5:cloud">kimi-k2.5:cloud</option>
+                                    <option value="qwen3-coder:cloud">qwen3-coder:cloud</option>
+                                    <option value="glm-4.7:cloud">glm-4.7:cloud</option>
+                                    <option value="gemini-3-flash-preview:cloud">gemini-3-flash-preview:cloud</option>
+                                </optgroup>
+                                <option value="__custom__">Personalizzato… (inserisci sotto)</option>
+                            </select>
+                            <div class="fieldDescription">
+                                I modelli cloud Ollama sono gated per <strong>tier di abbonamento</strong> (Free/Pro/Max), non per singolo modello:
+                                il Free ha concurrency 1 e limiti di utilizzo (sessione/7gg) — sufficienti per traduzioni cached brevi;
+                                il Pro ($20/mese) sblocca modelli più grandi e ~50× più utilizzo. Vedi
+                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://ollama.com/pricing">ollama.com/pricing</a>
+                                e il catalogo su
+                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://ollama.com/search?c=cloud">ollama.com/search?c=cloud</a>.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer" id="customModelContainer" style="display:none;">
+                            <label class="inputLabel inputLabelUnfocused" for="txtOllamaCloudModelCustom">
+                                Modello personalizzato
+                            </label>
+                            <input id="txtOllamaCloudModelCustom" type="text" is="emby-input" placeholder="es: gemma4:cloud" />
+                            <div class="fieldDescription">
+                                Inserisci il tag esatto del modello cloud Ollama (formato <code>nome:cloud</code>).
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="numEpisodeTranslationTimeoutSec">
+                                Timeout traduzione (secondi)
+                            </label>
+                            <input id="numEpisodeTranslationTimeoutSec" type="number" is="emby-input" min="5" max="300" step="1" />
+                            <div class="fieldDescription">
+                                Timeout per una singola chiamata di traduzione Ollama (default: 30).
                             </div>
                         </div>
                     </div>
@@ -384,6 +521,33 @@
                         // Metadati
                         document.querySelector('#chkPreferItalianTitle').checked = config.PreferItalianTitle;
                         document.querySelector('#chkEnablePlot').checked = config.EnablePlot;
+                        document.querySelector('#chkOverwriteNonItalianFields').checked = config.OverwriteNonItalianFields;
+                        document.querySelector('#chkEnableAnimeClickImages').checked = config.EnableAnimeClickImages;
+                        document.querySelector('#chkEnableEpisodeSynopsisTranslation').checked = config.EnableEpisodeSynopsisTranslation;
+                        document.querySelector('#txtTmdbApiKey').value = config.TmdbApiKey || '';
+                        document.querySelector('#txtOllamaCloudApiKey').value = config.OllamaCloudApiKey || '';
+                        document.querySelector('#txtOllamaCloudEndpoint').value = config.OllamaCloudEndpoint || 'https://ollama.com/api/chat';
+                        document.querySelector('#numEpisodeTranslationTimeoutSec').value = config.EpisodeTranslationTimeoutSec;
+
+                        // Model dropdown: if the configured model isn't in the preset list, select "Personalizzato…"
+                        // and show the custom input prefilled with the configured value.
+                        const selModel = document.querySelector('#selOllamaCloudModel');
+                        const customModelContainer = document.querySelector('#customModelContainer');
+                        const customModelInput = document.querySelector('#txtOllamaCloudModelCustom');
+                        const configuredModel = config.OllamaCloudModel || 'gemma4:cloud';
+                        const presetOptions = Array.from(selModel.options).filter(o => o.value !== '__custom__').map(o => o.value);
+                        if (presetOptions.includes(configuredModel)) {
+                            selModel.value = configuredModel;
+                            customModelContainer.style.display = 'none';
+                        } else {
+                            selModel.value = '__custom__';
+                            customModelContainer.style.display = '';
+                            customModelInput.value = configuredModel;
+                        }
+                        // Toggle the custom-model input visibility when the dropdown changes.
+                        selModel.addEventListener('change', function () {
+                            customModelContainer.style.display = selModel.value === '__custom__' ? '' : 'none';
+                        });
                         document.querySelector('#chkEnableGenres').checked = config.EnableGenres;
                         document.querySelector('#chkEnableStudios').checked = config.EnableStudios;
                         document.querySelector('#chkEnableCommunityRating').checked = config.EnableCommunityRating;
@@ -588,6 +752,8 @@
                         // Metadati
                         config.PreferItalianTitle = document.querySelector('#chkPreferItalianTitle').checked;
                         config.EnablePlot = document.querySelector('#chkEnablePlot').checked;
+                        config.OverwriteNonItalianFields = document.querySelector('#chkOverwriteNonItalianFields').checked;
+                        config.EnableAnimeClickImages = document.querySelector('#chkEnableAnimeClickImages').checked;
                         config.EnableGenres = document.querySelector('#chkEnableGenres').checked;
                         config.EnableStudios = document.querySelector('#chkEnableStudios').checked;
                         config.EnableCommunityRating = document.querySelector('#chkEnableCommunityRating').checked;
@@ -596,6 +762,19 @@
                         config.EnableEpisodeTitles = document.querySelector('#chkEnableEpisodeTitles').checked;
                         config.EnableThemeSongs = document.querySelector('#chkEnableThemeSongs').checked;
                         config.EnableCollections = document.querySelector('#chkEnableCollections').checked;
+
+                        // Sinossi episodi IT (TMDB + Ollama Cloud)
+                        config.EnableEpisodeSynopsisTranslation = document.querySelector('#chkEnableEpisodeSynopsisTranslation').checked;
+                        config.TmdbApiKey = document.querySelector('#txtTmdbApiKey').value.trim();
+                        config.OllamaCloudApiKey = document.querySelector('#txtOllamaCloudApiKey').value.trim();
+                        config.OllamaCloudEndpoint = document.querySelector('#txtOllamaCloudEndpoint').value.trim() || 'https://ollama.com/api/chat';
+                        const selModelSave = document.querySelector('#selOllamaCloudModel');
+                        if (selModelSave.value === '__custom__') {
+                            config.OllamaCloudModel = document.querySelector('#txtOllamaCloudModelCustom').value.trim() || 'gemma4:cloud';
+                        } else {
+                            config.OllamaCloudModel = selModelSave.value;
+                        }
+                        config.EpisodeTranslationTimeoutSec = clampInt('#numEpisodeTranslationTimeoutSec', 30, 5, 300);
 
                         // Ricerca
                         config.MaxSearchResults = clampInt('#txtMaxSearchResults', 10, 1, 25);

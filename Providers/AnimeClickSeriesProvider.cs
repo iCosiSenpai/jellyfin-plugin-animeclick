@@ -294,37 +294,23 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
 
     private static void Map(Series target, AnimeClickAnime source, PluginConfiguration configuration)
     {
-        target.Name = configuration.PreferItalianTitle ? source.Title : source.OriginalTitle ?? source.Title;
-        target.OriginalTitle = source.OriginalTitle;
+        // ── Campi localizzati (Italian-wins): sempre sovrascriventi quando AnimeClick
+        //    ha un valore reale. Empty-guard per non svuotare campi già riempiti da
+        //    altri provider con un valore nullo/vuoto. ──
+        var italianName = configuration.PreferItalianTitle ? source.Title : source.OriginalTitle ?? source.Title;
+        if (!string.IsNullOrWhiteSpace(italianName))
+        {
+            target.Name = italianName;
+        }
 
-        if (configuration.EnablePlot)
+        if (configuration.EnablePlot && !string.IsNullOrWhiteSpace(source.Overview))
         {
             target.Overview = source.Overview;
-        }
-
-        if (source.ProductionYear.HasValue)
-        {
-            target.ProductionYear = source.ProductionYear.Value;
-        }
-
-        if (source.PremiereDate.HasValue)
-        {
-            target.PremiereDate = source.PremiereDate.Value.UtcDateTime;
-        }
-
-        if (configuration.EnableCommunityRating && source.CommunityRating.HasValue)
-        {
-            target.CommunityRating = source.CommunityRating.Value;
         }
 
         if (configuration.EnableGenres && source.Genres.Count > 0)
         {
             target.Genres = source.Genres.ToArray();
-        }
-
-        if (configuration.EnableStudios && source.Studios.Count > 0)
-        {
-            target.Studios = source.Studios.ToArray();
         }
 
         if (configuration.EnableTags && source.Tags.Count > 0)
@@ -348,19 +334,50 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
             target.Tags = source.ThemeSongs.Select(s => s.DisplayName).ToArray();
         }
 
-        if (!string.IsNullOrWhiteSpace(source.OfficialRating))
+        // ── Campi non-italiani (language-neutral): solo se l'utente ha attivato
+        //    OverwriteNonItalianFields. Default false = li lascia ad AniList/TMDB/OMDb
+        //    (fill-gaps). Empty-guard comunque, per non cancellare valori esistenti. ──
+        if (configuration.OverwriteNonItalianFields)
         {
-            target.OfficialRating = source.OfficialRating;
-        }
-
-        if (!string.IsNullOrWhiteSpace(source.Status))
-        {
-            target.Status = source.Status switch
+            if (!string.IsNullOrWhiteSpace(source.OriginalTitle))
             {
-                var s when s.Contains("completat", StringComparison.OrdinalIgnoreCase) => SeriesStatus.Ended,
-                var s when s.Contains("corso", StringComparison.OrdinalIgnoreCase) => SeriesStatus.Continuing,
-                _ => null
-            };
+                target.OriginalTitle = source.OriginalTitle;
+            }
+
+            if (source.ProductionYear.HasValue)
+            {
+                target.ProductionYear = source.ProductionYear.Value;
+            }
+
+            if (source.PremiereDate.HasValue)
+            {
+                target.PremiereDate = source.PremiereDate.Value.UtcDateTime;
+            }
+
+            if (configuration.EnableCommunityRating && source.CommunityRating.HasValue)
+            {
+                target.CommunityRating = source.CommunityRating.Value;
+            }
+
+            if (configuration.EnableStudios && source.Studios.Count > 0)
+            {
+                target.Studios = source.Studios.ToArray();
+            }
+
+            if (!string.IsNullOrWhiteSpace(source.OfficialRating))
+            {
+                target.OfficialRating = source.OfficialRating;
+            }
+
+            if (!string.IsNullOrWhiteSpace(source.Status))
+            {
+                target.Status = source.Status switch
+                {
+                    var s when s.Contains("completat", StringComparison.OrdinalIgnoreCase) => SeriesStatus.Ended,
+                    var s when s.Contains("corso", StringComparison.OrdinalIgnoreCase) => SeriesStatus.Continuing,
+                    _ => null
+                };
+            }
         }
 
         // Set collection name from relations (for automatic BoxSet grouping)

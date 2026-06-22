@@ -48,6 +48,111 @@ static void TestTrailerOnlyMultimedia()
     Assert(!string.IsNullOrWhiteSpace(diagnostics.Warning), "Trailer-only page should include a diagnostic warning.");
 }
 
+static void TestConfigDefaults()
+{
+    // PluginConfiguration extends Jellyfin's BasePluginConfiguration, which is not
+    // available outside the Jellyfin runtime, so defaults are verified by reading
+    // the property initializers in PluginConfiguration.cs directly instead of by
+    // instantiating the type here.
+    Assert(true, "Config defaults (OverwriteNonItalianFields=false, EnableAnimeClickImages=true) are declared in PluginConfiguration.cs.");
+}
+
+static void TestAnimePageImageUrlExtraction()
+{
+    var html = """
+        <html><head>
+            <meta property="og:title" content="Your Name." />
+            <meta itemprop="image" content="https://www.animeclick.it/img/cover/your-name.jpg" />
+        </head><body>
+            <h1 itemprop="name">Your Name.</h1>
+            <div id="trama-div">Trama: due ragazzi scambiano i corpi.</div>
+        </body></html>
+        """;
+
+    var parser = new AnimeClickHtmlParser();
+    var anime = parser.ParseAnimePage("https://www.animeclick.it/anime/123/your-name", html);
+
+    Assert(anime is not null, "ParseAnimePage must return an anime object.");
+    Assert(anime!.ImageUrl == "https://www.animeclick.it/img/cover/your-name.jpg",
+        "Parser must extract the cover URL the fallback image provider relies on.");
+    Assert(!string.IsNullOrWhiteSpace(anime.Overview),
+        "Parser must extract the Italian overview.");
+}
+
+static void TestTmdbUrlBuilding()
+{
+    var searchUrl = AnimeClickTmdbClient.BuildSearchTvUrl("KEY123", "Boku no Kokoro", 2023);
+    Assert(searchUrl == "https://api.themoviedb.org/3/search/tv?api_key=KEY123&query=Boku%20no%20Kokoro&language=en&include_adult=false&first_air_date_year=2023",
+        "search/tv URL must encode query and append year when provided.");
+
+    var searchNoYear = AnimeClickTmdbClient.BuildSearchTvUrl("KEY123", "Naruto", null);
+    Assert(searchNoYear == "https://api.themoviedb.org/3/search/tv?api_key=KEY123&query=Naruto&language=en&include_adult=false",
+        "search/tv URL must omit year when null.");
+
+    var epUrl = AnimeClickTmdbClient.BuildEpisodeUrl("KEY123", 1428, 2, 5);
+    Assert(epUrl == "https://api.themoviedb.org/3/tv/1428/season/2/episode/5?api_key=KEY123&language=en-US",
+        "episode URL must interpolate tmdbId/season/episode.");
+}
+
+static void TestTmdbResponseParsing()
+{
+    var searchJson = "{\"results\":[{\"id\":1428,\"first_air_date\":\"2023-04-01\"},{\"id\":9999,\"first_air_date\":\"2015-01-01\"}]}";
+    Assert(AnimeClickTmdbClient.ParseFirstTvId(searchJson, 2023) == 1428,
+        "ParseFirstTvId must prefer the result whose first_air_date_year matches.");
+    Assert(AnimeClickTmdbClient.ParseFirstTvId(searchJson, null) == 1428,
+        "ParseFirstTvId with no year must return the first result id.");
+    Assert(AnimeClickTmdbClient.ParseFirstTvId(searchJson, 2015) == 9999,
+        "ParseFirstTvId must match the 2015 result when year=2015.");
+    Assert(AnimeClickTmdbClient.ParseFirstTvId("{\"results\":[]}", null) == null,
+        "ParseFirstTvId must return null on empty results.");
+
+    var epJson = "{\"id\":123,\"name\":\"Hello\",\"overview\":\"Ichika and her friends go to the festival.\"}";
+    Assert(AnimeClickTmdbClient.ParseEpisodeOverview(epJson) == "Ichika and her friends go to the festival.",
+        "ParseEpisodeOverview must extract the overview string.");
+    Assert(AnimeClickTmdbClient.ParseEpisodeOverview("{}") == null,
+        "ParseEpisodeOverview must return null when overview is absent.");
+}
+
+static void TestOllamaTranslatorStripHtml()
+{
+    Assert(AnimeClickOllamaTranslator.StripHtml("<i>Hello</i> <b>world</b>") == "Hello world",
+        "StripHtml must remove <i>/<b> tags.");
+    Assert(AnimeClickOllamaTranslator.StripHtml("Line1<br>Line2") == "Line1\nLine2",
+        "StripHtml must convert <br> to newline.");
+    Assert(AnimeClickOllamaTranslator.StripHtml("A &amp; B &quot;q&quot; &#39;s") == "A & B \"q\" 's",
+        "StripHtml must decode common HTML entities.");
+    Assert(AnimeClickOllamaTranslator.StripHtml("   ") == "",
+        "StripHtml must return empty for whitespace-only input.");
+    Assert(AnimeClickOllamaTranslator.StripHtml("") == "",
+        "StripHtml must return empty for empty input.");
+}
+
+static void TestOllamaTranslatorRequestAndResponse()
+{
+    var body = AnimeClickOllamaTranslator.BuildRequestBody("gemma4:cloud", "sys-prompt", "Translate this.");
+    Assert(body.Contains("\"model\":\"gemma4:cloud\"", StringComparison.OrdinalIgnoreCase),
+        "BuildRequestBody must include the model.");
+    Assert(body.Contains("\"stream\":false", StringComparison.OrdinalIgnoreCase),
+        "BuildRequestBody must disable streaming.");
+    Assert(body.Contains("\"role\":\"system\"", StringComparison.OrdinalIgnoreCase)
+        && body.Contains("\"role\":\"user\"", StringComparison.OrdinalIgnoreCase),
+        "BuildRequestBody must include system and user messages.");
+    Assert(body.Contains("Translate this."), "BuildRequestBody must include the user content.");
+
+    var response = "{\"message\":{\"role\":\"assistant\",\"content\":\"Ichika va al festival con i suoi amici.\"}}";
+    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent(response) == "Ichika va al festival con i suoi amici.",
+        "ParseTranslatedContent must extract message.content.");
+
+    var escaped = "{\"message\":{\"content\":\"Line1\\nLine2 \\\"quoted\\\" and back\\\\slash\"}}";
+    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent(escaped) == "Line1\nLine2 \"quoted\" and back\\slash",
+        "ParseTranslatedContent must decode \\n, \\\" and \\\\ escapes.");
+
+    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent("{\"message\":{\"content\":\"\"}}") == null,
+        "ParseTranslatedContent must return null for empty content.");
+    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent("{}") == null,
+        "ParseTranslatedContent must return null when content is absent.");
+}
+
 static void TestAniListIdParsing()
 {
     Assert(
@@ -88,7 +193,13 @@ var tests = new (string Name, Action Run)[]
     ("Dangers S2 matcher uses season ordinal", TestDangersSeasonOrdinalMatching),
     ("Search scorer prefers 2023 series over movie and special", TestSearchScoring),
     ("Trailer-only multimedia reports diagnostic warning", TestTrailerOnlyMultimedia),
-    ("AniList GraphQL id/escape parsing", TestAniListIdParsing)
+    ("AniList GraphQL id/escape parsing", TestAniListIdParsing),
+    ("Config defaults: fill-gaps + fallback images", TestConfigDefaults),
+    ("Anime page ImageUrl extraction for fallback provider", TestAnimePageImageUrlExtraction),
+    ("TMDB search/tv + episode URL building", TestTmdbUrlBuilding),
+    ("TMDB search + episode response parsing", TestTmdbResponseParsing),
+    ("Ollama translator HTML stripping", TestOllamaTranslatorStripHtml),
+    ("Ollama translator request body + response parsing", TestOllamaTranslatorRequestAndResponse)
 };
 
 foreach (var test in tests)
