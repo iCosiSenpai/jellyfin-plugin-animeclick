@@ -153,6 +153,62 @@ static void TestOllamaTranslatorRequestAndResponse()
         "ParseTranslatedContent must return null when content is absent.");
 }
 
+static void TestTvdbUrlBuilding()
+{
+    Assert(AnimeClickTvdbClient.BuildSearchUrl("Naruto") ==
+        "https://api4.thetvdb.com/v4/search?query=Naruto&type=series",
+        "BuildSearchUrl must encode the query and request series type.");
+
+    Assert(AnimeClickTvdbClient.BuildEpisodesUrl(121361, "ita", 0) ==
+        "https://api4.thetvdb.com/v4/series/121361/episodes/default/ita?page=0",
+        "BuildEpisodesUrl must interpolate tvdbId, lang and page.");
+
+    Assert(AnimeClickTvdbClient.BuildEpisodesUrl(7, "eng", 3) ==
+        "https://api4.thetvdb.com/v4/series/7/episodes/default/eng?page=3",
+        "BuildEpisodesUrl must support other languages/pages.");
+
+    var loginBody = AnimeClickTvdbClient.BuildLoginBody("KEY-123");
+    Assert(loginBody.Contains("\"apikey\":\"KEY-123\"", StringComparison.OrdinalIgnoreCase),
+        "BuildLoginBody must include the apikey field.");
+}
+
+static void TestTvdbResponseParsing()
+{
+    Assert(AnimeClickTvdbClient.ParseLoginToken("{\"data\":{\"token\":\"abc-123\"}}") == "abc-123",
+        "ParseLoginToken must extract data.token.");
+    Assert(AnimeClickTvdbClient.ParseLoginToken("{\"data\":{\"token\":\"\"}}") == "",
+        "ParseLoginToken returns empty string for an empty token (not null).");
+    Assert(AnimeClickTvdbClient.ParseLoginToken("{}") == null,
+        "ParseLoginToken must return null when data.token is absent.");
+    Assert(AnimeClickTvdbClient.ParseLoginToken("not json") == null,
+        "ParseLoginToken must return null on invalid JSON.");
+
+    var searchJson = "{\"data\":[{\"tvdb_id\":1,\"first_air_time\":\"2023-04-01\"},{\"tvdb_id\":2,\"year\":\"2015\"}]}";
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(searchJson, 2023) == 1,
+        "ParseFirstSeriesId must prefer the result whose air year matches.");
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(searchJson, 2015) == 2,
+        "ParseFirstSeriesId must match the 'year' string field.");
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(searchJson, null) == 1,
+        "ParseFirstSeriesId with no year must return the first result id.");
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId("{\"data\":[]}", null) == null,
+        "ParseFirstSeriesId must return null on empty data.");
+
+    var epJson = "{\"data\":[{\"seasonNumber\":2,\"number\":5,\"overview\":\"Ichika va al festival.\"},{\"seasonNumber\":1,\"number\":1,\"overview\":\"Altro.\"}]}";
+    Assert(AnimeClickTvdbClient.ParseEpisodeOverview(epJson, 2, 5) == "Ichika va al festival.",
+        "ParseEpisodeOverview must return the overview of the matching season/episode.");
+    Assert(AnimeClickTvdbClient.ParseEpisodeOverview(epJson, 9, 9) == null,
+        "ParseEpisodeOverview must return null when no episode matches.");
+    Assert(AnimeClickTvdbClient.ParseEpisodeOverview("{\"data\":[{\"seasonNumber\":1,\"number\":1,\"overview\":\"\"}]}", 1, 1) == "",
+        "ParseEpisodeOverview returns empty string when the overview field is empty (caller treats as fallback).");
+
+    Assert(AnimeClickTvdbClient.ParseNextLink("{\"links\":{\"next\":\"?page=1\"}}") == "?page=1",
+        "ParseNextLink must extract links.next.");
+    Assert(AnimeClickTvdbClient.ParseNextLink("{\"links\":{\"next\":null}}") == null,
+        "ParseNextLink must return null when next is null.");
+    Assert(AnimeClickTvdbClient.ParseNextLink("{}") == null,
+        "ParseNextLink must return null when links is absent.");
+}
+
 static void TestAniListIdParsing()
 {
     Assert(
@@ -198,6 +254,8 @@ var tests = new (string Name, Action Run)[]
     ("Anime page ImageUrl extraction for fallback provider", TestAnimePageImageUrlExtraction),
     ("TMDB search/tv + episode URL building", TestTmdbUrlBuilding),
     ("TMDB search + episode response parsing", TestTmdbResponseParsing),
+    ("TVDB login/search/episodes URL building", TestTvdbUrlBuilding),
+    ("TVDB token + series id + episode overview parsing", TestTvdbResponseParsing),
     ("Ollama translator HTML stripping", TestOllamaTranslatorStripHtml),
     ("Ollama translator request body + response parsing", TestOllamaTranslatorRequestAndResponse)
 };

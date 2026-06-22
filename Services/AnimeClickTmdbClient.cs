@@ -217,6 +217,80 @@ public class AnimeClickTmdbClient
         }
     }
 
+    /// <summary>Parses the name of the first result in a search/tv response (testable, no network).</summary>
+    internal static string? ParseFirstTvName(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("results", out var results) || results.GetArrayLength() == 0)
+            {
+                return null;
+            }
+
+            var first = results[0];
+            return first.TryGetProperty("name", out var nameEl) && nameEl.ValueKind == JsonValueKind.String
+                ? nameEl.GetString()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Diagnostics-only: validates the TMDB API key by running a search/tv with a known
+    /// query. Does NOT silent-catch — returns a detailed DTO so the UI can show the real
+    /// error (status code, response body, exception message).
+    /// </summary>
+    public async Task<TmdbTestResult> TestConnectionAsync(string apiKey, CancellationToken cancellationToken)
+    {
+        var result = new TmdbTestResult { Endpoint = BaseUrl };
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            result.ErrorMessage = "TMDB API key is empty.";
+            return result;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("AnimeClick-Jellyfin-Plugin/diagnostics");
+
+            var url = BuildSearchTvUrl(apiKey, "Boku no Kokoro", 2023);
+            using var response = await client.GetAsync(url, cancellationToken).ConfigureAwait(false);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+            result.StatusCode = (int)response.StatusCode;
+            result.ResponseBody = body;
+
+            if (!response.IsSuccessStatusCode)
+            {
+                result.ErrorMessage = $"Search failed: HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
+                return result;
+            }
+
+            result.SampleId = ParseFirstTvId(body, 2023);
+            result.SampleName = ParseFirstTvName(body);
+            result.Success = result.SampleId.HasValue;
+
+            if (!result.Success)
+            {
+                result.ErrorMessage = "Search returned no results (unexpected for a known query).";
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            result.ErrorMessage = ex.Message;
+            return result;
+        }
+    }
+
     /// <summary>Parses the overview field from a tv/season/episode response (testable, no network).</summary>
     internal static string? ParseEpisodeOverview(string json)
     {
@@ -233,4 +307,16 @@ public class AnimeClickTmdbClient
             return null;
         }
     }
+}
+
+/// <summary>Detailed result of a TMDB connection test (used by the diagnostics UI).</summary>
+public sealed class TmdbTestResult
+{
+    public bool Success { get; set; }
+    public string Endpoint { get; set; } = string.Empty;
+    public int StatusCode { get; set; }
+    public string? ResponseBody { get; set; }
+    public string? ErrorMessage { get; set; }
+    public int? SampleId { get; set; }
+    public string? SampleName { get; set; }
 }

@@ -18,7 +18,7 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 - **Titoli in italiano** (con opzione per titolo originale giapponese)
 - **Trama/sinossi** in italiano
 - **Titoli episodi** in italiano con matching multi-stagione basato su normalizzazione AnimeClick
-- **Sinossi episodi in italiano** (opzionale): AnimeClick non pubblica sinossi per-episodio, quindi il plugin può recuperare l'overview inglese dell'episodio da TMDB e tradurla in italiano via Ollama Cloud. Vedi la sezione [Sinossi episodi IT](#-sinossi-episodi-in-italiano-tmdb--ollama-cloud).
+- **Sinossi episodi in italiano** (opzionale): AnimeClick non pubblica sinossi per-episodio, quindi il plugin usa **TheTVDB** come fonte preferita (sinossi IT dirette, zero compute) e in fallback **TMDB** (overview EN) + **Ollama Cloud** (traduzione IT). Vedi la sezione [Sinossi episodi IT](#-sinossi-episodi-in-italiano-tvdb--tmdb--ollama-cloud).
 - **Generi** in italiano (Commedia, Fantascienza, Scolastico, ecc.)
 - **Tag** (Shounen, Seinen, Mecha, Isekai, ecc.)
 - **Anno di produzione** e **data premiere**
@@ -56,14 +56,14 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 | 📺 Serie TV | ✅ | ✅ fallback (AnimeClick) — vince AniList/Fanart/TMDB se hanno immagini |
 | 🎬 Film | ✅ | ✅ fallback (AnimeClick) — vince AniList/Fanart/TMDB se hanno immagini |
 | 📅 Stagioni | ✅ (ID Provider) | ❌ (Usa TMDB/Fanart) |
-| 📝 Episodi | ✅ (Titoli Ita + sinossi IT opzionale via TMDB+Ollama) | ❌ |
+| 📝 Episodi | ✅ (Titoli Ita + sinossi IT opzionale via TVDB / TMDB+Ollama) | ❌ |
 
 ### Funzionalità Tecniche
-- **Cache locale** con TTL configurabile (default: 48h) — copre metadati AnimeClick, ID TMDB risolti, overview episodi TMDB e traduzioni Ollama (per-episodio)
+- **Cache locale** con TTL configurabile (default: 48h) — copre metadati AnimeClick, token + ID serie TVDB, lista episodi TVDB tradotti, ID TMDB risolti, overview episodi TMDB e traduzioni Ollama (per-episodio)
 - **Rate limiting** integrato (default: 1 richiesta/secondo)
 - **Merge "Italian-wins + fill-gaps"**: i provider Series/Movie/Episode girano con `Order=100` (per ultimi). AnimeClick vince sui campi localizzati (titolo, trama, generi, tag, cast, titoli episodi IT) e lascia i campi language-neutral (titolo originale, studio, rating, date) ai provider a monte quando `OverwriteNonItalianFields=false` (default). Empty-guard su tutti i campi per non svuotare mai dati già presenti.
 - **ID AniList risolto a ogni scan** (GraphQL by-title) e scritto su `ProviderIds["AniList"]`, così l'image provider AniList trova le copertine automaticamente.
-- **ID TMDB risolto on-demand** (search/tv by titolo originale + anno) per la traduzione delle sinossi episodi.
+- **ID TMDB risolto on-demand** (search/tv by titolo originale + anno) per il fallback delle sinossi episodi; **ID TVDB risolto on-demand** (search series) per la fonte preferita IT diretta.
 - **Identificazione manuale** tramite ID AnimeClick (formato: `72/naruto` dall'URL) + pulsante **Identify & Refresh** (vedi sotto)
 - **Link esterno** diretto alla pagina AnimeClick nella sidebar
 - **Pagina di configurazione** completa nella dashboard Jellyfin
@@ -85,9 +85,9 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 
 1. Scarica l'ultima release dalla [pagina Releases](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases)
 2. Estrai lo zip nella cartella plugin di Jellyfin:
-   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.2.8.0/`
-   - **Docker**: `/config/plugins/AnimeClick Metadata_0.2.8.0/`
-   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.2.8.0\`
+   - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.2.9.0/`
+   - **Docker**: `/config/plugins/AnimeClick Metadata_0.2.9.0/`
+   - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.2.9.0\`
 3. Riavvia Jellyfin
 
 > **💡 Altri miei plugin:** Nello stesso repository trovi anche [KometaThemes](https://github.com/iCosiSenpai/KometaTheme), che scarica automaticamente le sigle OP/ED degli anime da animethemes.moe.
@@ -112,15 +112,19 @@ Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** pe
 | Crea collezioni automatiche | ❌ | Raggruppa sequel/prequel in BoxSet |
 | Importa sigle OP/ED | ✅ | Aggiunge i nomi delle sigle come tag quando AnimeClick espone OP/ED strutturati |
 
-### Sinossi episodi in italiano (TMDB + Ollama Cloud)
+### Sinossi episodi in italiano (TVDB / TMDB + Ollama Cloud)
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
-| Traduci le sinossi degli episodi in italiano | ❌ | Recupera l'overview EN dell'episodio da TMDB e la traduce in IT via Ollama Cloud. Opt-in. |
-| TMDB API key | *(vuoto)* | API key TMDB gratuita — vedi tutorial sotto |
-| Ollama Cloud API key | *(vuoto)* | Bearer key Ollama Cloud — vedi tutorial sotto |
+| Recupera le sinossi degli episodi in italiano | ❌ | Abilita il recupero delle sinossi IT. Fonte preferita: TVDB (IT diretto). Fallback: TMDB EN + Ollama IT. Opt-in. |
+| Usa TheTVDB come fonte preferita | ❌ | Sinossi IT dirette da TVDB (zero traduzione/compute). Richiede API key TVDB. |
+| TheTVDB API key | *(vuoto)* | API key TheTVDB v4 gratuita — vedi tutorial sotto |
+| Lingua TheTVDB | `ita` | Codice lingua 3-char per le sinossi TVDB (`ita`, `eng`, `jpn`, …) |
+| TMDB API key | *(vuoto)* | API key TMDB gratuita (fonte EN per il fallback) — vedi tutorial sotto |
+| Ollama Cloud API key | *(vuoto)* | Bearer key Ollama Cloud (traduzione EN→IT per il fallback) — vedi tutorial sotto |
 | Endpoint Ollama Cloud | `https://ollama.com/api/chat` | Endpoint chat Ollama Cloud |
 | Modello cloud | `gemma4:cloud` | Modello Ollama Cloud per la traduzione EN→IT (dropdown con modelli consigliati + personalizzato) |
-| Timeout traduzione (sec) | `30` | Timeout per una singola chiamata di traduzione |
+| Timeout traduzione (sec) | `30` | Timeout per una singola chiamata di traduzione Ollama / TVDB |
+| **Test TMDB / Test Ollama / Test TVDB** | — | Pulsanti di diagnostica: validano le credenziali inserite (status HTTP, body, errore) senza salvare |
 
 ### Ricerca
 | Opzione | Default | Descrizione |
@@ -139,7 +143,7 @@ Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** pe
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
 | URL base | `https://www.animeclick.it` | URL di AnimeClick |
-| User-Agent | `AnimeClick-Jellyfin-Plugin/0.2.8.0` | Identificativo per le richieste |
+| User-Agent | `AnimeClick-Jellyfin-Plugin/0.2.9.0` | Identificativo per le richieste |
 
 ### Diagnostica
 La pagina plugin include strumenti admin per:
@@ -210,7 +214,7 @@ Il plugin segue quindi un modello **"Italian-wins + fill-gaps"**:
 - **Fill-gaps sui campi language-neutral**: titolo originale, studio, rating, data, classificazione sono lasciati ad AniList/TMDB/OMDb quando `OverwriteNonItalianFields=false` (default). AnimeClick non li sovrascrive se non glielo chiedi esplicitamente.
 - **Fallback immagini** (Series/Movie): il plugin fornisce la locandina italiana di AnimeClick **solo come ultima risorsa**, con priorità bassa (`Order=100`): AniList/Fanart/TMDB vincono se hanno immagini, AnimeClick riempie i buchi quando nessuno consegna. Disattivabile con *Usa locandina AnimeClick come fallback*.
 - **Foto doppiatori**: provider `AnimeClickPersonImageProvider` per le entità Person (priorità alta, `Order=0`).
-- **Sinossi episodi IT (opzionale)**: AnimeClick non ha sinossi per-episodio; il plugin può recuperarne l'overview inglese da TMDB e tradurla via Ollama Cloud (feature opt-in, vedi sotto).
+- **Sinossi episodi IT (opzionale)**: AnimeClick non ha sinossi per-episodio; il plugin usa TheTVDB (sinossi IT dirette, fonte preferita) e in fallback TMDB (overview EN) + Ollama Cloud (traduzione IT) (feature opt-in, vedi sotto).
 
 ### 🌐 La Mia Configurazione (plugin facoltativi ma utili per il fallback)
 
@@ -278,7 +282,7 @@ Vai su **Dashboard → Librerie → Anime TV → Gestisci libreria** e imposta:
 
 | Priorità | Provider | Ruolo |
 |:--------:|----------|-------|
-| 🥇 | **AnimeClick** | Titoli italiani degli episodi + sinossi IT (opzionale, via TMDB+Ollama) |
+| 🥇 | **AnimeClick** | Titoli italiani degli episodi + sinossi IT (opzionale, via TVDB / TMDB+Ollama) |
 | 🥈 | TheMovieDb | Fallback titoli/sinossi inglesi |
 | 🥉 | The Open Movie Database | Ultima risorsa |
 
@@ -337,26 +341,34 @@ Nessun conflitto, nessuna copertina a bassa risoluzione, tutto in italiano dove 
 Se usi l'opzione "Identifica" in Jellyfin e clicchi manualmente su un risultato "AnimeClick", Jellyfin **cancella** gli ID degli altri database americani per sicurezza. Se lo fai, *Fanart / TMDB smetteranno di trovare immagini per quell'anime* perché hanno perso il bersaglio!
 Se ti succede: vai su Modifica Metadati e ri-incolla a mano l'ID TheMovieDb in fondo alla pagina (lo trovi cercando l'anime su themoviedb.org). Se invece lasci fare la "Scansione Libreria" in automatico a Jellyfin, lui conserverà entrambi gli ID perfettamente!
 
-## 🌐 Sinossi episodi in italiano (TMDB + Ollama Cloud)
+## 🌐 Sinossi episodi in italiano (TVDB / TMDB + Ollama Cloud)
 
-AnimeClick pubblica **titoli** episodi in italiano ma **non le sinossi** per-episodio. AniList non espone `Episode.description`. Per riempire le sinossi degli episodi in italiano, il plugin può (feature opt-in):
+AnimeClick pubblica **titoli** episodi in italiano ma **non le sinossi** per-episodio. AniList non espone `Episode.description`. Per riempire le sinossi degli episodi in italiano, il plugin usa due fonti in cascata (feature opt-in):
 
-1. recuperare l'**overview inglese** dell'episodio da **TMDB** (`tv/{id}/season/{s}/episode/{e}`);
-2. **tradurla in italiano** via **Ollama Cloud**.
+1. **TheTVDB (fonte preferita)** — espone le sinossi degli episodi già **tradotte in italiano** (`/series/{id}/episodes/default/{lang}`). Quando la traduzione IT esiste, viene usata **direttamente**: zero chiamate Ollama, **zero compute sul NAS**.
+2. **TMDB + Ollama Cloud (fallback)** — se TVDB non ha la traduzione per quell'episodio, il plugin recupera l'**overview inglese** da TMDB (`tv/{id}/season/{s}/episode/{e}`) e la **traduce in italiano** via Ollama Cloud.
 
-Il carico sul NAS è minimo: solo HTTPS in uscita verso TMDB e Ollama, **zero compute locale**. I risultati sono cacheati per-episodio (chiavi `tmdbId::`, `tmdbEp::`, `episodeSynopsisIT::`), quindi al secondo refresh di una stagione non si fa nessuna HTTP verso TMDB/Ollama.
+Il carico sul NAS è minimo: solo HTTPS in uscita verso TVDB/TMDB/Ollama, **zero compute locale**. I risultati sono cacheati (chiavi `tvdbToken::`, `tvdbSeriesId::`, `tvdbEpisodes::`, `tmdbId::`, `tmdbEp::`, `episodeSynopsisIT::`), quindi al secondo refresh di una stagione non si fa nessuna HTTP.
 
-### Step 1 — API key TMDB
+> **Vuoi solo la qualità migliore con il minimo sforzo?** Abilita solo **TheTVDB** (Step 1): ottieni sinossi IT dirette senza toccare Ollama. Aggiungi TMDB + Ollama (Step 2-3) solo se vuoi coprire anche gli episodi che TVDB non ha tradotto.
+
+### Step 1 — API key TheTVDB (fonte IT preferita)
+1. Registrati su [thetvdb.com](https://www.thetvdb.com/signup) (gratis).
+2. Dalla tua dashboard crea una **API key** v4.
+3. In Jellyfin: **Dashboard → Plugin → AnimeClick Metadata → TheTVDB API key** e incolla la chiave. Spunta **"Usa TheTVDB come fonte preferita"**.
+4. Il campo **Lingua TheTVDB** resta `ita` (codice 3-char; puoi mettere `eng`, `jpn`, ecc. se vuoi un'altra lingua).
+
+### Step 2 — API key TMDB (fonte EN per il fallback)
 1. Registrati su [themoviedb.org](https://www.themoviedb.org/) (gratis).
 2. Vai su **Settings → API** ([themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)) e richiedi una chiave di tipo **Personal / Developer** (gratis, uso non commerciale).
 3. In Jellyfin: **Dashboard → Plugin → AnimeClick Metadata → TMDB API key** e incolla la chiave.
 
-### Step 2 — API key Ollama Cloud
+### Step 3 — API key Ollama Cloud (traduzione EN→IT per il fallback)
 1. Registrati su [ollama.com](https://ollama.com/) (gratis).
 2. Crea una API key su [ollama.com/settings/keys](https://ollama.com/settings/keys).
 3. In Jellyfin: **Dashboard → Plugin → AnimeClick Metadata → Ollama Cloud API key** e incolla la chiave. L'endpoint default è `https://ollama.com/api/chat` (auth `Authorization: Bearer <key>`).
 
-### Step 3 — Scegli il modello
+### Step 4 — Scegli il modello Ollama
 Dal dropdown **Modello cloud per la traduzione** scegli un modello Ollama Cloud. Consigliati per traduzione anime EN→IT:
 
 - **`gemma4:cloud`** (default) — solido multilingua, buon equilibrio qualità/latenza.
@@ -370,18 +382,28 @@ Puoi anche selezionare **Personalizzato…** e inserire qualsiasi tag `nome:clou
 > - **Pro ($20/mese)**: 3 cloud models concorrenti, ~50× più utilizzo, accesso a modelli più grandi.
 > - **Max ($100/mese)**: 10 concorrenti, 5× più uso del Pro.
 >
-> Per il primo scan di una stagione da 25 episodi: ~25 chiamate TMDB + ~25 chiamate Ollama (con `Delay richieste` a 1s → ~50s una-tantum). Sul Free va benissimo perché la cache evita di rifarlo.
+> Per il primo scan di una stagione da 25 episodi: con TVDB basta **1 chiamata paginata** per tutta la serie; in fallback TMDB+Ollama sono ~25 + ~25 chiamate (~50s una-tantum). Sul Free va benissimo perché la cache evita di rifarlo.
+
+### 🧪 Pulsanti di test (diagnostica dettagliata)
+Nella stessa sezione ci sono tre pulsanti che validano le credenziali **attualmente inserite nei campi** (non serve salvare prima):
+
+- **Test TMDB** — fa una `search/tv` di prova e mostra il primo risultato (id + nome), oppure l'errore HTTP (status, body) se la key è sbagliata.
+- **Test Ollama** — invia un prompt banale all'endpoint Ollama configurato e mostra la reply del modello, oppure l'errore (status, body, eccezione).
+- **Test TVDB** — fa login su TheTVDB + una `search` di prova e mostra se il token è stato ottenuto + una serie di esempio, oppure l'errore.
+
+Il risultato (successo o fallimento) appare in un box di testo sotto i pulsanti, con status HTTP, corpo della risposta e messaggio di eventuale eccezione — utile per capire esattamente cosa non va (key errata, endpoint sbagliato, modello inesistente, timeout).
 
 ### Come funziona (e quando non funziona)
-- Il plugin risolve l'ID TMDB della serie cercando per **titolo originale (romaji) + anno** (fallback titolo italiano), cached per serie.
-- Per ogni episodio fetcha l'overview EN da TMDB (cached per episodio) e la traduce via Ollama (cached per episodio+modello).
-- Se la traduzione ha successo → `result.Item.Overview` viene settato in italiano. La sinossi IT viene popolata **anche quando il titolo episodio è generico** ("Episodio 3"): la sinossi ha valore indipendente dal titolo.
-- Su qualsiasi fallimento (TMDB 404, no key, timeout Ollama) → nessuna eccezione, l'Overview è lasciato agli altri provider (AniList/TMDB nativi Jellyfin) in inglese (fill-gaps).
+- **TVDB prima**: il plugin risolve l'ID TVDB della serie cercando per **titolo originale (romaji) + anno** (fallback titolo italiano), cached per serie; poi fetcha la lista episodi tradotta (cached per serie+lingua, una chiamata paginata) e cerca la sinossi IT per stagione/episodio. Se esiste → `Overview` settato in IT, fine.
+- **Fallback TMDB + Ollama**: se TVDB non ha la traduzione (o TVDB è disabilitato), risolve l'ID TMDB, fetcha l'overview EN (cached per episodio) e la traduce via Ollama (cached per episodio+modello).
+- La sinossi IT viene popolata **anche quando il titolo episodio è generico** ("Episodio 3"): la sinossi ha valore indipendente dal titolo.
+- Su qualsiasi fallimento (404, no key, timeout) → nessuna eccezione, l'Overview è lasciato agli altri provider (AniList/TMDB nativi Jellyfin) in inglese (fill-gaps).
 
 ### Caveat
-- Il mapping stagione/episodio anime↔TMDB a volte non coincide (specialmente per anime long-running con numbering non standard). Se TMDB risponde 404 per `season/{s}/episode/{e}`, quell'episodio resta senza sinossi IT (gli altri provider riempiono in EN).
-- Serve che TMDB abbia l'anime nel proprio DB con overview episodi in inglese. Non tutti gli anime le hanno complete.
-- Senza `Traduci le sinossi degli episodi` attivo (default), le sinossi episodi restano in inglese dai provider nativi Jellyfin (fill-gaps) — il plugin scrive solo i titoli IT.
+- Il mapping stagione/episodio anime↔TVDB/TMDB a volte non coincide (specialmente per anime long-running con numbering non standard). Se nessuna fonte ha la sinossi per `season/{s}/episode/{e}`, quell'episodio resta senza sinossi IT (gli altri provider riempiono in EN).
+- TVDB ha ottime traduzioni IT per molti anime TV, ma non per tutti gli episodi; il fallback TMDB+Ollama copre i buchi. Nota: l'endpoint translation di TVDB a volte ritorna 404 anche quando la traduzione esiste sul sito (issue noti TVDB) — il plugin usa l'endpoint combined `/series/{id}/episodes/default/{lang}`, più affidabile.
+- Serve che almeno una fonte abbia l'anime nel proprio DB. Non tutti gli anime hanno sinossi episodi complete su TVDB/TMDB.
+- Senza **"Recupera le sinossi degli episodi in italiano"** attivo (default), le sinossi episodi restano in inglese dai provider nativi Jellyfin (fill-gaps) — il plugin scrive solo i titoli IT.
 
 ## 🔧 Build da Sorgente
 
@@ -400,6 +422,12 @@ L'output sarà in `pub/`.
 - .NET **9.0** runtime
 
 ## 📝 Changelog
+
+### v0.2.9.0 (TVDB sinossi IT dirette + pulsanti di test TMDB/Ollama/TVDB)
+- 🌐 **TheTVDB come fonte preferita di sinossi episodi in italiano**: nuovo servizio `AnimeClickTvdbClient` che fa login su TVDB v4 (`POST /login`, token cached 24h), risolve l'ID serie (`/search?type=series`, cached) e fetcha la lista episodi tradotta in una sola chiamata paginata (`/series/{id}/episodes/default/{lang}`, cached per serie+lingua). Quando TVDB ha la sinossi IT la usa **direttamente** — zero chiamate Ollama, zero compute sul NAS. Se TVDB non ha la traduzione, **fallback** sul flusso esistente TMDB EN + Ollama IT. Nuovi toggle `EnableTvdbSynopsis` + `TvdbApiKey` + `TvdbLanguage` (default `ita`), opt-in. Best-effort, mai crasha, empty-guard.
+- 🧪 **Pulsanti di test con errore dettagliato**: tre pulsanti nella sezione sinossi della config page — **Test TMDB**, **Test Ollama**, **Test TVDB** — validano le credenziali attualmente inserite nel form (non serve salvare) e mostrano status HTTP, corpo della risposta e messaggio eccezione. Nuovi endpoint `POST /Plugins/AnimeClick/TestTmdb|TestOllama|TestTvdb` su `AnimeClickDiagnosticsController`; nuovi metodi `TestConnectionAsync` sui tre service (no silent-catch, DTO dettagliato `TmdbTestResult`/`OllamaTestResult`/`TvdbTestResult`).
+- 🧪 **Nuovi unit test** (no-network): TVDB URL building + parsing (`ParseLoginToken`, `ParseFirstSeriesId` con match anno, `ParseEpisodeOverview`, `ParseNextLink`). 12/12 test verdi.
+- 📝 **README**: tutorial sinossi riscritto (TVDB fonte preferita + fallback TMDB/Ollama, step TVDB, sezione pulsanti di test, caveat TVDB); tabella config aggiornata; bump riferimenti versione a 0.2.9.0.
 
 ### v0.2.8.0 (Merge fill-gaps + immagini fallback + sinossi episodi IT via TMDB/Ollama)
 - 🧠 **Merge "Italian-wins + fill-gaps"**: nuovo toggle `OverwriteNonItalianFields` (default **false**). AnimeClick emette solo i campi localizzati (titolo IT, sinossi IT, generi IT, tag, cast) e lascia i campi language-neutral (titolo originale, studio, rating, data, classificazione, stato) ai provider a monte (AniList/TMDB/OMDb). Empty-guard su `Name`/`Overview`/`OriginalTitle` per non svuotare mai campi già popolati. Quando il toggle è attivo, si recupera il comportamento precedente (AnimeClick sovrascrive tutto).

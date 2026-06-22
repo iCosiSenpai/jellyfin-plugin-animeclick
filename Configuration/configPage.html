@@ -159,21 +159,22 @@
                     </div>
 
                     <!-- ═══════════════════════════════════════════════ -->
-                    <!-- SINOSSI EPISODI IT (TMDB + Ollama Cloud) -->
+                    <!-- SINOSSI EPISODI IT (TVDB / TMDB + Ollama Cloud) -->
                     <!-- ═══════════════════════════════════════════════ -->
                     <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">Sinossi episodi in italiano (TMDB + Ollama Cloud)</h2>
+                        <h2 class="sectionTitle">Sinossi episodi in italiano (TVDB / TMDB + Ollama Cloud)</h2>
                     </div>
 
                     <div class="verticalSection">
                         <div class="checkboxContainer checkboxContainer-withDescription">
                             <label class="emby-checkbox-label">
                                 <input type="checkbox" is="emby-checkbox" id="chkEnableEpisodeSynopsisTranslation" />
-                                <span>Traduci le sinossi degli episodi in italiano</span>
+                                <span>Recupera le sinossi degli episodi in italiano</span>
                             </label>
                             <div class="fieldDescription checkboxFieldDescription">
-                                AnimeClick non pubblica sinossi per-episodio. Il plugin recupera l'overview inglese dell'episodio da TMDB e la traduce in italiano via Ollama Cloud.
-                                Richiede una API key TMDB e una API key Ollama Cloud (sotto). Disattivato di default.
+                                AnimeClick non pubblica sinossi per-episodio. Il plugin usa <strong>TVDB</strong> come fonte preferita
+                                (sinossi IT dirette, zero traduzione/compute) quando abilitato sotto, e in fallback <strong>TMDB</strong>
+                                (overview EN) + <strong>Ollama Cloud</strong> (traduzione IT). Disattivato di default.
                                 Senza questa opzione, le sinossi restano in inglese dai provider nativi Jellyfin (fill-gaps).
                                 Carico NAS: solo HTTPS in uscita, zero compute locale; cache per-episodio.
                             </div>
@@ -272,6 +273,63 @@
                             <div class="fieldDescription">
                                 Timeout per una singola chiamata di traduzione Ollama (default: 30).
                             </div>
+                        </div>
+
+                        <!-- ── TVDB (fonte preferita: sinossi IT dirette) ── -->
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label class="emby-checkbox-label">
+                                <input type="checkbox" is="emby-checkbox" id="chkEnableTvdbSynopsis" />
+                                <span>Usa TheTVDB come fonte preferita (sinossi IT dirette)</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                TheTVDB espone le sinossi degli episodi già tradotte in italiano: quando la traduzione esiste viene
+                                usata <strong>direttamente</strong>, senza chiamate Ollama e senza compute sul NAS. Se TVDB non ha la
+                                traduzione per un episodio, il plugin ricade su TMDB + Ollama (se configurati sotto). Richiede una
+                                API key TheTVDB v4.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtTvdbApiKey">
+                                TheTVDB API key
+                            </label>
+                            <input id="txtTvdbApiKey" type="password" is="emby-input" />
+                            <div class="fieldDescription">
+                                Registrati su
+                                <a is="emby-linkbutton" class="button-link" target="_blank" rel="noopener noreferrer" href="https://www.thetvdb.com/signup">thetvdb.com</a>
+                                e crea una API key gratuita dalla tua dashboard. Lascia vuoto per disabilitare la fonte TVDB.
+                            </div>
+                        </div>
+
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="txtTvdbLanguage">
+                                Lingua TheTVDB (codice 3-char)
+                            </label>
+                            <input id="txtTvdbLanguage" type="text" is="emby-input" placeholder="ita" />
+                            <div class="fieldDescription">
+                                Codice lingua TheTVDB per le sinossi episodi (default: <code>ita</code>). Esempi: <code>ita</code>, <code>eng</code>, <code>jpn</code>.
+                            </div>
+                        </div>
+
+                        <!-- ── Pulsanti di test connessione (diagnostica dettagliata) ── -->
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused">Test connessione provider</label>
+                            <div style="display:flex; flex-wrap:wrap; gap:0.5em;">
+                                <button is="emby-button" type="button" id="btnTestTmdb" class="raised emby-button">
+                                    <span>Test TMDB</span>
+                                </button>
+                                <button is="emby-button" type="button" id="btnTestOllama" class="raised emby-button">
+                                    <span>Test Ollama</span>
+                                </button>
+                                <button is="emby-button" type="button" id="btnTestTvdb" class="raised emby-button">
+                                    <span>Test TVDB</span>
+                                </button>
+                            </div>
+                            <div class="fieldDescription">
+                                Verifica le credenziali <em>attualmente inserite nei campi sopra</em> (non serve salvare prima).
+                                Mostra status HTTP, corpo della risposta ed eventuali errori dettagliati.
+                            </div>
+                            <pre id="txtSynopsisTestOutput" style="white-space: pre-wrap; overflow-x: auto; margin-top: 1em;"></pre>
                         </div>
                     </div>
 
@@ -528,6 +586,9 @@
                         document.querySelector('#txtOllamaCloudApiKey').value = config.OllamaCloudApiKey || '';
                         document.querySelector('#txtOllamaCloudEndpoint').value = config.OllamaCloudEndpoint || 'https://ollama.com/api/chat';
                         document.querySelector('#numEpisodeTranslationTimeoutSec').value = config.EpisodeTranslationTimeoutSec;
+                        document.querySelector('#chkEnableTvdbSynopsis').checked = config.EnableTvdbSynopsis;
+                        document.querySelector('#txtTvdbApiKey').value = config.TvdbApiKey || '';
+                        document.querySelector('#txtTvdbLanguage').value = config.TvdbLanguage || 'ita';
 
                         // Model dropdown: if the configured model isn't in the preset list, select "Personalizzato…"
                         // and show the custom input prefilled with the configured value.
@@ -612,6 +673,66 @@
                 document.querySelector('#txtDiagOutput').textContent =
                     typeof value === 'string' ? value : JSON.stringify(value, null, 2);
             }
+
+            function setSynopsisTestOutput(value) {
+                document.querySelector('#txtSynopsisTestOutput').textContent =
+                    typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+            }
+
+            // Reads the currently-entered Ollama model (preset dropdown, or the custom
+            // input when "Personalizzato…" is selected).
+            function currentOllamaModel() {
+                var sel = document.querySelector('#selOllamaCloudModel');
+                if (sel.value === '__custom__') {
+                    return document.querySelector('#txtOllamaCloudModelCustom').value.trim() || 'gemma4:cloud';
+                }
+                return sel.value;
+            }
+
+            function optionalIntValue(selector, fallback) {
+                var v = parseInt(document.querySelector(selector).value, 10);
+                return isNaN(v) ? fallback : v;
+            }
+
+            document.querySelector('#btnTestTmdb')
+                .addEventListener('click', function () {
+                    Dashboard.showLoadingMsg();
+                    setSynopsisTestOutput('Test TMDB in corso…');
+                    animeClickApi('Plugins/AnimeClick/TestTmdb', 'POST', {
+                        ApiKey: document.querySelector('#txtTmdbApiKey').value.trim()
+                    })
+                        .then(setSynopsisTestOutput)
+                        .catch(function (err) { setSynopsisTestOutput('Test TMDB FAILED:\n' + (err && err.responseText ? err.responseText : String(err))); })
+                        .finally(function () { Dashboard.hideLoadingMsg(); });
+                });
+
+            document.querySelector('#btnTestOllama')
+                .addEventListener('click', function () {
+                    Dashboard.showLoadingMsg();
+                    setSynopsisTestOutput('Test Ollama in corso…');
+                    animeClickApi('Plugins/AnimeClick/TestOllama', 'POST', {
+                        Endpoint: document.querySelector('#txtOllamaCloudEndpoint').value.trim(),
+                        ApiKey: document.querySelector('#txtOllamaCloudApiKey').value.trim(),
+                        Model: currentOllamaModel(),
+                        TimeoutSec: optionalIntValue('#numEpisodeTranslationTimeoutSec', 30)
+                    })
+                        .then(setSynopsisTestOutput)
+                        .catch(function (err) { setSynopsisTestOutput('Test Ollama FAILED:\n' + (err && err.responseText ? err.responseText : String(err))); })
+                        .finally(function () { Dashboard.hideLoadingMsg(); });
+                });
+
+            document.querySelector('#btnTestTvdb')
+                .addEventListener('click', function () {
+                    Dashboard.showLoadingMsg();
+                    setSynopsisTestOutput('Test TVDB in corso…');
+                    animeClickApi('Plugins/AnimeClick/TestTvdb', 'POST', {
+                        ApiKey: document.querySelector('#txtTvdbApiKey').value.trim(),
+                        Language: document.querySelector('#txtTvdbLanguage').value.trim() || 'ita'
+                    })
+                        .then(setSynopsisTestOutput)
+                        .catch(function (err) { setSynopsisTestOutput('Test TVDB FAILED:\n' + (err && err.responseText ? err.responseText : String(err))); })
+                        .finally(function () { Dashboard.hideLoadingMsg(); });
+                });
 
             document.querySelector('#btnDiagLookup')
                 .addEventListener('click', function () {
@@ -775,6 +896,9 @@
                             config.OllamaCloudModel = selModelSave.value;
                         }
                         config.EpisodeTranslationTimeoutSec = clampInt('#numEpisodeTranslationTimeoutSec', 30, 5, 300);
+                        config.EnableTvdbSynopsis = document.querySelector('#chkEnableTvdbSynopsis').checked;
+                        config.TvdbApiKey = document.querySelector('#txtTvdbApiKey').value.trim();
+                        config.TvdbLanguage = document.querySelector('#txtTvdbLanguage').value.trim() || 'ita';
 
                         // Ricerca
                         config.MaxSearchResults = clampInt('#txtMaxSearchResults', 10, 1, 25);
