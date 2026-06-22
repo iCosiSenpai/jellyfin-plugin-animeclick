@@ -10,400 +10,188 @@
 
 Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in italiano** da [AnimeClick.it](https://www.animeclick.it/), la principale community italiana dedicata all'animazione giapponese.
 
-> **Nota**: Questo plugin utilizza scraping etico del sito AnimeClick, autorizzato dallo staff. Tutte le richieste sono rate-limited e i dati vengono cacheati localmente.
+> Scraping etico del sito AnimeClick, autorizzato dallo staff. Tutte le richieste sono rate-limited e i dati vengono cacheati localmente.
 
 ## ✨ Funzionalità
 
-### Metadati Testuali
-- **Titoli in italiano** (con opzione per titolo originale giapponese)
-- **Trama/sinossi** in italiano
-- **Titoli episodi** in italiano con matching multi-stagione basato su normalizzazione AnimeClick
-- **Sinossi episodi in italiano** (opzionale): AnimeClick non pubblica sinossi per-episodio, quindi il plugin usa **TheTVDB** come fonte preferita (sinossi IT dirette, zero compute) e in fallback **TMDB** (overview EN) + **Ollama Cloud** (traduzione IT). Vedi la sezione [Sinossi episodi IT](#-sinossi-episodi-in-italiano-tvdb--tmdb--ollama-cloud).
-- **Generi** in italiano (Commedia, Fantascienza, Scolastico, ecc.)
-- **Tag** (Shounen, Seinen, Mecha, Isekai, ecc.)
-- **Anno di produzione** e **data premiere**
-- **Valutazione community** AnimeClick (scala 1-10)
-- **Stato serie** (completato → Ended, in corso → Continuing)
-- **Studi di animazione**
-- **Content rating** (se disponibile)
-- **Sigle OP/ED** come tag, in modalita best-effort quando AnimeClick espone dati strutturati
+**Metadati testuali**
+- Titoli in italiano (con opzione per il titolo originale giapponese)
+- Trama/sinossi in italiano
+- Titoli episodi in italiano con matching multi-stagione
+- Sinossi episodi in italiano (opzionale, vedi [sezione dedicata](#-sinossi-episodi-in-italiano))
+- Generi, tag, anno di produzione, valutazione community, stato serie, studi di animazione, sigle OP/ED
 
-### Cast & Staff
-- **Doppiatori giapponesi** (seiyuu) con nome del personaggio
-- **Doppiatori italiani** con nome del personaggio
-- **Registi**
-- **Autori** (soggetto originale, sceneggiatura, series composition)
-- **Compositori** (colonne sonore)
+**Cast & staff**
+- Doppiatori giapponesi (seiyuu) e italiani con nome del personaggio
+- Registi, autori, compositori
 
-### Immagini
-- **Locandina italiana di fallback** per Serie TV e Film (priorità bassa: AniList/Fanart/TMDB vincono se hanno immagini; AnimeClick riempie solo i buchi). Attivabile con l'opzione *Usa locandina AnimeClick come fallback*.
-- **Foto doppiatori/staff** (provider `AnimeClickPersonImageProvider`) per le entità Person.
+**Immagini**
+- Locandina italiana di fallback per Serie e Film (priorità bassa: AniList/Fanart/TMDB vincono se hanno immagini; AnimeClick riempie solo i buchi)
+- Foto doppiatori/staff per le entità Person
 
-### Collezioni Automatiche
-- Rilevamento **sequel, prequel e spin-off** tramite la pagina relazioni di AnimeClick
-- I titoli correlati vengono raggruppati in BoxSet
+**Collezioni e stagioni**
+- Rilevamento sequel/prequel/spin-off e raggruppamento in BoxSet (sperimentale)
+- Stagioni sulla stessa pagina o su pagine separate risolte automaticamente tramite le relazioni AnimeClick
+- Filtro spin-off (titoli con "Alternative", "Gaiden", "Spin-off", "Bangai-hen" esclusi dalla mappatura)
 
-### Multi-Stagione
-- **Stagioni sulla stessa pagina**: il parser normalizza numero assoluto, progressivo di stagione, stagione, URL dettaglio e ID episodio AnimeClick
-- **Matching universale**: quando AnimeClick espone gruppi stagione, Jellyfin `S02E01` viene abbinato al progressivo della seconda stagione, non al vecchio episodio 1 della prima stagione
-- **Stagioni su pagine separate**: per anime con pagine AnimeClick distinte (es. Sword Art Online → SAO II → Alicization), il plugin risolve automaticamente la pagina corretta di ogni stagione tramite le relazioni
-- **Filtro spin-off**: titoli contenenti "Alternative", "Gaiden", "Spin-off" o "Bangai-hen" vengono esclusi dalla mappatura automatica
-- **SeasonProvider**: imposta l'ID AnimeClick corretto sull'entità Season di Jellyfin
+### Librerie supportate
 
-### Librerie Supportate
-| Tipo | Metadati Testuali e Cast | Locandine e Art |
+| Tipo | Metadati | Immagini |
 |------|----------|----------|
-| 📺 Serie TV | ✅ | ✅ fallback (AnimeClick) — vince AniList/Fanart/TMDB se hanno immagini |
-| 🎬 Film | ✅ | ✅ fallback (AnimeClick) — vince AniList/Fanart/TMDB se hanno immagini |
-| 📅 Stagioni | ✅ (ID Provider) | ❌ (Usa TMDB/Fanart) |
-| 📝 Episodi | ✅ (Titoli Ita + sinossi IT opzionale via TVDB / TMDB+Ollama) | ❌ |
-
-### Funzionalità Tecniche
-- **Cache locale** con TTL configurabile (default: 48h) — copre metadati AnimeClick, token + ID serie TVDB, lista episodi TVDB tradotti, ID TMDB risolti, overview episodi TMDB e traduzioni Ollama (per-episodio)
-- **Rate limiting** integrato (default: 1 richiesta/secondo)
-- **Merge "Italian-wins + fill-gaps"**: i provider Series/Movie/Episode girano con `Order=100` (per ultimi). AnimeClick vince sui campi localizzati (titolo, trama, generi, tag, cast, titoli episodi IT) e lascia i campi language-neutral (titolo originale, studio, rating, date) ai provider a monte quando `OverwriteNonItalianFields=false` (default). Empty-guard su tutti i campi per non svuotare mai dati già presenti.
-- **ID AniList risolto a ogni scan** (GraphQL by-title) e scritto su `ProviderIds["AniList"]`, così l'image provider AniList trova le copertine automaticamente.
-- **ID TMDB risolto on-demand** (search/tv by titolo originale + anno) per il fallback delle sinossi episodi; **ID TVDB risolto on-demand** (search series) per la fonte preferita IT diretta.
-- **Identificazione manuale** tramite ID AnimeClick (formato: `72/naruto` dall'URL) + pulsante **Identify & Refresh** (vedi sotto)
-- **Link esterno** diretto alla pagina AnimeClick nella sidebar
-- **Pagina di configurazione** premium nella dashboard Jellyfin: 4 schede (Metadati / Sinossi episodi / Ricerca / Strumenti), card raggruppate, header con versione + link al repo/issues
-- **Tab Strumenti**: **Identifica & Aggiorna** (workaround bug Jellyfin 10.11.x, output umanizzato) e **Svuota cache metadati** con un clic
-- **Card "Stato connessione provider"** con badge ✓/✗ + dettagli espandibili per testare TMDB, Ollama e TVDB
+| 📺 Serie TV | ✅ | ✅ fallback |
+| 🎬 Film | ✅ | ✅ fallback |
+| 📅 Stagioni | ✅ (ID Provider) | ❌ usa TMDB/Fanart |
+| 📝 Episodi | ✅ (titoli IT + sinossi IT opzionali) | ❌ |
 
 ## 📦 Installazione
 
 ### Da Repository Plugin (consigliato)
 
-1. In Jellyfin, vai su **Dashboard → Plugin → Repositories**
-2. Aggiungi un nuovo repository con URL:
+1. **Dashboard → Plugin → Repositories**, aggiungi:
    ```
    https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json
    ```
-3. Vai su **Catalogo**, cerca "AnimeClick Metadata" e installa
-4. Riavvia Jellyfin
+2. **Catalogo** → cerca "AnimeClick Metadata" → installa → riavvia Jellyfin
 
-### Installazione Manuale
+### Installazione manuale
 
 1. Scarica l'ultima release dalla [pagina Releases](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases)
-2. Estrai lo zip nella cartella plugin di Jellyfin:
+2. Estrai lo zip nella cartella plugin:
    - **Linux**: `~/.local/share/jellyfin/plugins/AnimeClick Metadata_0.2.10.0/`
    - **Docker**: `/config/plugins/AnimeClick Metadata_0.2.10.0/`
    - **Windows**: `%APPDATA%\jellyfin\plugins\AnimeClick Metadata_0.2.10.0\`
 3. Riavvia Jellyfin
 
-> **💡 Altri miei plugin:** Nello stesso repository trovi anche [KometaThemes](https://github.com/iCosiSenpai/KometaTheme), che scarica automaticamente le sigle OP/ED degli anime da animethemes.moe.
+> **Altri miei plugin:** nello stesso repository trovi anche [KometaThemes](https://github.com/iCosiSenpai/KometaTheme), che scarica automaticamente le sigle OP/ED degli anime da animethemes.moe.
 
 ## ⚙️ Configurazione
 
-Dopo l'installazione, vai su **Dashboard → Plugin → AnimeClick Metadata** per configurare:
+La pagina di configurazione è organizzata in **4 schede**:
 
 ### Metadati
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
 | Preferisci titolo italiano | ✅ | Usa il titolo italiano come nome della serie |
-| Sovrascrivi campi non-italiani | ❌ | Se attivo, AnimeClick sovrascrive anche titolo originale, studio, rating, data e classificazione (campi che AniList/TMDB/OMDb gestiscono meglio). Se spento (default), AnimeClick emette solo i campi localizzati (titolo, trama, generi, tag, cast) e lascia i buchi agli altri provider (fill-gaps). |
-| Importa trama | ✅ | Importa la sinossi in italiano |
-| Importa generi | ✅ | Importa i generi (Commedia, Fantascienza, ecc.) |
-| Importa studi | ✅ | Importa gli studi di animazione |
-| Importa valutazione | ✅ | Importa il rating community |
-| Importa cast e staff | ✅ | Doppiatori, registi, autori, compositori |
-| Importa tag | ✅ | Tag come Shounen, Seinen, Mecha |
-| Importa titoli episodi | ✅ | Titoli italiani degli episodi da /episodi, con matching per progressivo di stagione |
-| Usa locandina AnimeClick come fallback | ✅ | Fornisce la locandina italiana di AnimeClick come immagine fallback per Serie/Film (priorità bassa: AniList/Fanart/TMDB vincono se hanno immagini) |
-| Crea collezioni automatiche | ❌ | Raggruppa sequel/prequel in BoxSet |
-| Importa sigle OP/ED | ✅ | Aggiunge i nomi delle sigle come tag quando AnimeClick espone OP/ED strutturati |
+| Sovrascrivi campi non-italiani | ❌ | Se attivo, sovrascrive anche titolo originale, studio, rating, data (campi che AniList/TMDB/OMDb gestiscono meglio). Spento = fill-gaps, lascia i buchi agli altri provider |
+| Importa trama / generi / studi / valutazione / cast / tag / titoli episodi / sigle | ✅ | Campi localizzati in italiano da AnimeClick |
+| Usa locandina AnimeClick come fallback | ✅ | Locandina IT come ultima risorsa (AniList/Fanart/TMDB vincono se hanno immagini) |
+| Crea collezioni automatiche | ❌ | Raggruppa sequel/prequel in BoxSet (sperimentale) |
 
-### Sinossi episodi in italiano (TVDB / TMDB + Ollama Cloud)
+### Sinossi episodi in italiano
+
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
-| Recupera le sinossi degli episodi in italiano | ❌ | Abilita il recupero delle sinossi IT. Fonte preferita: TVDB (IT diretto). Fallback: TMDB EN + Ollama IT. Opt-in. |
-| Usa TheTVDB come fonte preferita | ❌ | Sinossi IT dirette da TVDB (zero traduzione/compute). Richiede API key TVDB. |
-| TheTVDB API key | *(vuoto)* | API key TheTVDB v4 gratuita — vedi tutorial sotto |
-| Lingua TheTVDB | `ita` | Codice lingua 3-char per le sinossi TVDB (`ita`, `eng`, `jpn`, …) |
-| TMDB API key | *(vuoto)* | API key TMDB gratuita (fonte EN per il fallback) — vedi tutorial sotto |
-| Ollama Cloud API key | *(vuoto)* | Bearer key Ollama Cloud (traduzione EN→IT per il fallback) — vedi tutorial sotto |
-| Endpoint Ollama Cloud | `https://ollama.com/api/chat` | Endpoint chat Ollama Cloud |
-| Modello cloud | `gemma4:cloud` | Modello Ollama Cloud per la traduzione EN→IT (dropdown con modelli consigliati + personalizzato) |
-| Timeout traduzione (sec) | `30` | Timeout per una singola chiamata di traduzione Ollama / TVDB |
-| **Test TMDB / Test Ollama / Test TVDB** | — | Card "Stato connessione provider" con badge ✓/✗ + dettagli espandibili: validano le credenziali inserite (status HTTP, body, errore) senza salvare |
+| Abilita sinossi episodi in italiano | ❌ | Abilita il recupero. Fonte preferita: TVDB (IT diretto). Fallback: TMDB EN + Ollama IT |
+| Usa TheTVDB (fonte preferita) | ❌ | Sinossi IT dirette, zero compute. Richiede API key TVDB |
+| TheTVDB API key / Lingua | *(vuoto)* / `ita` | API key TVDB v4 + codice lingua 3-char |
+| TMDB API key | *(vuoto)* | API key TMDB (fonte EN per il fallback) |
+| Ollama Cloud API key / Endpoint / Modello | *(vuoto)* / `…/api/chat` / `gemma4:cloud` | Traduzione EN→IT per il fallback |
+| Timeout traduzione (sec) | `30` | Timeout per una singola chiamata Ollama/TVDB |
+| **Test TMDB / Ollama / TVDB** | — | Card "Stato connessione provider" con badge ✓/✗ + dettagli espandibili: validano le credenziali inserite senza salvare |
 
 ### Ricerca
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
-| Risultati massimi per ricerca | `10` | Numero massimo di risultati per ricerca su AnimeClick (1-25) |
-| Filtra solo anime | ✅ | Esclude manga, novel e drama dai risultati di ricerca |
+| Risultati massimi per ricerca | `10` | Numero massimo di risultati per ricerca (1-25) |
+| Filtra solo anime | ✅ | Esclude manga, novel e drama |
 
-### Cache & Performance
+### Cache & Avanzate
 | Opzione | Default | Descrizione |
 |---------|---------|-------------|
-| Cache metadati (ore) | `48` | Durata cache dati scaricati (metadati, ID TMDB, overview TMDB, traduzioni Ollama) |
+| Cache metadati (ore) | `48` | Durata cache dati scaricati |
 | Cache negativa (ore) | `12` | Durata cache per risultati vuoti |
 | Delay richieste (ms) | `1000` | Pausa tra richieste HTTP |
-
-### Avanzate
-| Opzione | Default | Descrizione |
-|---------|---------|-------------|
 | URL base | `https://www.animeclick.it` | URL di AnimeClick |
 | User-Agent | `AnimeClick-Jellyfin-Plugin/0.2.10.0` | Identificativo per le richieste |
 
 ### Strumenti
-La scheda **Strumenti** della pagina plugin include:
-- **Identifica & Aggiorna**: applica subito i metadati AnimeClick a un item dopo l'Identify (workaround bug Jellyfin 10.11.x che non triggera il refresh). Output umanizzato (✓/✗) con riepilogo immagini scaricate.
-- **Svuota cache metadati**: rimuove con un clic tutti i dati cacheati localmente (ricerche, schede anime, episodi, sinossi TVDB/TMDB, traduzioni Ollama) per forzare un refresh fresco al prossimo scan.
+La scheda **Strumenti** contiene:
+- **Identifica & Aggiorna**: applica subito i metadati AnimeClick a un item dopo l'Identify (workaround bug Jellyfin 10.11.x). Output umanizzato ✓/✗ con riepilogo immagini scaricate.
+- **Svuota cache metadati**: rimuove con un clic tutti i dati cacheati localmente per forzare un refresh fresco al prossimo scan.
 
-## 🔍 Identificazione Manuale
+## 🌐 Sinossi episodi in italiano
 
-Per identificare manualmente un anime:
+AnimeClick pubblica i **titoli** episodi in italiano ma **non le sinossi** per-episodio. Per riempirle, il plugin usa due fonti in cascata (feature opt-in):
+
+1. **TheTVDB (fonte preferita)** — espone le sinossi degli episodi già tradotte in italiano. Quando la traduzione esiste, viene usata direttamente: zero chiamate Ollama, zero compute sul NAS.
+2. **TMDB + Ollama Cloud (fallback)** — se TVDB non ha la traduzione, il plugin recupera l'overview inglese da TMDB e la traduce in italiano via Ollama Cloud.
+
+Il carico sul NAS è minimo: solo HTTPS in uscita, zero compute locale. I risultati sono cacheati, quindi al secondo refresh di una stagione non si fa nessuna HTTP.
+
+> **Vuoi il massimo con il minimo sforzo?** Abilita solo TheTVDB (Step 1): ottieni sinossi IT dirette senza toccare Ollama. Aggiungi TMDB + Ollama solo per coprire gli episodi che TVDB non ha tradotto.
+
+### Setup
+
+1. **TheTVDB**: registrati su [thetvdb.com](https://www.thetvdb.com/signup), crea una API key v4 dalla dashboard, incollala in **TheTVDB API key** e spunta **Usa TheTVDB come fonte preferita**. La lingua resta `ita` (codice 3-char; puoi mettere `eng`, `jpn`, ecc.).
+2. **TMDB**: registrati su [themoviedb.org](https://www.themoviedb.org/), richiedi una chiave **Personal/Developer** su [Settings → API](https://www.themoviedb.org/settings/api), incollala in **TMDB API key**.
+3. **Ollama Cloud**: registrati su [ollama.com](https://ollama.com/), crea una API key su [/settings/keys](https://ollama.com/settings/keys), incollala in **Ollama Cloud API key**. Endpoint default `https://ollama.com/api/chat` (auth Bearer).
+4. **Modello**: dal dropdown scegli un modello Ollama Cloud. Consigliati per la traduzione EN→IT: `gemma4:cloud` (default, solido multilingua), `minimax-m2.1:cloud`, `qwen3.5:cloud`, `gpt-oss:cloud`. Puoi anche selezionare **Personalizzato…** e inserire qualsiasi tag `nome:cloud` del [catalogo](https://ollama.com/search?c=cloud).
+
+> **⚠️ Free vs Pro**: i modelli cloud Ollama sono gated per **tier di abbonamento** ([ollama.com/pricing](https://ollama.com/pricing)), non per singolo modello. Il **Free** ($0) ha concurrency 1 e limiti di utilizzo sessione/settimanali — sufficienti per traduzioni cached brevi come le sinossi (una-tantum per episodio grazie alla cache). Il **Pro** ($20/mese) sblocca modelli più grandi e ~50× più utilizzo. Per il primo scan di una stagione da 25 episodi: con TVDB basta 1 chiamata paginata per tutta la serie; in fallback TMDB+Ollama sono ~50 chiamate (~50s una-tantum).
+
+### Come funziona (e quando non funziona)
+- **TVDB prima**: il plugin risolve l'ID TVDB cercando per titolo originale (romaji) + anno (fallback titolo italiano), cached per serie; poi fetcha la lista episodi tradotta (cached per serie+lingua, una chiamata paginata) e cerca la sinossi IT per stagione/episodio. Se esiste → `Overview` settato in IT.
+- **Fallback TMDB + Ollama**: se TVDB non ha la traduzione (o è disabilitato), risolve l'ID TMDB, fetcha l'overview EN (cached per episodio) e la traduce via Ollama (cached per episodio+modello).
+- Su qualsiasi fallimento (404, no key, timeout) → nessuna eccezione, l'Overview è lasciato agli altri provider in inglese (fill-gaps).
+
+### Caveat
+- Il mapping stagione/episodio anime↔TVDB/TMDB a volte non coincide (specialmente per anime long-running con numbering non standard). Se nessuna fonte ha la sinossi per `S/E`, quell'episodio resta senza sinossi IT.
+- L'endpoint translation di TVDB a volte ritorna 404 anche quando la traduzione esiste sul sito (issue noto TVDB) — il plugin usa l'endpoint combined `/series/{id}/episodes/default/{lang}`, più affidabile.
+- Serve che almeno una fonte abbia l'anime nel proprio DB.
+
+## 🔍 Identificazione manuale
 
 1. Cerca l'anime su [AnimeClick.it](https://www.animeclick.it/)
 2. Copia l'ID completo dall'URL: per `animeclick.it/anime/72/naruto` → `72/naruto`
 3. In Jellyfin, clicca sull'anime → **Identifica** → inserisci l'ID nel campo "AnimeClick"
 
-> **Nota:** Puoi anche inserire solo l'ID numerico (es. `72`) e il plugin lo troverà automaticamente tramite ricerca.
+> Puoi anche inserire solo l'ID numerico (es. `72`) e il plugin lo troverà tramite ricerca.
 
 ### ⚠️ Identify → Save → Refresh (Jellyfin 10.11.x)
 
-Jellyfin 10.11.x ha un comportamento subdolo: quando identifichi un item via
-"Identify → Save", l'API `POST /Items/RemoteSearch/Apply` salva l'ID provider
-sull'item ma **NON** triggera un metadata refresh. Risultato: lo spinner termina
-in un secondo e l'item resta con titolo/cast/descrizione vuoti o vecchi fino a
-quando non clicchi manualmente "Refresh & replace" o non riavvii la libreria.
+Jellyfin 10.11.x ha un comportamento subdolo: quando identifichi un item via "Identify → Save", l'API salva l'ID provider sull'item ma **NON** triggera un metadata refresh. Lo spinner termina in un secondo e l'item resta con titolo/cast/descrizione vuoti o vecchi finché non fai manualmente "Refresh & replace" o non riavvii la libreria. Inoltre, se l'ID provider è già lo stesso che stai salvando, Jellyfin considera la modifica un no-op.
 
-Inoltre, **se l'ID provider è già lo stesso che stai salvando** (es. hai già
-identificato l'item in passato e stai solo ri-applicando lo stesso ID), Jellyfin
-considera la modifica un no-op e non fa partire nessun refresh automatico.
+Questo plugin risolve il problema con il pulsante **Identifica & Aggiorna** (scheda **Strumenti**):
 
-Questo plugin (dalla v0.2.2.0) risolve il problema con un pulsante dedicato
-**"Identifica & Aggiorna"** nella pagina di configurazione del plugin (scheda
-*Strumenti*):
+1. Apri **Dashboard → Plugin → AnimeClick Metadata → scheda Strumenti → card Identifica & Aggiorna**
+2. Inserisci **Item ID Jellyfin** (l'UUID dell'item, nell'URL della pagina) e **AnimeClick ID** (formato `numero/slug`)
+3. (Opzionale) Spunta **Aggiorna anche copertine e immagini** se vuoi che il plugin cancelli le immagini remote esistenti prima del refresh, così gli ImageFetchers (Fanart, AniList, TMDB, OMDb) riscaricano artwork migliore. Le immagini locali (`folder.jpg`, `poster.jpg`, `backdrop.jpg`) sono sempre preservate.
+4. Clicca **Identifica & Aggiorna**: un box risultato ✓/✗ mostra l'esito e l'elenco delle immagini scaricate. Attendi 3-10 secondi: titolo italiano, trama, generi, cast e staff compaiono sulla pagina dell'item.
 
-1. Apri Dashboard → Plugin → AnimeClick Metadata → scheda **Strumenti**
-2. Vai alla card **Identifica & Aggiorna**
-3. Inserisci:
-   - **Item ID Jellyfin**: l'UUID dell'item (lo trovi nell'URL della pagina del film)
-   - **AnimeClick ID**: l'ID nel formato `numeroslug` (es. `4371/hanasaku-iroha-movie-2013`)
-4. (Opzionale) Spunta **Sostituisci anche le immagini** se vuoi che il plugin
-   cancelli le immagini remote esistenti (poster, backdrop, logo) prima del
-   refresh, così gli ImageFetchers (Fanart, AniList, TMDB, OMDb) possono
-   riscaricare artwork migliore. Le immagini locali (`folder.jpg`,
-   `poster.jpg`, `backdrop.jpg` nella cartella del film) sono sempre
-   preservate.
-5. Clicca **Identifica & Aggiorna**: il plugin salva l'ID e triggera immediatamente
-   un `MetadataRefreshOptions { MetadataRefreshMode = FullRefresh, ReplaceAllMetadata = true, ReplaceAllImages = <come checkbox> }`
-6. Attendi qualche secondo (3-5 secondi per un film con cast, 5-10 secondi
-   se hai spuntato anche le immagini): titolo italiano, trama, generi, cast
-   e staff compaiono sulla pagina dell'item, e (se richiesto) le copertine
-   vengono aggiornate. Un box di risultato ✓/✗ mostra l'esito e l'elenco
-   delle immagini scaricate.
+> **Alternativa manuale**: clicca sul film → ⋮ → "Refresh & replace metadata". Il pulsante del plugin replica esattamente quel flusso senza navigare nel menu contestuale.
 
-> **Alternativa manuale**: clicca sul film → ⋮ → "Refresh & replace metadata".
-> Funziona anche senza il pulsante del plugin, ma devi farlo esplicitamente.
-> Il pulsante del plugin replica esattamente quel flusso (incluso il wipe
-> delle immagini remote) senza dover navigare nel menu contestuale.
+## 🧠 Setup consigliato
 
-## 🧠 La Filosofia del Plugin (Configurazione Ideale 2026)
+AnimeClick è l'enciclopedia più completa per i **testi** (sinossi, titoli) e i **doppiatori italiani**, ma non è un database di locandine ad alta risoluzione. Il plugin segue quindi un modello **"Italian-wins + fill-gaps"**: AnimeClick vince sui campi localizzati (titolo, trama, generi, tag, cast, titoli episodi) e lascia i campi neutri (titolo originale, studio, rating, data) ai provider a monte quando `Sovrascrivi campi non-italiani` è spento (default).
 
-AnimeClick è in assoluto l'enciclopedia più completa per quanto riguarda i **Testi** (Sinossi, Titoli) e i **Doppiatori Italiani** nel mondo degli Anime.
-Tuttavia, *non* è un database nato per fornire Locandine, Fanart o Sfondi ad alta risoluzione: le copertine di AnimeClick sono spesso a bassa risoluzione, contengono loghi o presentano difetti di aspect-ratio.
+Per il miglior risultato, usa AnimeClick insieme ad altri provider come safety net:
 
-Il plugin segue quindi un modello **"Italian-wins + fill-gaps"**:
-
-- **Authority italiana** sui campi localizzati: titolo, trama, generi, tag, cast/doppiatori, titoli episodi. AnimeClick vince su questi campi (gira con `Order=100`, per ultimo).
-- **Fill-gaps sui campi language-neutral**: titolo originale, studio, rating, data, classificazione sono lasciati ad AniList/TMDB/OMDb quando `OverwriteNonItalianFields=false` (default). AnimeClick non li sovrascrive se non glielo chiedi esplicitamente.
-- **Fallback immagini** (Series/Movie): il plugin fornisce la locandina italiana di AnimeClick **solo come ultima risorsa**, con priorità bassa (`Order=100`): AniList/Fanart/TMDB vincono se hanno immagini, AnimeClick riempie i buchi quando nessuno consegna. Disattivabile con *Usa locandina AnimeClick come fallback*.
-- **Foto doppiatori**: provider `AnimeClickPersonImageProvider` per le entità Person (priorità alta, `Order=0`).
-- **Sinossi episodi IT (opzionale)**: AnimeClick non ha sinossi per-episodio; il plugin usa TheTVDB (sinossi IT dirette, fonte preferita) e in fallback TMDB (overview EN) + Ollama Cloud (traduzione IT) (feature opt-in, vedi sotto).
-
-### 🌐 La Mia Configurazione (plugin facoltativi ma utili per il fallback)
-
-> **Queste sono le impostazioni esatte del mio server Jellyfin NAS nel 2026.**
-> Puoi copiarle pari-pari: sono il risultato di mesi di test su centinaia di anime.
->
-> AnimeClick fa il grosso del lavoro da solo — i plugin sotto servono come safety net per quando un anime non è presente su AnimeClick, per arricchire gli ID incrociati, e per le immagini.
-
-| Plugin | Perché lo uso | Dove trovarlo |
-|--------|---------------|---------------|
-| **Fanart.tv** | Poster, banner e sfondi in HD | Catalogo → Plugin (richiede API key gratuita) |
-| **TheMovieDb** | Fallback metadati e immagini | Incluso in Jellyfin |
+| Plugin | Ruolo | Dove |
+|--------|-------|------|
+| **AnimeClick** | Titoli, trame, generi, cast, staff, rating in italiano | Questo plugin |
+| **Fanart.tv** | Poster, banner e sfondi HD | Catalogo → Plugin (API key gratuita) |
+| **TheMovieDb** | Fallback metadati, immagini, ID TMDB per i film | Incluso in Jellyfin |
 | **AniSearch** | ID incrociati e copertine anime | Catalogo → Plugin |
-| **AniList** | ID incrociati extra | Catalogo → Plugin |
-| **Screen Grabber** | Screenshot automatico episodi | Incluso in Jellyfin |
-| **Embedded Image Extractor** | Estrae copertina dal file video | Incluso in Jellyfin |
+| **AniList** | ID incrociati extra, copertine | Catalogo → Plugin |
 
-> **Plugin rimossi (2026):** TheTVDB e AniDB sono stati rimossi permanentemente dal mio server. TheTVDB causava duplicati fantasma nella stagione Specials; AniDB sovrascriveva il numero stagione corretto (rilevato dalla struttura cartelle `Season 01/`) con `Season=0` (Specials), creando episodi fantasma.
+**Ordine consigliato dei metadata fetcher** (Dashboard → Librerie → tua libreria anime → Gestisci):
 
----
+- **Serie TV metadati**: AnimeClick → AniSearch → AniList → TheMovieDb → OMDb
+- **Serie TV immagini**: Fanart → AniSearch → AniList → TheMovieDb → AnimeClick (fallback)
+- **Stagioni metadati**: TheMovieDb → AnimeClick (AnimeClick solo per impostare l'ID; le stagioni non hanno testi AnimeClick)
+- **Episodi metadati**: AnimeClick → TheMovieDb → OMDb
+- **Film metadati**: AniList → TheMovieDb → OMDb → AnimeClick (per ultimo, vince sui testi IT)
+- **Film immagini**: Fanart → AniList → TheMovieDb → AnimeClick (fallback)
 
-### 📺 Libreria Anime TV
+> **TheTVDB e AniDB** sono stati rimossi dal mio server: TheTVDB causava duplicati fantasma nella stagione Specials; AniDB sovrascriveva il numero stagione corretto con `Season=0` creando episodi fantasma.
 
-Vai su **Dashboard → Librerie → Anime TV → Gestisci libreria** e imposta:
+## 🔄 Risoluzione problemi
 
-#### Metadati Serie
+**ID mancanti dopo Identify manuale**: se usi "Identifica" e clicchi un risultato "AnimeClick", Jellyfin **cancella** gli ID degli altri database per sicurezza, quindi Fanart/TMDB smettono di trovare immagini. Soluzione: ri-incolla a mano l'ID TheMovieDb in Modifica Metadati (lo trovi cercando l'anime su themoviedb.org). Se invece lasci fare la "Scansione libreria" automatica, Jellyfin conserva entrambi gli ID.
 
-| Priorità | Provider | Ruolo |
-|:--------:|----------|-------|
-| 🥇 | **AnimeClick** | Titoli, trame, generi, cast, staff, rating in italiano |
-| 🥈 | AniSearch | ID incrociati e fallback titoli |
-| 🥉 | AniList | ID incrociati extra |
-| 4 | TheMovieDb | Fallback finale |
-| 5 | The Open Movie Database | Ultima risorsa |
+**Sinossi episodi vuote**: verifica le credenziali con i pulsanti Test nella card "Stato connessione provider" (scheda Sinossi). Se il badge è rosso, controlla API key/endpoint. Ricorda che non tutti gli anime hanno sinossi episodi complete su TVDB/TMDB.
 
-#### Immagini Serie
-
-| Priorità | Provider | Ruolo |
-|:--------:|----------|-------|
-| 🥇 | **Fanart** | Sfondi HD, logo, artwork ad alta risoluzione |
-| 🥈 | AniSearch | Copertine specifiche anime |
-| 🥉 | AniList | Fallback copertine |
-| 4 | TheMovieDb | Ultima risorsa |
-| 5 | **AnimeClick** | Fallback locandina IT (solo se nessuno sopra ha immagini) |
-
-#### Metadati Stagioni
-
-| Priorità | Provider | Ruolo |
-|:--------:|----------|-------|
-| 🥇 | **AnimeClick** | Risolve ID AnimeClick corretto per stagioni su pagine separate |
-| 🥈 | TheMovieDb | Informazioni stagione (anno, overview) |
-
-> **Nota:** Metti AnimeClick come terzo, non primo. Le stagioni non hanno metadati testuali da AnimeClick (sinossi, cast) — il SeasonProvider serve solo a impostare l'ID per la risoluzione corretta degli episodi.
-
-#### Immagini Stagioni
-
-| Priorità | Provider |
-|:--------:|----------|
-| 🥇 | Fanart |
-| 🥈 | AniList |
-| 🥉 | AniSearch |
-| 4 | TheMovieDb |
-
-#### Metadati Episodi
-
-| Priorità | Provider | Ruolo |
-|:--------:|----------|-------|
-| 🥇 | **AnimeClick** | Titoli italiani degli episodi + sinossi IT (opzionale, via TVDB / TMDB+Ollama) |
-| 🥈 | TheMovieDb | Fallback titoli/sinossi inglesi |
-| 🥉 | The Open Movie Database | Ultima risorsa |
-
-#### Immagini Episodi
-
-| Priorità | Provider |
-|:--------:|----------|
-| 🥇 | TheMovieDb |
-| 🥈 | The Open Movie Database |
-| 🥉 | Screen Grabber |
-| 4 | Embedded Image Extractor |
-
----
-
-### 🎬 Libreria Anime Movie
-
-Vai su **Dashboard → Librerie → Anime Movie → Gestisci libreria** e imposta:
-
-#### Metadati Film
-
-| Priorità | Provider | Ruolo |
-|:--------:|----------|-------|
-| 🥇 | **AniList** | Studios, OfficialRating, generi, ID incrociati (eseguito per primo: riempie i campi che AnimeClick non copre) |
-| 🥈 | TheMovieDb | Fallback Studios, generi, Overview |
-| 🥉 | The Open Movie Database | Ultimo fallback per Studios e metadata di base |
-| 4 | **AnimeClick** | Overlay di Titoli, Trama, Generi, Cast, Staff, Sigle in italiano (eseguito per ultimo: vince su TMDB/OMDb per i testi) |
-
-#### Immagini Film
-
-| Priorità | Provider | Ruolo |
-|:--------:|----------|-------|
-| 🥇 | **Fanart** | Poster HD, sfondi, logo |
-| 🥈 | AniList | Copertine specifiche anime |
-| 🥉 | TheMovieDb | Fallback |
-| 4 | The Open Movie Database | Ultima risorsa |
-| 5 | Embedded Image Extractor | Estrae copertina dal file video |
-| 6 | Screen Grabber | Screenshot automatico dal video |
-| 7 | **AnimeClick** | Fallback locandina IT (solo se nessuno sopra ha immagini) |
-
----
-
-### 🧪 Risultato Finale
-
-Con questa configurazione, quando esegui la scansione:
-
-1. **AnimeClick** scrive tutto in italiano (titolo, trama, generi, cast, rating)
-2. **Fanart / TMDB** scaricano poster, banner e sfondi in alta definizione
-3. **AniList / AniSearch** forniscono ID incrociati e fallback
-4. **AnimeClick SeasonProvider** risolve la pagina corretta per ogni stagione
-5. **AnimeClick EpisodeProvider** assegna i titoli italiani a ogni episodio
-
-Nessun conflitto, nessuna copertina a bassa risoluzione, tutto in italiano dove disponibile.
-
-## 🔄 Risoluzione Problemi / ID Mancanti
-
-Se usi l'opzione "Identifica" in Jellyfin e clicchi manualmente su un risultato "AnimeClick", Jellyfin **cancella** gli ID degli altri database americani per sicurezza. Se lo fai, *Fanart / TMDB smetteranno di trovare immagini per quell'anime* perché hanno perso il bersaglio!
-Se ti succede: vai su Modifica Metadati e ri-incolla a mano l'ID TheMovieDb in fondo alla pagina (lo trovi cercando l'anime su themoviedb.org). Se invece lasci fare la "Scansione Libreria" in automatico a Jellyfin, lui conserverà entrambi gli ID perfettamente!
-
-## 🌐 Sinossi episodi in italiano (TVDB / TMDB + Ollama Cloud)
-
-AnimeClick pubblica **titoli** episodi in italiano ma **non le sinossi** per-episodio. AniList non espone `Episode.description`. Per riempire le sinossi degli episodi in italiano, il plugin usa due fonti in cascata (feature opt-in):
-
-1. **TheTVDB (fonte preferita)** — espone le sinossi degli episodi già **tradotte in italiano** (`/series/{id}/episodes/default/{lang}`). Quando la traduzione IT esiste, viene usata **direttamente**: zero chiamate Ollama, **zero compute sul NAS**.
-2. **TMDB + Ollama Cloud (fallback)** — se TVDB non ha la traduzione per quell'episodio, il plugin recupera l'**overview inglese** da TMDB (`tv/{id}/season/{s}/episode/{e}`) e la **traduce in italiano** via Ollama Cloud.
-
-Il carico sul NAS è minimo: solo HTTPS in uscita verso TVDB/TMDB/Ollama, **zero compute locale**. I risultati sono cacheati (chiavi `tvdbToken::`, `tvdbSeriesId::`, `tvdbEpisodes::`, `tmdbId::`, `tmdbEp::`, `episodeSynopsisIT::`), quindi al secondo refresh di una stagione non si fa nessuna HTTP.
-
-> **Vuoi solo la qualità migliore con il minimo sforzo?** Abilita solo **TheTVDB** (Step 1): ottieni sinossi IT dirette senza toccare Ollama. Aggiungi TMDB + Ollama (Step 2-3) solo se vuoi coprire anche gli episodi che TVDB non ha tradotto.
-
-### Step 1 — API key TheTVDB (fonte IT preferita)
-1. Registrati su [thetvdb.com](https://www.thetvdb.com/signup) (gratis).
-2. Dalla tua dashboard crea una **API key** v4.
-3. In Jellyfin: **Dashboard → Plugin → AnimeClick Metadata → TheTVDB API key** e incolla la chiave. Spunta **"Usa TheTVDB come fonte preferita"**.
-4. Il campo **Lingua TheTVDB** resta `ita` (codice 3-char; puoi mettere `eng`, `jpn`, ecc. se vuoi un'altra lingua).
-
-### Step 2 — API key TMDB (fonte EN per il fallback)
-1. Registrati su [themoviedb.org](https://www.themoviedb.org/) (gratis).
-2. Vai su **Settings → API** ([themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)) e richiedi una chiave di tipo **Personal / Developer** (gratis, uso non commerciale).
-3. In Jellyfin: **Dashboard → Plugin → AnimeClick Metadata → TMDB API key** e incolla la chiave.
-
-### Step 3 — API key Ollama Cloud (traduzione EN→IT per il fallback)
-1. Registrati su [ollama.com](https://ollama.com/) (gratis).
-2. Crea una API key su [ollama.com/settings/keys](https://ollama.com/settings/keys).
-3. In Jellyfin: **Dashboard → Plugin → AnimeClick Metadata → Ollama Cloud API key** e incolla la chiave. L'endpoint default è `https://ollama.com/api/chat` (auth `Authorization: Bearer <key>`).
-
-### Step 4 — Scegli il modello Ollama
-Dal dropdown **Modello cloud per la traduzione** scegli un modello Ollama Cloud. Consigliati per traduzione anime EN→IT:
-
-- **`gemma4:cloud`** (default) — solido multilingua, buon equilibrio qualità/latenza.
-- **`minimax-m2.1:cloud`** — descrizione Ollama: "exceptional multilingual capabilities".
-- **`qwen3.5:cloud`**, **`gpt-oss:cloud`** — alternative generaliste affidabili.
-
-Puoi anche selezionare **Personalizzato…** e inserire qualsiasi tag `nome:cloud` del catalogo ([ollama.com/search?c=cloud](https://ollama.com/search?c=cloud)).
-
-> **⚠️ Free vs Premium — onestà importante.** I modelli cloud Ollama **non sono gated per singolo modello**: la distinzione è per **tier di abbonamento** ([ollama.com/pricing](https://ollama.com/pricing)). Ollama **non pubblica** una lista per-modello free/premium, quindi il dropdown li raggruppa per "consigliati per la traduzione" / "altri" anziché per tier. In pratica:
-> - **Free ($0)**: concurrency 1, limiti di utilizzo sessione (reset 5h) + settimanale (reset 7gg) — "light usage". Sufficenti per traduzioni cached brevi come le sinossi episodi (testi corti, una-tantum per episodio grazie alla cache).
-> - **Pro ($20/mese)**: 3 cloud models concorrenti, ~50× più utilizzo, accesso a modelli più grandi.
-> - **Max ($100/mese)**: 10 concorrenti, 5× più uso del Pro.
->
-> Per il primo scan di una stagione da 25 episodi: con TVDB basta **1 chiamata paginata** per tutta la serie; in fallback TMDB+Ollama sono ~25 + ~25 chiamate (~50s una-tantum). Sul Free va benissimo perché la cache evita di rifarlo.
-
-### 🧪 Pulsanti di test (diagnostica dettagliata)
-Nella stessa sezione ci sono tre pulsanti che validano le credenziali **attualmente inserite nei campi** (non serve salvare prima):
-
-- **Test TMDB** — fa una `search/tv` di prova e mostra il primo risultato (id + nome), oppure l'errore HTTP (status, body) se la key è sbagliata.
-- **Test Ollama** — invia un prompt banale all'endpoint Ollama configurato e mostra la reply del modello, oppure l'errore (status, body, eccezione).
-- **Test TVDB** — fa login su TheTVDB + una `search` di prova e mostra se il token è stato ottenuto + una serie di esempio, oppure l'errore.
-
-Il risultato appare come badge colorato accanto al pulsante (`✓ Connesso` o `✗ Errore HTTP …`); espandi "Dettagli risposta" per vedere status HTTP, corpo della risposta e messaggio di eventuale eccezione — utile per capire esattamente cosa non va (key errata, endpoint sbagliato, modello inesistente, timeout).
-
-### Come funziona (e quando non funziona)
-- **TVDB prima**: il plugin risolve l'ID TVDB della serie cercando per **titolo originale (romaji) + anno** (fallback titolo italiano), cached per serie; poi fetcha la lista episodi tradotta (cached per serie+lingua, una chiamata paginata) e cerca la sinossi IT per stagione/episodio. Se esiste → `Overview` settato in IT, fine.
-- **Fallback TMDB + Ollama**: se TVDB non ha la traduzione (o TVDB è disabilitato), risolve l'ID TMDB, fetcha l'overview EN (cached per episodio) e la traduce via Ollama (cached per episodio+modello).
-- La sinossi IT viene popolata **anche quando il titolo episodio è generico** ("Episodio 3"): la sinossi ha valore indipendente dal titolo.
-- Su qualsiasi fallimento (404, no key, timeout) → nessuna eccezione, l'Overview è lasciato agli altri provider (AniList/TMDB nativi Jellyfin) in inglese (fill-gaps).
-
-### Caveat
-- Il mapping stagione/episodio anime↔TVDB/TMDB a volte non coincide (specialmente per anime long-running con numbering non standard). Se nessuna fonte ha la sinossi per `season/{s}/episode/{e}`, quell'episodio resta senza sinossi IT (gli altri provider riempiono in EN).
-- TVDB ha ottime traduzioni IT per molti anime TV, ma non per tutti gli episodi; il fallback TMDB+Ollama copre i buchi. Nota: l'endpoint translation di TVDB a volte ritorna 404 anche quando la traduzione esiste sul sito (issue noti TVDB) — il plugin usa l'endpoint combined `/series/{id}/episodes/default/{lang}`, più affidabile.
-- Serve che almeno una fonte abbia l'anime nel proprio DB. Non tutti gli anime hanno sinossi episodi complete su TVDB/TMDB.
-- Senza **"Recupera le sinossi degli episodi in italiano"** attivo (default), le sinossi episodi restano in inglese dai provider nativi Jellyfin (fill-gaps) — il plugin scrive solo i titoli IT.
-
-## 🔧 Build da Sorgente
+## 🔧 Build da sorgente
 
 ```bash
 git clone https://github.com/iCosiSenpai/jellyfin-plugin-animeclick.git
@@ -414,119 +202,51 @@ dotnet publish -c Release -o pub
 
 L'output sarà in `pub/`.
 
-## 📋 Requisiti
-
-- Jellyfin **10.11+**
-- .NET **9.0** runtime
+**Requisiti**: Jellyfin **10.11+**, .NET **9.0** runtime.
 
 ## 📝 Changelog
 
-### v0.2.10.0 (Redesign premium configPage: tab + card + stato provider)
-- 🎨 **Redesign completo della pagina di configurazione**: 4 schede in alto (Metadati / Sinossi episodi / Ricerca / Strumenti), card raggruppate con icone, header premium con chip versione + link al repo e alle issues. Pattern tab JS-driven riusato da KometaThemes (`.ac-tabs`/`.ac-panel`), CSS inline (niente asset esterni — la configPage resta un singolo `EmbeddedResource`).
-- 🧹 **Rimossa la sezione "Diagnostica" developer-facing**: eliminati Test lookup candidati, Preview episodi raw JSON, Stato Identify e i relativi campi/`<pre>` raw. Rimpiazzati con strumenti user-friendly.
-- 🛠️ **Tab Strumenti**: card **Identifica & Aggiorna** (workaround bug Jellyfin 10.11.x, ora con output umanizzato ✓/✗ + riepilogo immagini scaricate invece del summary tecnico multi-riga) e card **Svuota cache metadati** (un solo pulsante, nessun ID da inserire). Nuovo metodo `AnimeClickCacheService.ClearAll()` + ramo "corpo vuoto → clear all" in `POST /Plugins/AnimeClick/ClearCache`.
-- 📡 **Card "Stato connessione provider"** (tab Sinossi): i 3 test TMDB/Ollama/TVDB ora mostrano un **badge** colorato (`✓ Connesso` / `✗ Errore HTTP …` / `— non testato`) + dettagli risposta espandibili, al posto del `<pre>` raw.
-- 🐛 **Fix `{}` sui pulsanti di test** (già in source dalla v0.2.9.0 patch in-place, ora formalizzato in release): `animeClickApi` setta `dataType:'json'` sui POST e l'helper `showProviderError` legge il body della `Response` raw, così i test non restituiscono più `{}` ma il DTO reale o l'errore HTTP dettagliato.
-- 📝 **README**: sezione "Impostazioni" riscritta sui 4 tab + card stato provider + Strumenti; tutorial sinossi e Identify & Refresh aggiornati ai nuovi percorsi UI; bump riferimenti versione a 0.2.10.0.
+### v0.2.10.0 (Redesign premium configPage)
+- 🎨 **Pagina di configurazione rinnovata**: 4 schede in alto (Metadati / Sinossi episodi / Ricerca / Strumenti) con card raggruppate, icone e header premium (chip versione + link repo/issues). Pattern tab JS-driven riusato da KometaThemes, CSS inline.
+- 🧹 **Rimossa la sezione Diagnostica developer-facing** (Test lookup, Preview episodi raw, Stato Identify e i `<pre>` raw). Rimpiazzata dal tab Strumenti.
+- 🛠️ **Tab Strumenti**: card **Identifica & Aggiorna** (output umanizzato ✓/✗ + riepilogo immagini) e card **Svuota cache metadati** (singolo pulsante, nessun ID). Nuovo `AnimeClickCacheService.ClearAll()` + ramo "corpo vuoto → clear all" in `POST /Plugins/AnimeClick/ClearCache`.
+- 📡 **Card "Stato connessione provider"**: i 3 test TMDB/Ollama/TVDB ora mostrano un badge ✓/✗ + dettagli espandibili, al posto del `<pre>` raw.
+- 🐛 **Fix `{}` sui pulsanti di test**: `animeClickApi` setta `dataType:'json'` sui POST e `showProviderError` legge il body della `Response` raw.
+- 📝 **README**: riscritto più conciso e pulito; bump versione a 0.2.10.0.
 
-### v0.2.9.0 (TVDB sinossi IT dirette + pulsanti di test TMDB/Ollama/TVDB)
-- 🌐 **TheTVDB come fonte preferita di sinossi episodi in italiano**: nuovo servizio `AnimeClickTvdbClient` che fa login su TVDB v4 (`POST /login`, token cached 24h), risolve l'ID serie (`/search?type=series`, cached) e fetcha la lista episodi tradotta in una sola chiamata paginata (`/series/{id}/episodes/default/{lang}`, cached per serie+lingua). Quando TVDB ha la sinossi IT la usa **direttamente** — zero chiamate Ollama, zero compute sul NAS. Se TVDB non ha la traduzione, **fallback** sul flusso esistente TMDB EN + Ollama IT. Nuovi toggle `EnableTvdbSynopsis` + `TvdbApiKey` + `TvdbLanguage` (default `ita`), opt-in. Best-effort, mai crasha, empty-guard.
-- 🧪 **Pulsanti di test con errore dettagliato**: tre pulsanti nella sezione sinossi della config page — **Test TMDB**, **Test Ollama**, **Test TVDB** — validano le credenziali attualmente inserite nel form (non serve salvare) e mostrano status HTTP, corpo della risposta e messaggio eccezione. Nuovi endpoint `POST /Plugins/AnimeClick/TestTmdb|TestOllama|TestTvdb` su `AnimeClickDiagnosticsController`; nuovi metodi `TestConnectionAsync` sui tre service (no silent-catch, DTO dettagliato `TmdbTestResult`/`OllamaTestResult`/`TvdbTestResult`).
-- 🧪 **Nuovi unit test** (no-network): TVDB URL building + parsing (`ParseLoginToken`, `ParseFirstSeriesId` con match anno, `ParseEpisodeOverview`, `ParseNextLink`). 12/12 test verdi.
-- 📝 **README**: tutorial sinossi riscritto (TVDB fonte preferita + fallback TMDB/Ollama, step TVDB, sezione pulsanti di test, caveat TVDB); tabella config aggiornata; bump riferimenti versione a 0.2.9.0.
+### v0.2.9.0 (TVDB sinossi IT dirette + pulsanti di test)
+- 🌐 **TheTVDB come fonte preferita di sinossi episodi in italiano**: nuovo servizio `AnimeClickTvdbClient` (login TVDB v4 con token cached 24h, risoluzione ID serie, lista episodi tradotta in una chiamata paginata, cached per serie+lingua). Quando TVDB ha la sinossi IT la usa direttamente — zero chiamate Ollama, zero compute. Se TVDB non ha la traduzione, fallback TMDB EN + Ollama IT. Nuovi toggle `EnableTvdbSynopsis` + `TvdbApiKey` + `TvdbLanguage` (opt-in).
+- 🧪 **Pulsanti di test con errore dettagliato**: Test TMDB / Test Ollama / Test TVDB validano le credenziali inserite (non serve salvare) e mostrano status HTTP, corpo risposta e messaggio eccezione. Nuovi endpoint `POST /Plugins/AnimeClick/TestTmdb|TestOllama|TestTvdb` + metodi `TestConnectionAsync` sui tre service.
+- 🧪 **Nuovi unit test** (no-network): TVDB URL building + parsing. 12/12 test verdi.
 
-### v0.2.8.0 (Merge fill-gaps + immagini fallback + sinossi episodi IT via TMDB/Ollama)
-- 🧠 **Merge "Italian-wins + fill-gaps"**: nuovo toggle `OverwriteNonItalianFields` (default **false**). AnimeClick emette solo i campi localizzati (titolo IT, sinossi IT, generi IT, tag, cast) e lascia i campi language-neutral (titolo originale, studio, rating, data, classificazione, stato) ai provider a monte (AniList/TMDB/OMDb). Empty-guard su `Name`/`Overview`/`OriginalTitle` per non svuotare mai campi già popolati. Quando il toggle è attivo, si recupera il comportamento precedente (AnimeClick sovrascrive tutto).
-- 🖼️ **Image provider fallback per Series/Movie**: nuovo `AnimeClickAnimeImageProvider` (`IRemoteImageProvider`, `Order=100`) che fornisce la locandina italiana di AnimeClick (campo `ImageUrl` già estratto dal parser ma prima inutilizzato) come **ultima risorsa** — AniList/Fanart/TMDB vincono se hanno immagini, AnimeClick riempie solo i buchi. Toggle `EnableAnimeClickImages` (default on). Non blocca alcun provider (nessuna `SetImage`).
-- 🌐 **Sinossi episodi in italiano (opzionale) via TMDB + Ollama Cloud**: AnimeClick non pubblica sinossi per-episodio e AniList non espone `Episode.description`, quindi il plugin recupera l'overview EN dell'episodio da TMDB e la traduce in IT via Ollama Cloud. Opt-in via `EnableEpisodeSynopsisTranslation` (default off) + `TmdbApiKey` + `OllamaCloudApiKey`. Nuovi servizi `AnimeClickTmdbClient` (search/tv + season/episode) e `AnimeClickOllamaTranslator` (POST `/api/chat` con Bearer auth). Cache per-episodio (`tmdbId::`, `tmdbEp::`, `episodeSynopsisIT::`). La sinossi IT viene popolata anche per titoli episodio generici. Su qualsiasi fallimento → fill-gaps (altri provider in EN).
-- ⚙️ **Config page**: nuove sezioni "Sinossi episodi in italiano (TMDB + Ollama Cloud)" e toggle `OverwriteNonItalianFields` / `EnableAnimeClickImages`. Dropdown modello Ollama con modelli consigliati + personalizzato (gating per tier Free/Pro/Max spiegato nel README).
-- 🧪 **Nuovi unit test** (no-network): TMDB URL building + response parsing (`ParseFirstTvId`, `ParseEpisodeOverview`), Ollama `StripHtml` + `BuildRequestBody` + `ParseTranslatedContent`.
-- 📝 **README**: riconciliata la sezione "Filosofia del Plugin" con il nuovo modello (Italian-wins + fill-gaps + fallback locandina + traduzione opzionale); nuovo tutorial TMDB+Ollama; tabelle config e Librerie Supportate aggiornate; bump riferimenti versione a 0.2.8.0.
+### v0.2.8.0 (Merge fill-gaps + immagini fallback + sinossi episodi IT)
+- 🧠 **Merge "Italian-wins + fill-gaps"**: nuovo toggle `OverwriteNonItalianFields` (default false). AnimeClick emette solo i campi localizzati e lascia i campi neutri ai provider a monte. Empty-guard su tutti i campi.
+- 🖼️ **Image provider fallback per Series/Movie**: nuovo `AnimeClickAnimeImageProvider` (`Order=100`) che fornisce la locandina italiana come ultima risorsa. Toggle `EnableAnimeClickImages` (default on).
+- 🌐 **Sinossi episodi in italiano (opzionale) via TMDB + Ollama Cloud**: nuovi servizi `AnimeClickTmdbClient` + `AnimeClickOllamaTranslator`. Cache per-episodio. Opt-in via `EnableEpisodeSynopsisTranslation` + chiavi TMDB/Ollama.
+- ⚙️ **Config page**: dropdown modello Ollama con modelli consigliati + personalizzato (gating tier Free/Pro/Max).
 
-### v0.2.7.0 (AniList ID risolto durante ogni scan, non solo nell'Identify manuale)
-- 🔧 **Nuovo servizio `AnimeClickAniListResolver`**: la risoluzione dell'AniList ID per titolo (via AniList GraphQL) è stata estratta da `AnimeClickIdentifyController` in un servizio riutilizzabile, registrato in DI. Niente più logica duplicata (DRY).
-- 🖼️ **Fix immagini/metadati mancanti su scan automatico**: `AnimeClickSeriesProvider` e `AnimeClickMovieProvider` ora chiamano il resolver in `GetMetadata` e scrivono `ProviderIds["AniList"]` sull'item quando AnimeClick non fornisce ID incrociati (le pagine AnimeClick **non** espongono link MAL/AniList/AniDB/TMDB). Prima questo avveniva SOLO premendo il pulsante "Identify & Refresh"; ora succede a ogni scansione della libreria, così l'ImageFetcher AniList trova le copertine in automatico e i provider a valle hanno un ID stabile per i refresh successivi. La ricerca usa il titolo originale (romaji) quando disponibile, con fallback al titolo italiano.
-- 🧩 **Nota Fanart per i Film**: Fanart.tv per i film è indicizzato per TMDB ID, non AniList. Per le copertine dei film abilita anche **TheMovieDb** come metadata fetcher nella libreria "Anime Movie" (Dashboard → Librerie → Anime Movie → downloader metadati Film) così Jellyfin risolve un TMDB ID a monte.
-- ♻️ **Refactor controller**: `AnimeClickIdentifyController.EnsureAniListIdAsync` delega al servizio condiviso; rimossi gli helper privati `EscapeGraphQL`/`ParseAniListIdFromSearch` (ora `internal static` nel servizio, coperti da unit test).
-- ✅ **Nuovi unit test**: `ParseAniListIdFromSearch` (match, `Media:null`, payload di errore, whitespace) e `EscapeGraphQL` (quote/backslash).
+### v0.2.7.0 (AniList ID risolto durante ogni scan)
+- 🔧 **Nuovo servizio `AnimeClickAniListResolver`**: risoluzione AniList ID estratta in un servizio riutilizzabile (DRY).
+- 🖼️ **Fix immagini/metadati su scan automatico**: `SeriesProvider` e `MovieProvider` ora risolvono e scrivono `ProviderIds["AniList"]` a ogni scansione, così l'ImageFetcher AniList trova le copertine in automatico. Prima avveniva solo premendo "Identify & Refresh".
+- 🧩 **Nota Fanart per i film**: Fanart.tv per i film è indicizzato per TMDB ID, non AniList. Abilita TheMovieDb come metadata fetcher nella libreria "Anime Movie".
+- ✅ **Nuovi unit test**: `ParseAniListIdFromSearch` + `EscapeGraphQL`.
 
 ### v0.2.6.0 (Fix response undefined + force image download)
-- 🐛 **Fix response body showing `undefined` for every field**: ASP.NET Core serializes C# PascalCase DTOs in camelCase (`itemId`, `name`, `animeClickId`, …) but the v0.2.5.0 client JavaScript was reading `resp.ItemId`, `resp.Name`, … (PascalCase) — every field came back `undefined` even though the backend returned 200 OK with the correct data. v0.2.6.0 client reads both casings (`resp.itemId || resp.ItemId`) and pretty-prints the `DownloadedImages` list (Type:Provider:Url) so the operator can see exactly what was downloaded.
-- 🐛 **Fix `no remote images available` for all 5 image types**: v0.2.5.0 created `new RemoteImageQuery(providerName: string.Empty)` which filters by provider with empty name (= none), so `GetAvailableRemoteImages` returned `[]` for Primary/Backdrop/Logo/Art/Thumb. v0.2.6.0 uses `providerName: null` (= all providers) and `IncludeDisabledProviders = true`, so every enabled ImageFetcher is now queried.
-- 🔧 **New `EnsureAniListIdAsync`**: queries AniList GraphQL by title (`{ Media(search: "Hanasaku Iroha Home Sweet Home", type: ANIME) { id } }`) and stores the resulting AniList ID on the item before downloading images. Without an AniList ID the AniList ImageFetcher can't do its lookup. AnimeClick provides the Italian/Anime metadata but no TMDB/IMDB/AniList IDs, so this fallback is what makes the rest of the image chain work for items that the user only identified via AnimeClick.
-- 📋 **Minimal JSON parsing** for the AniList response: `ParseAniListIdFromSearch` (no System.Text.Json dependency) extracts the `id` field by string matching, keeping the plugin's dependency footprint small.
-- 🛡️ **No new dependencies**: IHttpClientFactory is injected via the standard ASP.NET Core DI (no new `using`).
+- 🐛 **Fix response body `undefined`**: il client JS leggeva PascalCase (`resp.ItemId`) ma ASP.NET Core serializza in camelCase (`resp.itemId`). v0.2.6.0 legge entrambi i casing.
+- 🐛 **Fix "no remote images available"**: v0.2.5.0 usava `providerName: string.Empty` (filtra per provider vuoto = nessuno). v0.2.6.0 usa `null` (tutti i provider) + `IncludeDisabledProviders=true`.
+- 🔧 **New `EnsureAniListIdAsync`**: risolve l'AniList ID via GraphQL prima del download immagini (necessario perché AnimeClick non fornisce ID incrociati).
 
 ### v0.2.5.0 (Force-download images from Fanart/AniList/TMDB)
-- 🔧 **Bypass Jellyfin 10.11.x broken image-refresh path**: `MetadataRefreshOptions.ReplaceAllImages` doesn't exist in Jellyfin 10.11.11, so even with `ReplaceAllMetadata=true` Jellyfin does NOT reliably re-download remote images. v0.2.5.0 fixes this by calling `IProviderManager.GetAvailableRemoteImages` + `IProviderManager.SaveImage` directly inside the `IdentifyAndRefresh` flow, asking each enabled ImageFetcher (Fanart, AniList, TheMovieDb, OMDb) for the best image of each type and saving it explicitly.
-- 🖼️ **Forced download of 5 image types**: 1 Primary (poster), up to 3 Backdrops, 1 Logo, 1 Art, 1 Thumb. Provider priority: **Fanart > AniList > TheMovieDb > OMDb > Embedded Image Extractor**. Ties broken by community rating desc, then by pixel area desc.
-- 🔍 **New `DownloadedImages` field in `IdentifyAndRefreshResponse`**: returns a list of `Type:Provider:Url` entries for every image saved, so the operator can see exactly what Fanart / AniList / TMDB / OMDb returned and which won.
-- ⚠️ **Behaviour change**: as of v0.2.5.0, `IdentifyAndRefresh` ALWAYS wipes existing remote images and downloads fresh ones from the enabled ImageFetchers, regardless of the `ReplaceAllImages` checkbox. The checkbox is now a legacy flag kept for backwards compatibility; use it to opt out by setting it to false.
-- 🛠️ **IndexOfProvider helper** + **DownloadBestRemoteImagesAsync** in `AnimeClickIdentifyController.cs`: reads `RemoteImageQuery` (providerName=""), sorts by priority, saves via `_providerManager.SaveImage(item, url, type, imageIndex, ct)`.
+- 🔧 **Bypass broken image-refresh path di Jellyfin 10.11.x**: `MetadataRefreshOptions.ReplaceAllImages` non esiste in 10.11.11, quindi il plugin chiama `GetAvailableRemoteImages` + `SaveImage` direttamente nel flusso `IdentifyAndRefresh`.
+- 🖼️ **Forced download di 5 tipi immagine**: 1 Primary, fino a 3 Backdrop, 1 Logo, 1 Art, 1 Thumb. Priorità: Fanart > AniList > TheMovieDb > OMDb.
+- 🔍 **Nuovo campo `DownloadedImages`** in `IdentifyAndRefreshResponse`: lista `Type:Provider:Url` per ogni immagine salvata.
+- ⚠️ **Behaviour change**: `IdentifyAndRefresh` cancella sempre le immagini remote esistenti e le riscarica dagli ImageFetcher abilitati, indipendentemente dalla checkbox `ReplaceAllImages` (ora flag legacy).
 
 ### v0.2.4.0 (AnimeClick runs LAST so Studios come from AniList/TMDB)
-- 🔧 **`IHasOrder` portato da 0 a 100** su `MovieProvider`, `SeriesProvider`, `EpisodeProvider`. AnimeClick ora gira DOPO AniList / TheMovieDb / OMDb / OMDb nella catena metadata, così i campi che AnimeClick non popola (Studios, OfficialRating, Genres vuoti, …) vengono riempiti PRIMA dai provider a monte, e poi AnimeClick overlay dei testi italiani (Name, Overview, Genres, Tags, Cast).
-- 🔧 **Mapping difensivo**: `Genres` e `Studios` ora si applicano solo se la sorgente AnimeClick ha davvero qualcosa (`source.Genres.Count > 0` e `source.Studios.Count > 0`). Prima il plugin sovrascriveva sempre con array vuoto, perdendo i dati che AniList/TMDB avevano appena inserito.
-- 🔍 **Log diagnostico `leaving fields for downstream providers`**: alla fine di `GetMetadata` il plugin logga quali field NON ha popolato (Genres, Studios, OfficialRating) così dal log si vede a colpo d'occhio se i provider a monte hanno materiale da usare.
-- 🛡️ **No regressioni**: i campi già popolati da AnimeClick (Name italiano, Overview italiano, CommunityRating AnimeClick, Cast, Sigle) continuano a essere applicati per ultimi e a vincere su TMDB/AniList.
+- 🔧 **`IHasOrder` portato da 0 a 100**: AnimeClick gira dopo AniList/TheMovieDb/OMDb, così i campi che non popola (Studios, OfficialRating) vengono riempiti prima dai provider a monte.
+- 🔧 **Mapping difensivo**: `Genres` e `Studios` si applicano solo se la sorgente AnimeClick ha davvero qualcosa.
+- 🛡️ **Nessuna regressione**: i campi localizzati (Name IT, Overview IT, CommunityRating, Cast, Sigle) continuano a essere applicati per ultimi e a vincere.
 
 ### v0.2.3.0 (Fix Identify & Refresh non riscarica le immagini)
-- 🐛 **Fix "Identify & Refresh" non sostituisce le immagini esistenti**: l'endpoint `POST /Plugins/AnimeClick/IdentifyAndRefresh` adesso accetta il flag opzionale `ReplaceAllImages` (default `false`). Quando `true`, prima del refresh il plugin rimuove tutte le immagini remote (poster, backdrop, logo, art, banner, thumb, disc, box) lasciando intatte solo le immagini locali (folder.jpg, poster.jpg, backdrop.jpg nella cartella del film). Il refresh successivo fa riscaricare le copertine dagli ImageFetchers configurati (Fanart, AniList, TMDB, OMDb, Embedded Image Extractor, Screen Grabber).
-- 🛠️ **Pulsante "Sostituisci anche le immagini"** nella sezione Diagnostica della configPage: checkbox che quando spuntata passa `ReplaceAllImages=true` all'endpoint. Di default deselezionato per non sovrascrivere artwork curato dall'utente.
-- 🔍 **Endpoint diagnostico `GET /Plugins/AnimeClick/AvailableRemoteImages?itemId=...&type=Primary`**: elenca le immagini remote disponibili per un item da ogni ImageFetcher abilitato (utile per capire cosa può scaricare Fanart/AniList/TMDB).
-- 📋 **Wipe remote images intelligente**: enumera i tipi supportati (Primary, Backdrop, Logo, Art, Banner, Thumb, Disc, Box, BoxRear), preserva `IsLocalFile=true`, e itera dall'ULTIMO indice al primo per evitare shift degli indici durante la cancellazione.
-- 📝 README: aggiornata la sezione Identify → Save → Refresh per spiegare il flag `ReplaceAllImages` e quando usarlo.
-
-### v0.2.2.0 (Fix Identify → Save → Refresh)
-- 🐛 **Fix Identify & Save non popola i metadati**: Jellyfin 10.11.x salva l'ID provider con Identify → Save ma non triggera automaticamente un metadata refresh. Aggiunto endpoint custom `POST /Plugins/AnimeClick/IdentifyAndRefresh` che salva l'ID e triggera immediatamente un full refresh (`MetadataRefreshMode = FullRefresh`, `ReplaceAllMetadata = true`).
-- 🛠️ **Pulsante Identify & Refresh** nella pagina di configurazione del plugin (Diagnostica) con input per Item ID Jellyfin + AnimeClick ID. Risolve in un click il problema "spinner brevissimo, metadata non aggiornati".
-- 🩺 **Pulsante Stato Identify** per verificare se un item ha già l'ID AnimeClick impostato (utile per diagnosi su Hanasaku Iroha: Home Sweet Home, et similia).
-- 🔍 **Log diagnostico esplicito** all'ingresso di `MovieProvider.GetMetadata`, `SeriesProvider.GetMetadata`, `EpisodeProvider.GetMetadata`, `SeasonProvider.GetMetadata` con `Name`, `ProviderId`, `Year`, `Path`. Permette di verificare se il provider viene effettivamente chiamato dopo Identify/Refresh.
-- 📝 Documentazione del flusso Identify → Save → Refresh e della limitazione Jellyfin 10.11.x in README.
-
-### v0.2.1.0 (Fix Special Fantasma)
-- 🐛 **Fix Special/OVA/OAD su stagioni regolari**: il parser rileva episodi Special dal titolo e forza `SeasonNumber=0`
-- 🐛 **Blocco fallback assoluto**: l'EpisodeMatcher non applica più il fallback absolute per titoli Special su richieste di stagione regolare
-- 🛡️ **Safety net EpisodeProvider**: controllo su `ParentIndexNumber > 0` per prevenire assegnazioni errate
-- 📝 **Nota importante**: TheTVDB e AniDB sono stati rimossi dal mio server personale (causavano duplicati fantasma nella stagione Specials). Vedi sezione "La Mia Configurazione" aggiornata.
-
-### v0.2.0.0 (Diagnostica e matching episodi universale)
-- **Matching episodi universale**: normalizza numeri assoluti e progressivi di stagione AnimeClick, evitando fallback errati agli episodi S1 quando esiste un gruppo stagione
-- **Diagnostica admin**: aggiunti endpoint e UI per lookup preview, preview episodi normalizzati e pulizia cache mirata
-- **Ricerca piu robusta**: scoring per titolo esatto, anno e tipo, con penalita per Movie/Special quando Jellyfin cerca una serie
-- **Cache versionata**: chiavi episodi e season-map aggiornate con pulizia mirata dalla configurazione
-- **OP/ED best-effort**: trailer/PV-only viene segnalato come diagnostica, senza fingere discovery riuscita di sigle
-
-### v0.1.2.0 (Fix Multi-Stagione)
-- 🔧 **Parsing stagioni**: riconoscimento formato `S{N} Ep. {M}` su pagine episodi multi-stagione
-- 🔗 **Stagioni su pagine separate**: risoluzione automatica via relazioni AnimeClick per catene di sequel
-- 🚫 **Filtro spin-off**: esclusione automatica di Alternative, Gaiden, Spin-off, Bangai-hen
-- 📅 **SeasonProvider**: nuovo provider per impostare l'ID AnimeClick corretto sull'entità Season
-- 🐛 **Fix sidebar relazioni**: parsing `h5.media-heading` e `<span>` description (prima trovava solo la prima relazione)
-- 📦 **Bundle snellito**: rimosse DLL Microsoft.Extensions conflittuali (Jellyfin le fornisce già)
-
-### v0.1.1.0 (Allineamento)
-- 🔄 Allineamento versione con catalogo KometaThemes
-
-### v0.1.0.0 (Initial Release)
-- 🚀 Prima release stabile con supporto Jellyfin 10.11+
-- ⚙️ **Rate Limiter Centralizzato**: `AnimeClickClient` con semafori asincroni su tutte le richieste
-- 📸 **Focus Doppiatori**: download foto cast da AnimeClick, estetica delegata a Fanart.tv/TMDB
-- 🚀 **Zero-Allocation**: `[GeneratedRegex]` nativo .NET 9.0
-- 🛡️ **Resilienza**: cache potenziata, cancellation token, timeout
-
-## 🙏 Attribuzione
-
-<div align="center">
-  <a href="https://www.animeclick.it/">
-    <img src="https://www.animeclick.it/bundles/accommon/images/ac-logoB.jpg" alt="AnimeClick.it" width="400" />
-  </a>
-</div>
-
-I metadati sono forniti da **[AnimeClick.it](https://www.animeclick.it/)**, gestito dall'associazione culturale no-profit [Associazione NewType Media](http://www.antme.it/).
-
-Questo plugin non è affiliato con AnimeClick. Lo scraping è stato autorizzato dallo staff di AnimeClick per uso non commerciale.
-
-## 📄 Licenza
-
-[GPL-3.0-or-later](LICENSE)
+- 🐛 **Fix "Identify & Refresh" non sostituisce le immagini**: l'endpoint `POST /Plugins/AnimeClick/IdentifyAndRefresh` accetta il flag opzionale `ReplaceAllImages` (default false). Quando `true`, rimuove le immagini remote lasciando intatte le locali. Il refresh riscarica dagli ImageFetcher configurati.
+- 🔍 **Endpoint diagnostico `GET /Plugins/AnimeClick/AvailableRemoteImages`**: elenca le immagini remote disponibili per un item da ogni ImageFetcher abilitato.
