@@ -112,5 +112,5 @@ public class PluginConfiguration : BasePluginConfiguration
 
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP.</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.2.10.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.2.11.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 }
