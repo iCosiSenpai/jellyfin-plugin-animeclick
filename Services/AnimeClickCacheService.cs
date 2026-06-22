@@ -114,6 +114,32 @@ public class AnimeClickCacheService
         return 1;
     }
 
+    /// <summary>
+    /// Rimuove tutti i file di cache (ogni <c>.json</c> nella directory di cache). Best-effort:
+    /// i file bloccati vengono saltati senza far fallire l'operazione. Usato dal pulsante
+    /// "Svuota cache metadati" della config page (corpo vuoto del ClearCache).
+    /// </summary>
+    /// <returns>Numero di file effettivamente rimossi.</returns>
+    public int ClearAll()
+    {
+        var removed = 0;
+
+        foreach (var path in Directory.EnumerateFiles(_cacheDirectory, "*.json"))
+        {
+            try
+            {
+                File.Delete(path);
+                removed++;
+            }
+            catch
+            {
+                // Best effort: la pulizia cache non deve fallire sui singoli file.
+            }
+        }
+
+        return removed;
+    }
+
     private string GetPath(string key)
         => Path.Combine(_cacheDirectory, SanitizeFileKey(key) + ".json");
 
