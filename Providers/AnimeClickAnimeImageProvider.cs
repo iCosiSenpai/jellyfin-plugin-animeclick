@@ -117,11 +117,38 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
             return results;
         }
 
+        // Resolve dimensions so Jellyfin can sort by quality and so we can enforce the
+        // configured minimum width. On any error we fall back to offering the poster
+        // unfiltered (better a low-res IT cover than none).
+        int width = 0;
+        int height = 0;
+        try
+        {
+            using var imageResponse = await GetImageResponse(imageUrl, cancellationToken);
+            if (imageResponse.IsSuccessStatusCode)
+            {
+                await using var stream = await imageResponse.Content.ReadAsStreamAsync(cancellationToken);
+                ImageDimensions.TryRead(stream, out width, out height);
+            }
+        }
+        catch (Exception)
+        {
+            // Dimension probe is best-effort; ignore and keep width/height = 0.
+        }
+
+        // Below the configured threshold → skip so the next image fetcher wins (Order = 100).
+        if (configuration.MinPosterWidth > 0 && width > 0 && width < configuration.MinPosterWidth)
+        {
+            return results;
+        }
+
         results.Add(new RemoteImageInfo
         {
             ProviderName = Name,
             Type = ImageType.Primary,
-            Url = imageUrl
+            Url = imageUrl,
+            Width = width > 0 ? width : null,
+            Height = height > 0 ? height : null
         });
 
         return results;
@@ -129,7 +156,18 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
     {
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var client = _httpClientFactory.CreateClient();
-        return client.GetAsync(new Uri(url), cancellationToken);
+
+        // AnimeClick's CDN rejects requests without a browser-like User-Agent (HTTP 403),
+        // so mirror the headers used by AnimeClickClient for HTML fetches.
+        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(url));
+        request.Headers.UserAgent.ParseAdd(configuration.UserAgent);
+        if (Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var referer))
+        {
+            request.Headers.Referrer = referer;
+        }
+
+        return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
     }
 }
