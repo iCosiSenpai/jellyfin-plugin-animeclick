@@ -22,6 +22,14 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public bool EnableAnimeClickImages { get; set; } = true;
 
+    /// <summary>
+    /// Larghezza minima (px) della locandina AnimeClick. Sotto questa soglia il poster IT
+    /// viene scartato e Jellyfin passa al provider immagini successivo (Fanart/TMDB/AniList).
+    /// 0 = nessun filtro (comportamento storico). Consigliato ~400 per evitare cover a bassa
+    /// risoluzione.
+    /// </summary>
+    public int MinPosterWidth { get; set; }
+
     /// <summary>Importa la sinossi/trama in italiano.</summary>
     public bool EnablePlot { get; set; } = true;
 

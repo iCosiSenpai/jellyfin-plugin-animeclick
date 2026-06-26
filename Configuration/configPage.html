@@ -682,6 +682,11 @@
                                     </label>
                                     <div class="fieldDescription checkboxFieldDescription">Usa le copertine di AnimeClick come immagine di fallback. Priorità bassa: AniList/Fanart/TMDB vincono se hanno immagini; AnimeClick riempie solo i buchi.</div>
                                 </div>
+                                <div class="inputContainer" data-search="risoluzione minima locandina poster qualita">
+                                    <label class="inputLabel inputLabelUnfocused" for="txtMinPosterWidth">Larghezza minima locandina (px)</label>
+                                    <input id="txtMinPosterWidth" type="number" is="emby-input" min="0" max="4000" step="50" />
+                                    <div class="fieldDescription">Sotto questa larghezza la locandina AnimeClick viene scartata e si passa al provider successivo (Fanart/TMDB/AniList). 0 = nessun filtro. Consigliato ~400.</div>
+                                </div>
                             </div>
                         </div>
 
@@ -1305,6 +1310,7 @@
                         document.querySelector('#chkEnablePlot').checked = config.EnablePlot;
                         document.querySelector('#chkOverwriteNonItalianFields').checked = config.OverwriteNonItalianFields;
                         document.querySelector('#chkEnableAnimeClickImages').checked = config.EnableAnimeClickImages;
+                        document.querySelector('#txtMinPosterWidth').value = config.MinPosterWidth;
                         document.querySelector('#chkEnableGenres').checked = config.EnableGenres;
                         document.querySelector('#chkEnableStudios').checked = config.EnableStudios;
                         document.querySelector('#chkEnableCommunityRating').checked = config.EnableCommunityRating;
@@ -1470,6 +1476,7 @@
                         config.EnablePlot = document.querySelector('#chkEnablePlot').checked;
                         config.OverwriteNonItalianFields = document.querySelector('#chkOverwriteNonItalianFields').checked;
                         config.EnableAnimeClickImages = document.querySelector('#chkEnableAnimeClickImages').checked;
+                        config.MinPosterWidth = parseInt(document.querySelector('#txtMinPosterWidth').value, 10) || 0;
                         config.EnableGenres = document.querySelector('#chkEnableGenres').checked;
                         config.EnableStudios = document.querySelector('#chkEnableStudios').checked;
                         config.EnableCommunityRating = document.querySelector('#chkEnableCommunityRating').checked;
