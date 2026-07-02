@@ -156,8 +156,8 @@ static void TestOllamaTranslatorRequestAndResponse()
 static void TestTvdbUrlBuilding()
 {
     Assert(AnimeClickTvdbClient.BuildSearchUrl("Naruto") ==
-        "https://api4.thetvdb.com/v4/search?query=Naruto&type=series",
-        "BuildSearchUrl must encode the query and request series type.");
+        "https://api4.thetvdb.com/v4/search?query=Naruto",
+        "BuildSearchUrl must encode the query without type filter (filtered client-side).");
 
     Assert(AnimeClickTvdbClient.BuildEpisodesUrl(121361, "ita", 0) ==
         "https://api4.thetvdb.com/v4/series/121361/episodes/default/ita?page=0",
@@ -183,7 +183,7 @@ static void TestTvdbResponseParsing()
     Assert(AnimeClickTvdbClient.ParseLoginToken("not json") == null,
         "ParseLoginToken must return null on invalid JSON.");
 
-    var searchJson = "{\"data\":[{\"tvdb_id\":1,\"first_air_time\":\"2023-04-01\"},{\"tvdb_id\":2,\"year\":\"2015\"}]}";
+    var searchJson = "{\"data\":[{\"type\":\"series\",\"tvdb_id\":1,\"first_air_time\":\"2023-04-01\"},{\"type\":\"series\",\"tvdb_id\":2,\"year\":\"2015\"}]}";
     Assert(AnimeClickTvdbClient.ParseFirstSeriesId(searchJson, 2023) == 1,
         "ParseFirstSeriesId must prefer the result whose air year matches.");
     Assert(AnimeClickTvdbClient.ParseFirstSeriesId(searchJson, 2015) == 2,
@@ -192,6 +192,12 @@ static void TestTvdbResponseParsing()
         "ParseFirstSeriesId with no year must return the first result id.");
     Assert(AnimeClickTvdbClient.ParseFirstSeriesId("{\"data\":[]}", null) == null,
         "ParseFirstSeriesId must return null on empty data.");
+
+    var mixedJson = "{\"data\":[{\"type\":\"list\",\"tvdb_id\":10},{\"type\":\"series\",\"tvdb_id\":78857,\"year\":\"2002\"},{\"type\":\"movie\",\"tvdb_id\":999}]}";
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(mixedJson, null) == 78857,
+        "ParseFirstSeriesId must filter to type=series only, skipping list/movie entries.");
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId("{\"data\":[{\"type\":\"list\",\"tvdb_id\":10}]}", null) == null,
+        "ParseFirstSeriesId must return null when no series-type results exist.");
 
     var epJson = "{\"data\":[{\"seasonNumber\":2,\"number\":5,\"overview\":\"Ichika va al festival.\"},{\"seasonNumber\":1,\"number\":1,\"overview\":\"Altro.\"}]}";
     Assert(AnimeClickTvdbClient.ParseEpisodeOverview(epJson, 2, 5) == "Ichika va al festival.",

@@ -355,7 +355,7 @@ public class AnimeClickTvdbClient
 
     /// <summary>Builds the TVDB /search series URL (testable, no network).</summary>
     internal static string BuildSearchUrl(string query)
-        => $"{BaseUrl}/search?query={Uri.EscapeDataString(query)}&type=series";
+        => $"{BaseUrl}/search?query={Uri.EscapeDataString(query)}";
 
     /// <summary>Builds the TVDB /series/{id}/episodes/default/{lang} URL (testable, no network).</summary>
     internal static string BuildEpisodesUrl(int tvdbId, string lang, int page)
@@ -394,13 +394,19 @@ public class AnimeClickTvdbClient
                 return null;
             }
 
-            int? fallback = null;
-            foreach (var item in data.EnumerateArray())
+        int? fallback = null;
+        foreach (var item in data.EnumerateArray())
+        {
+            if (!item.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String
+                || !string.Equals(typeEl.GetString(), "series", StringComparison.OrdinalIgnoreCase))
             {
-                if (!item.TryGetProperty("tvdb_id", out var idEl) || idEl.ValueKind != JsonValueKind.Number)
-                {
-                    continue;
-                }
+                continue;
+            }
+
+            if (!item.TryGetProperty("tvdb_id", out var idEl) || idEl.ValueKind != JsonValueKind.Number)
+            {
+                continue;
+            }
 
                 var id = idEl.GetInt32();
                 if (!preferredYear.HasValue)
