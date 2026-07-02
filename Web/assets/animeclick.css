@@ -94,28 +94,13 @@
 /* ---- brand ----------------------------------------------------------- */
 
 .ac-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.ac-comet {
-    position: relative;
-    width: 34px; height: 34px; flex-shrink: 0;
-    border-radius: 50%;
-    background: var(--ac-brand);
-    box-shadow: 0 0 18px rgba(232, 93, 4, 0.45), var(--ac-edge);
-}
-.ac-comet::before {
-    content: '';
-    position: absolute; top: 50%; right: 58%;
-    width: 36px; height: 3px;
-    transform: translateY(-50%) rotate(-24deg);
-    transform-origin: right center;
-    border-radius: 999px;
-    background: linear-gradient(270deg, rgba(232, 93, 4, 0.85), transparent);
-}
-.ac-comet::after {
-    content: '';
-    position: absolute; inset: 28% 28% 42% 42%;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.85);
-    filter: blur(1px);
+.ac-logo {
+    width: 36px; height: 36px; flex-shrink: 0;
+    border-radius: 8px;
+    object-fit: contain;
+    box-shadow: 0 4px 12px rgba(232, 93, 4, 0.25);
+    background: #fff;
+    padding: 2px;
 }
 .ac-wordmark { display: flex; flex-direction: column; min-width: 0; }
 .ac-wordmark strong {
@@ -123,10 +108,6 @@
     background: var(--ac-brand);
     -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent;
-}
-.ac-wordmark span {
-    font-size: 0.72em; font-weight: 700; letter-spacing: 0.30em;
-    text-transform: uppercase; color: var(--ac-text-faint);
 }
 .ac-version {
     align-self: center;
