@@ -26,13 +26,18 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     public IEnumerable<PluginPageInfo> GetPages()
     {
+        var ns = GetType().Namespace;
         return
         [
+            // Config page
             new PluginPageInfo
             {
                 Name = Name,
-                EmbeddedResourcePath = GetType().Namespace + ".Configuration.configPage.html"
-            }
+                EmbeddedResourcePath = ns + ".Configuration.configPage.html"
+            },
+            // Shared assets (served via /web/configurationpage?name=...)
+            new PluginPageInfo { Name = "AnimeClickCss", EmbeddedResourcePath = ns + ".Web.assets.animeclick.css" },
+            new PluginPageInfo { Name = "AnimeClickConfigJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-config.js" }
         ];
     }
 }
