@@ -4,7 +4,7 @@
 (function () {
     'use strict';
 
-    var V = '0.3.3.0';
+    var V = '0.3.4.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
 
     /* ===== util ===== */
@@ -627,7 +627,7 @@
                 badge.className = 'ac-badge neutral';
                 badge.textContent = '…';
 
-                request('POST', endpoints[prov]).then(function (r) {
+                request('POST', endpoints[prov], {}).then(function (r) {
                     var ok = r && (r.success || r.Success);
                     dot.className = 'ac-live-dot ' + (ok ? 'is-ok' : 'is-error');
                     badge.className = 'ac-badge ' + (ok ? 'success' : 'danger');
@@ -655,7 +655,7 @@
                 var res = page.querySelector('#acCacheResult');
                 res.className = 'ac-state';
                 res.innerHTML = '<span class="ac-spinner"></span>Svuotamento in corso…';
-                request('POST', 'Plugins/AnimeClick/ClearCache').then(function (r) {
+                request('POST', 'Plugins/AnimeClick/ClearCache', {}).then(function (r) {
                     res.className = 'ac-state success';
                     res.textContent = '✓ Cache svuotata' + (r && r.message ? ': ' + r.message : '');
                     toast('Cache svuotata', 'success');
