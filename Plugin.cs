@@ -20,7 +20,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     public override Guid Id => Guid.Parse("1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11");
 
-    public override string Name => "AnimeClick Metadata";
+    public override string Name => "AnimeClick Plugin";
 
     public override string Description => "Provider metadati anime in italiano basato su AnimeClick con cache locale.";
 
