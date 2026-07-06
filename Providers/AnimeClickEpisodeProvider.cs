@@ -122,7 +122,22 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
                 _logger.LogInformation("AnimeClick: Fetching episodes from {Url}", episodesUrl);
                 var html = await _client.GetStringAsync(episodesUrl, configuration, cancellationToken);
-                episodes = _parser.ParseEpisodesPage(html, configuration.BaseUrl);
+
+                // Read the cached AnimeClickAnime to pass SeasonsCount to the episode parser,
+                // so episodes listed by AnimeClick as a continuous "Ep. 01"..<c>Ep. NN</c> block
+                // (no explicit <c>S1/S2 Ep.</c> row prefixes) can be split into seasons when the
+                // detail page declares multiple seasons (e.g. The Asterisk War, 24 eps / 2 cour).
+                int? seasonsCount = null;
+                var seriesUrl = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
+                var seriesCacheKey = $"anime::{seriesUrl}";
+                var series = await _cache.GetAsync<AnimeClickAnime>(seriesCacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
+                if (series is not null && series.SeasonsCount > 0)
+                {
+                    seasonsCount = series.SeasonsCount;
+                    _logger.LogDebug("AnimeClick: using SeasonsCount={SeasonsCount} for episode season-split on {Id}", seasonsCount, animeClickId);
+                }
+
+                episodes = _parser.ParseEpisodesPage(html, configuration.BaseUrl, seasonsCount);
                 _logger.LogInformation("AnimeClick: Parsed {Count} episodes from {Url}", episodes.Count, episodesUrl);
 
                 // If there are more pages, fetch them too (pagination)
@@ -132,7 +147,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                     try
                     {
                         var nextHtml = await _client.GetStringAsync(nextUrl, configuration, cancellationToken);
-                        var nextEpisodes = _parser.ParseEpisodesPage(nextHtml, configuration.BaseUrl);
+                        var nextEpisodes = _parser.ParseEpisodesPage(nextHtml, configuration.BaseUrl, seasonsCount);
                         if (nextEpisodes.Count == 0) break;
 
                         if (episodes.Any(e => e.Number == nextEpisodes[0].Number

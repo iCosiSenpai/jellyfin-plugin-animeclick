@@ -83,7 +83,18 @@ public class AnimeClickDiagnosticsController : ControllerBase
         var animeUrl = AnimeClickClient.BuildAnimeUrl(config.BaseUrl, animeClickId);
         var episodesUrl = animeUrl + "/episodi";
         var html = await _client.GetStringAsync(episodesUrl, config, cancellationToken);
-        var episodes = _parser.ParseEpisodesPage(html, config.BaseUrl);
+
+        // Try to pass SeasonsCount from the cached AnimeClickAnime (populated by SeriesProvider)
+        // so multi-cour titles that AnimeClick lists as a continuous block get season-split.
+        int? seasonsCount = null;
+        var seriesCacheKey = $"anime::{animeUrl}";
+        var series = await _cache.GetAsync<AnimeClickAnime>(seriesCacheKey, config.CacheHours, cancellationToken).ConfigureAwait(false);
+        if (series is not null && series.SeasonsCount > 0)
+        {
+            seasonsCount = series.SeasonsCount;
+        }
+
+        var episodes = _parser.ParseEpisodesPage(html, config.BaseUrl, seasonsCount);
 
         AnimeClickEpisodeMatch? match = null;
         if (episode.HasValue)

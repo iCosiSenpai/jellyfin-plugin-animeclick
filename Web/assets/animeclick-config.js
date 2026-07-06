@@ -4,7 +4,7 @@
 (function () {
     'use strict';
 
-    var V = '0.3.6.0';
+    var V = '0.3.7.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
 
     /* ===== util ===== */
