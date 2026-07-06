@@ -38,6 +38,8 @@ public class AnimeClickSeriesSearchProvider
         bool seriesRequest = true)
     {
         var trimmed = name.Trim();
+        var deaccented = AnimeClickSearchScorer.RemoveDiacritics(trimmed);
+        var useForSearch = deaccented != trimmed ? deaccented : trimmed;
 
         // ── Direct ID lookup ──
         // If the query looks like an AnimeClick ID (e.g. "72", "72/naruto"),
@@ -48,7 +50,7 @@ public class AnimeClickSeriesSearchProvider
         }
 
         // ── Text search ──
-        var cleanedQuery = CleanSearchQuery(trimmed);
+        var cleanedQuery = CleanSearchQuery(useForSearch);
 
         var cacheKey = $"search:v2::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "any")}";
         var negativeCacheKey = $"search-empty:v1::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "any")}";
@@ -73,12 +75,12 @@ public class AnimeClickSeriesSearchProvider
         attemptsHadErrors |= attempt.HadError;
         var results = attempt.Results;
 
-        // If no results, try progressively simpler queries
-        if (results.Count == 0 && cleanedQuery != trimmed)
+        // If no results, try the (deaccented) original form
+        if (results.Count == 0 && cleanedQuery != useForSearch)
         {
             _logger.LogInformation("AnimeClick: No results for '{Clean}', retrying with original '{Original}'",
-                cleanedQuery, trimmed);
-            attempt = await ExecuteSearchAsync(trimmed, configuration, cancellationToken, productionYear, seriesRequest);
+                cleanedQuery, useForSearch);
+            attempt = await ExecuteSearchAsync(useForSearch, configuration, cancellationToken, productionYear, seriesRequest);
             attemptsHadErrors |= attempt.HadError;
             results = attempt.Results;
         }

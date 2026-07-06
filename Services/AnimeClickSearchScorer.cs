@@ -1,11 +1,38 @@
 using System;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace AnimeClick.Plugin.Services;
 
 public static class AnimeClickSearchScorer
 {
+    /// <summary>
+    /// Strips diacritics from a string (e.g. <c>Caffè</c> → <c>Caffe</c>,
+    /// <c>voilà</c> → <c>voila</c>) by decomposing to FormD and removing
+    /// combining marks. Non-Latin base letters and lone marks are preserved.
+    /// </summary>
+    internal static string RemoveDiacritics(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        var normalized = value.Normalize(NormalizationForm.FormD);
+        var sb = new StringBuilder(value.Length);
+        foreach (var ch in normalized.EnumerateRunes())
+        {
+            var cat = Rune.GetUnicodeCategory(ch);
+            if (cat != UnicodeCategory.NonSpacingMark
+                && cat != UnicodeCategory.SpacingCombiningMark)
+            {
+                sb.Append(ch);
+            }
+        }
+        return sb.ToString().Normalize(NormalizationForm.FormC);
+    }
     public static int Score(AnimeClickSearchResult result, string query, int? productionYear, bool seriesRequest)
     {
         var score = 0;
@@ -56,5 +83,5 @@ public static class AnimeClickSearchScorer
     }
 
     private static string NormalizeForScore(string value)
-        => Regex.Replace(value.ToLowerInvariant(), @"[^\p{L}\p{Nd}]+", " ").Trim();
+        => Regex.Replace(RemoveDiacritics(value).ToLowerInvariant(), @"[^\p{L}\p{Nd}]+", " ").Trim();
 }

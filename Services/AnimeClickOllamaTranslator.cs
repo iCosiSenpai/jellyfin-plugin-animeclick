@@ -277,6 +277,46 @@ public class AnimeClickOllamaTranslator
             if (c == '\\' && i + 1 < json.Length)
             {
                 var next = json[i + 1];
+                if (next == 'u' && i + 5 < json.Length
+                    && TryParseHex4(json.AsSpan(i + 2, 4), out var cp))
+                {
+                    if (cp >= 0xD800 && cp <= 0xDBFF
+                        && i + 11 < json.Length
+                        && json[i + 6] == '\\' && json[i + 7] == 'u'
+                        && TryParseHex4(json.AsSpan(i + 8, 4), out var loSu)
+                        && loSu >= 0xDC00 && loSu <= 0xDFFF)
+                    {
+                        var supplementary = 0x10000 + ((cp - 0xD800) << 10) + (loSu - 0xDC00);
+                        sb.Append(char.ConvertFromUtf32(supplementary));
+                        i += 12;
+                        continue;
+                    }
+
+                    if (cp >= 0xD800 && cp <= 0xDFFF)
+                    {
+                        // lone surrogate — emit replacement char to avoid crashing
+                        sb.Append('\uFFFD');
+                    }
+                    else
+                    {
+                        sb.Append(char.ConvertFromUtf32(cp));
+                    }
+                    i += 6;
+                    continue;
+                }
+
+                if (next == 'U' && i + 9 < json.Length
+                    && TryParseHex4(json.AsSpan(i + 2, 4), out var hi)
+                    && TryParseHex4(json.AsSpan(i + 6, 4), out var lo)
+                    && hi >= 0xD800 && hi <= 0xDBFF
+                    && lo >= 0xDC00 && lo <= 0xDFFF)
+                {
+                    var supplementary = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+                    sb.Append(char.ConvertFromUtf32(supplementary));
+                    i += 10;
+                    continue;
+                }
+
                 sb.Append(next switch
                 {
                     'n' => '\n',
@@ -302,6 +342,22 @@ public class AnimeClickOllamaTranslator
 
         var result = sb.ToString();
         return string.IsNullOrWhiteSpace(result) ? null : result;
+    }
+
+    private static bool TryParseHex4(ReadOnlySpan<char> s, out int value)
+    {
+        value = 0;
+        for (var k = 0; k < 4; k++)
+        {
+            var ch = s[k];
+            int d;
+            if (ch >= '0' && ch <= '9') { d = ch - '0'; }
+            else if (ch >= 'a' && ch <= 'f') { d = ch - 'a' + 10; }
+            else if (ch >= 'A' && ch <= 'F') { d = ch - 'A' + 10; }
+            else { return false; }
+            value = (value << 4) | d;
+        }
+        return true;
     }
 }
 
