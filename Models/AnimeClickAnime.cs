@@ -17,6 +17,15 @@ public class AnimeClickAnime
     public int? ProductionYear { get; set; }
     public int? RatingCount { get; set; }
     public int? EpisodeCount { get; set; }
+
+    /// <summary>
+    /// Number of broadcast seasons/cours AnimeClick declares for this title
+    /// (parsed from the &lt;dt&gt;Stagioni&lt;/dt&gt; list, e.g. "Autunno (2015) Primavera (2016)" → 2).
+    /// 0 when AnimeClick does not declare any. Used by <see cref="AnimeClickHtmlParser.ParseEpisodesPage"/>
+    /// to synthesise <see cref="AnimeClickEpisode.SeasonNumber"/> when the /episodi table lacks
+    /// explicit <c>S1/S2 Ep.</c> prefixes (e.g. The Asterisk War, 24 eps listed as <c>Ep. 01</c>–<c>Ep. 24</c>).
+    /// </summary>
+    public int SeasonsCount { get; set; }
     public string? Category { get; set; }
     public string? Status { get; set; }
     public string? OfficialRating { get; set; }

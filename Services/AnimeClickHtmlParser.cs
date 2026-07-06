@@ -196,6 +196,22 @@ public partial class AnimeClickHtmlParser
             anime.EpisodeCount = epCount;
         }
 
+        // --- Seasons Count (Stagioni) ---
+        // AnimeClick exposes the list under <dt>Stagioni</dt>, like "Autunno (2015) Primavera (2016)" (2 seasons).
+        // Used later to synthesise SeasonNumber when the /episodi table lists episodes as a continuous
+        // "Ep. 01".."Ep. 24" block without explicit "S1/S2 Ep." row prefixes.
+        var seasonsText = DtDdValue(doc, "Stagioni");
+        if (!string.IsNullOrWhiteSpace(seasonsText))
+        {
+            // Each season entry typically contains a 4-digit year inside parentheses, e.g. "Autunno (2015)".
+            // Count the parenthesised year patterns to estimate how many seasons/cours are declared.
+            var seasonsMatches = YearExtractRegex().Matches(seasonsText);
+            if (seasonsMatches.Count > 0)
+            {
+                anime.SeasonsCount = seasonsMatches.Count;
+            }
+        }
+
         // --- Status ---
         anime.Status = DtDdValue(doc, "Stato in patria");
 
@@ -593,6 +609,16 @@ public partial class AnimeClickHtmlParser
     /// Extracts episode numbers and Italian titles from the table structure.
     /// </summary>
     public List<AnimeClickEpisode> ParseEpisodesPage(string html, string baseUrl)
+        => ParseEpisodesPage(html, baseUrl, seasonsCount: null);
+
+    /// <summary>
+    /// Parses the /episodi table. When <paramref name="seasonsCount"/> is provided and strictly
+    /// greater than 1, and every parsed episode carries a null <see cref="AnimeClickEpisode.SeasonNumber"/>
+    /// (i.e. AnimeClick lists the episodes as a continuous "Ep. 01"..<c>Ep. NN</c> block without per-row
+    /// <c>S1/S2 Ep.</c> prefixes), the parser synthesises the season number so the matcher's
+    /// <c>seasonOrdinal</c> branch can resolve multi-season Jellyfin libraries.
+    /// </summary>
+    public List<AnimeClickEpisode> ParseEpisodesPage(string html, string baseUrl, int? seasonsCount)
     {
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
@@ -674,6 +700,7 @@ public partial class AnimeClickHtmlParser
         }
 
         NormalizeEpisodeOrdinals(episodes);
+        TryInferSeasonsFromCount(episodes, seasonsCount);
         return episodes;
     }
 
@@ -710,6 +737,44 @@ public partial class AnimeClickHtmlParser
                     episode.SeasonOrdinalNumber = episode.Number;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// When <paramref name="seasonsCount"/> is greater than 1 and every parsed episode
+    /// carries a null <see cref="AnimeClickEpisode.SeasonNumber"/> (i.e. AnimeClick lists
+    /// episodes as a continuous "Ep. 01"..<c>Ep. NN</c> block without per-row "S1/S2 Ep." prefixes),
+    /// splits the episodes evenly across N seasons and assigns both the synthetic
+    /// <see cref="AnimeClickEpisode.SeasonNumber"/> and the within-group ordinal
+    /// (<see cref="AnimeClickEpisode.SeasonOrdinalNumber"/>) so the matcher's
+    /// <c>seasonOrdinal</c> branch can resolve multi-season Jellyfin libraries.
+    /// </summary>
+    private static void TryInferSeasonsFromCount(List<AnimeClickEpisode> episodes, int? seasonsCount)
+    {
+        if (episodes.Count == 0
+            || !seasonsCount.HasValue
+            || seasonsCount.Value <= 1
+            || episodes.Any(e => e.SeasonNumber.HasValue))
+        {
+            return;
+        }
+
+        var count = episodes.Count;
+        var perSeason = count / seasonsCount.Value;
+        if (perSeason <= 0 || count % seasonsCount.Value != 0)
+        {
+            // Refuse to synthesise when the table does not divide evenly across declared seasons,
+            // because that would shift ordinals and corrupt matching.
+            return;
+        }
+
+        var ordered = episodes.OrderBy(e => e.AbsoluteNumber).ToList();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var season = (i / perSeason) + 1;
+            var ordinalInSeason = (i % perSeason) + 1;
+            ordered[i].SeasonNumber = season;
+            ordered[i].SeasonOrdinalNumber = ordinalInSeason;
         }
     }
 

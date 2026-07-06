@@ -233,6 +233,15 @@ Questa attribution è mostrata anche nel pannello **Sinossi** della pagina di co
 
 ## 📝 Changelog
 
+### v0.3.7.0 (Fix multi-stagione quando AnimeClick elenca episodi in blocco unico)
+
+- **BUG**: multi-cour anime tipo "The Asterisk War" (24 episodi su 2 stagioni) venivano matchati solo per S1 (`strategy=absolute`), mentre S2E1-E12 restituivano `strategy=none` → nessun titolo episodio italiano copiato su Jellyfin per la stagione 2.
+- **Root cause**: AnimeClick elenca gli episodi come blocco continuo `Ep. 01` → `Ep. 24` *senza* prefisso `S1/S2 Ep.` per riga, e il parser assegnava `SeasonNumber = null` a tutti. Il matcher allora usava `absolute` per S1E1-E12 (AbsoluteNumber 1-12), ma bloccava il fallback absolute per stagioni > 1 → S2 mismatch.
+- **Fix**: il parser ora legge la lista "Stagioni" dalla pagina principale di AnimeClick (es. "Autunno (2015) Primavera (2016)" → `SeasonsCount = 2`). È stato aggiunto un metodo `ParseEpisodesPage(html, baseUrl, int? seasonsCount)`; quando `seasonsCount > 1`, tutti gli episodi hanno `SeasonNumber == null` e il totale è divisibile per `seasonsCount`, l'episodio viene assegnato sinteticamente a stagione + ordinale (es. Asterisk War 24/2 = 12 → episodi 13-24 diventano S2 stagione-ordinale 1-12). Il matcher allora usa `seasonOrdinal` esattamente come per Dangers.
+- **Sicurezza**: se gli episodi non sono divisibili per stagioni (es. 17 % 2 != 0) o `seasonsCount` non è noto, il parser rifiuta di inferire e mantiene il vecchio comportamento, evitando split errati su titoli single-cour.
+- **Compatibilità**: nuovo overload opzionale. Il vecchio `ParseEpisodesPage(html, baseUrl)` continua a chiamare il nuovo con `seasonsCount=null` → nessun cambiamento per i title esistenti.
+- **Test**: 2 nuovi test (`AsteriskContinuousBlockSeasonSplit`, `TestSeasonsCountRefusedOnUnevenSplit`). 18/18 PASS.
+
 ### v0.3.6.0 (Fix TVDB string id + accenti italiani + timeout identify)
 
 - **BUG 1 — TVDB `tvdb_id` come stringa**: l'API TVDB v4 `/search` restituisce `tvdb_id` come stringa JSON (es. `"78857"`), non come numero. Il parser precedente scartava tutti i risultati → nessuna sinossi IT da TVDB. Ora accettiamo stringa e numero, e come ultimo fallback anche il campo `id` (record TVDB) quando `tvdb_id` è assente.

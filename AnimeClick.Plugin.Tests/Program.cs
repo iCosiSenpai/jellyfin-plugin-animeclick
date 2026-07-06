@@ -1,3 +1,4 @@
+using System.Linq;
 using AnimeClick.Plugin.Services;
 
 static void TestDangersSeasonOrdinalMatching()
@@ -314,6 +315,83 @@ static void TestTvdbEpisodesParsing()
         "ParseNextLink must return null when links is absent.");
 }
 
+static void TestAsteriskContinuousBlockSeasonSplit()
+{
+    var parser = new AnimeClickHtmlParser();
+
+    // Asterisk War real-world: AnimeClick lists 24 eps as "Ep. 01".."Ep. 24" with NO S1/S2 prefix.
+    // Detail page declares 2 stagioni → caller passes seasonsCount=2.
+    var episodes = parser.ParseEpisodesPage(TestFixtures.AsteriskContinuousEpisodesHtml, "https://www.animeclick.it", seasonsCount: 2);
+
+    Assert(episodes.Count == 24, "Expected 24 parsed episodes for Asterisk War.");
+
+    // Episodes 1-12 must be assigned SeasonNumber=1, 13-24 SeasonNumber=2.
+    Assert(episodes.First(e => e.AbsoluteNumber == 1).SeasonNumber == 1, "Ep 1 must be season 1 after split.");
+    Assert(episodes.First(e => e.AbsoluteNumber == 12).SeasonNumber == 1, "Ep 12 must be season 1 after split.");
+    Assert(episodes.First(e => e.AbsoluteNumber == 13).SeasonNumber == 2, "Ep 13 must be season 2 after split.");
+    Assert(episodes.First(e => e.AbsoluteNumber == 24).SeasonNumber == 2, "Ep 24 must be season 2 after split.");
+
+    // Match S2E1 — must hit episode AbsoluteNumber=13 (Banyuu Tenra) with strategy=seasonOrdinal.
+    var s2e1 = AnimeClickEpisodeMatcher.Match(episodes, 2, 1);
+    Assert(s2e1.Success, "S02E01 must match after season-split inference.");
+    Assert(s2e1.Episode?.AbsoluteNumber == 13, "S02E01 must map to absolute episode 13.");
+    Assert(s2e1.Episode?.Title == "Banyuu Tenra - Rivelazioni divine", "S02E01 title mismatch.");
+    Assert(s2e1.Strategy == "seasonOrdinal", "S02E01 should use seasonOrdinal strategy after split.");
+
+    var s2e12 = AnimeClickEpisodeMatcher.Match(episodes, 2, 12);
+    Assert(s2e12.Success, "S02E12 must match.");
+    Assert(s2e12.Episode?.AbsoluteNumber == 24, "S02E12 must map to absolute episode 24.");
+    Assert(s2e12.Episode?.Title == "Riunione", "S02E12 title mismatch.");
+    Assert(s2e12.Strategy == "seasonOrdinal", "S02E12 should use seasonOrdinal strategy.");
+
+    // S1E1 must continue to map via absolute (since now both S1 and S2 have episodes)
+    var s1e1 = AnimeClickEpisodeMatcher.Match(episodes, 1, 1);
+    Assert(s1e1.Success, "S01E01 must still match after split.");
+    Assert(s1e1.Episode?.AbsoluteNumber == 1, "S01E01 must map to absolute episode 1.");
+    Assert(s1e1.Episode?.Title == "La strega della fiamma splendente", "S01E01 title mismatch.");
+    Assert(s1e1.Strategy == "seasonOrdinal", "S01E01 should use seasonOrdinal strategy since episodes have explicit SeasonNumber.");
+
+    // Without seasonsCount (the legacy overload), the same page must NOT synthesize — back to the bug
+    // (no S2 match), proving the new behaviour is opt-in via seasonsCount.
+    var noSplit = parser.ParseEpisodesPage(TestFixtures.AsteriskContinuousEpisodesHtml, "https://www.animeclick.it", seasonsCount: null);
+    Assert(noSplit.All(e => e.SeasonNumber is null), "Without seasonsCount the parser must NOT synthesise SeasonNumber.");
+    var s2e1NoSplit = AnimeClickEpisodeMatcher.Match(noSplit, 2, 1);
+    Assert(!s2e1NoSplit.Success && s2e1NoSplit.Strategy == "none", "S02E01 must NOT match without seasonsCount (regression baseline).");
+}
+
+static void TestSeasonsCountRefusedOnUnevenSplit()
+{
+    var parser = new AnimeClickHtmlParser();
+
+    // 17 episodes with seasonsCount=2 → 17/2=8 (remainder 1) → uneven, parser must refuse to split.
+    var html = """
+<html><body>
+<table class="table"><tbody>
+<tr><td>Ep. 01</td><td><a href="/episodio/1/a">A</a></td><td>23'</td></tr>
+<tr><td>Ep. 02</td><td><a href="/episodio/2/b">B</a></td><td>23'</td></tr>
+<tr><td>Ep. 03</td><td><a href="/episodio/3/c">C</a></td><td>23'</td></tr>
+<tr><td>Ep. 04</td><td><a href="/episodio/4/d">D</a></td><td>23'</td></tr>
+<tr><td>Ep. 05</td><td><a href="/episodio/5/e">E</a></td><td>23'</td></tr>
+<tr><td>Ep. 06</td><td><a href="/episodio/6/f">F</a></td><td>23'</td></tr>
+<tr><td>Ep. 07</td><td><a href="/episodio/7/g">G</a></td><td>23'</td></tr>
+<tr><td>Ep. 08</td><td><a href="/episodio/8/h">H</a></td><td>23'</td></tr>
+<tr><td>Ep. 09</td><td><a href="/episodio/9/i">I</a></td><td>23'</td></tr>
+<tr><td>Ep. 10</td><td><a href="/episodio/10/l">L</a></td><td>23'</td></tr>
+<tr><td>Ep. 11</td><td><a href="/episodio/11/m">M</a></td><td>23'</td></tr>
+<tr><td>Ep. 12</td><td><a href="/episodio/12/n">N</a></td><td>23'</td></tr>
+<tr><td>Ep. 13</td><td><a href="/episodio/13/o">O</a></td><td>23'</td></tr>
+<tr><td>Ep. 14</td><td><a href="/episodio/14/p">P</a></td><td>23'</td></tr>
+<tr><td>Ep. 15</td><td><a href="/episodio/15/q">Q</a></td><td>23'</td></tr>
+<tr><td>Ep. 16</td><td><a href="/episodio/16/r">R</a></td><td>23'</td></tr>
+<tr><td>Ep. 17</td><td><a href="/episodio/17/s">S</a></td><td>23'</td></tr>
+</tbody></table>
+</body></html>
+""";
+    var episodes = parser.ParseEpisodesPage(html, "https://www.animeclick.it", seasonsCount: 2);
+    Assert(episodes.Count == 17, "Parser must still return all 17 episodes.");
+    Assert(episodes.All(e => e.SeasonNumber is null), "Parser must NOT synthesise SeasonNumber when the split is uneven (17 % 2 != 0).");
+}
+
 static void TestAniListIdParsing()
 {
     Assert(
@@ -352,6 +430,8 @@ static void Assert(bool condition, string message)
 var tests = new (string Name, Action Run)[]
 {
     ("Dangers S2 matcher uses season ordinal", TestDangersSeasonOrdinalMatching),
+    ("Asterisk War 24ep block splits into 2 seasons via seasonsCount", TestAsteriskContinuousBlockSeasonSplit),
+    ("Parser refuses to split when episode count is uneven across seasons", TestSeasonsCountRefusedOnUnevenSplit),
     ("Search scorer prefers 2023 series over movie and special", TestSearchScoring),
     ("Trailer-only multimedia reports diagnostic warning", TestTrailerOnlyMultimedia),
     ("AniList GraphQL id/escape parsing", TestAniListIdParsing),
