@@ -153,6 +153,68 @@ static void TestOllamaTranslatorRequestAndResponse()
         "ParseTranslatedContent must return null when content is absent.");
 }
 
+static void TestOllamaTranslatorUnicodeEscapes()
+{
+    // \uXXXX escapes — Italian accented chars from Ollama models that emit JSON-escaped text.
+    var accentJson = "{\"message\":{\"content\":\"Caff\\u00E8 vicino\\u00E0\"}}";
+    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent(accentJson) == "Caffè vicinoà",
+        "ParseTranslatedContent must decode \\uXXXX escapes (è, à).");
+
+    var allAccents = "{\"message\":{\"content\":\"\\u00E0 \\u00E8 \\u00E9 \\u00EC \\u00F2 \\u00F9\"}}";
+    var decoded = AnimeClickOllamaTranslator.ParseTranslatedContent(allAccents);
+    Assert(decoded == "à è é ì ò ù",
+        "ParseTranslatedContent must decode all Italian accented chars: à è é ì ò ù. Got: " + decoded);
+
+    // Surrogate pair — an emoji encoded as \UXXXXXXXX (non-standard but some models emit it).
+    // Use \uD83D\uDE00 (😀) — even if not handled as surrogate, must not crash.
+    var surrogate = "{\"message\":{\"content\":\"smile \\uD83D\\uDE00 end\"}}";
+    var decodedSurrogate = AnimeClickOllamaTranslator.ParseTranslatedContent(surrogate);
+    Assert(decodedSurrogate != null && decodedSurrogate.StartsWith("smile", StringComparison.Ordinal) && decodedSurrogate.EndsWith("end", StringComparison.Ordinal),
+        "ParseTranslatedContent must handle \\uXXXX surrogate pairs without crashing. Got: " + decodedSurrogate);
+
+    // Mixed escapes in one message
+    var mixed = "{\"message\":{\"content\":\"Line1\\ncaf\\u00E9\\nLine3\"}}";
+    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent(mixed) == "Line1\ncafé\nLine3",
+        "ParseTranslatedContent must mix \\n and \\uXXXX escapes correctly.");
+
+    // \u followed by non-hex must not corrupt content (falls back to original handling)
+    var badEscape = "{\"message\":{\"content\":\"raw \\u stuff\"}}";
+    var badDecoded = AnimeClickOllamaTranslator.ParseTranslatedContent(badEscape);
+    Assert(badDecoded != null && badDecoded.Contains("raw", StringComparison.Ordinal),
+        "ParseTranslatedContent must gracefully handle malformed \\u sequences without crashing.");
+}
+
+static void TestSearchScorerAccentFolding()
+{
+    // Verify RemoveDiacritics directly
+    Assert(AnimeClickSearchScorer.RemoveDiacritics("Caffè") == "Caffe",
+        "RemoveDiacritics must fold è → e.");
+    Assert(AnimeClickSearchScorer.RemoveDiacritics("voilà") == "voila",
+        "RemoveDiacritics must fold à → a.");
+    Assert(AnimeClickSearchScorer.RemoveDiacritics("L'incorreggibile") == "L'incorreggibile",
+        "RemoveDiacritics must NOT remove apostrophes (decompose to apostrophe alone).");
+    Assert(AnimeClickSearchScorer.RemoveDiacritics("à è é ì ò ù") == "a e e i o u",
+        "RemoveDiacritics must fold all Italian accents.");
+    Assert(AnimeClickSearchScorer.RemoveDiacritics("") == "",
+        "RemoveDiacritics must handle empty string.");
+
+    // Scorer: an accented query must match an unaccented AnimeClick result with the +100 score.
+    var unaccentedResult = new AnimeClickSearchResult
+    {
+        Id = "123/test",
+        Title = "Caffe",
+        Format = "Serie TV",
+        ProductionYear = 2020
+    };
+    var unaccentedScore = AnimeClickSearchScorer.Score(unaccentedResult, "Caffè", 2020, seriesRequest: true);
+    var exactScore = AnimeClickSearchScorer.Score(unaccentedResult, "Caffe", 2020, seriesRequest: true);
+    Assert(unaccentedScore == exactScore,
+        "Scorer must treat Caffè and Caffe as equal after diacritic folding. " +
+        $"accented={unaccentedScore}, plain={exactScore}");
+    Assert(unaccentedScore >= 100,
+        "Accented query must hit the +100 exact-match bonus against an unaccented title.");
+}
+
 static void TestTvdbUrlBuilding()
 {
     Assert(AnimeClickTvdbClient.BuildSearchUrl("Naruto") ==
@@ -198,7 +260,44 @@ static void TestTvdbResponseParsing()
         "ParseFirstSeriesId must filter to type=series only, skipping list/movie entries.");
     Assert(AnimeClickTvdbClient.ParseFirstSeriesId("{\"data\":[{\"type\":\"list\",\"tvdb_id\":10}]}", null) == null,
         "ParseFirstSeriesId must return null when no series-type results exist.");
+}
 
+static void TestTvdbSeriesIdStringAndFallback()
+{
+    // TVDB v4 /search returns tvdb_id as a JSON string ("78857"), not a number.
+    var stringIdJson = "{\"data\":[{\"type\":\"series\",\"tvdb_id\":\"78857\",\"year\":\"2002\"}]}";
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(stringIdJson, null) == 78857,
+        "ParseFirstSeriesId must accept tvdb_id as a JSON string.");
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(stringIdJson, 2002) == 78857,
+        "ParseFirstSeriesId must accept tvdb_id as a JSON string with year match.");
+
+    // Mixed: some entries numeric, some string — must pick the first valid series.
+    var mixedTypesJson = "{\"data\":[{\"type\":\"series\",\"tvdb_id\":\"12345\"},{\"type\":\"series\",\"tvdb_id\":67890}]}";
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(mixedTypesJson, null) == 12345,
+        "ParseFirstSeriesId must accept the first entry even if it's a string id.");
+
+    // Fallback: when tvdb_id is missing, fall back to the record `id`.
+    var fallbackIdJson = "{\"data\":[{\"type\":\"series\",\"id\":\"50001\",\"year\":\"2021\"}]}";
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(fallbackIdJson, null) == 50001,
+        "ParseFirstSeriesId must fall back to record `id` (string) when tvdb_id is missing.");
+
+    var fallbackNumericIdJson = "{\"data\":[{\"type\":\"series\",\"id\":40001,\"year\":\"2021\"}]}";
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(fallbackNumericIdJson, null) == 40001,
+        "ParseFirstSeriesId must fall back to record `id` (number) when tvdb_id is missing.");
+
+    // Both missing → null, not zero.
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(
+        "{\"data\":[{\"type\":\"series\",\"title\":\"no id here\"}]}", null) == null,
+        "ParseFirstSeriesId must return null when both tvdb_id and id are missing.");
+
+    // tvdb_id preferred over id when both present and tvdb_id is a string.
+    var bothJson = "{\"data\":[{\"type\":\"series\",\"tvdb_id\":\"777\",\"id\":999,\"year\":\"2020\"}]}";
+    Assert(AnimeClickTvdbClient.ParseFirstSeriesId(bothJson, null) == 777,
+        "ParseFirstSeriesId must prefer tvdb_id over record id when tvdb_id is a string.");
+}
+
+static void TestTvdbEpisodesParsing()
+{
     var epJson = "{\"data\":[{\"seasonNumber\":2,\"number\":5,\"overview\":\"Ichika va al festival.\"},{\"seasonNumber\":1,\"number\":1,\"overview\":\"Altro.\"}]}";
     Assert(AnimeClickTvdbClient.ParseEpisodeOverview(epJson, 2, 5) == "Ichika va al festival.",
         "ParseEpisodeOverview must return the overview of the matching season/episode.");
@@ -261,9 +360,13 @@ var tests = new (string Name, Action Run)[]
     ("TMDB search/tv + episode URL building", TestTmdbUrlBuilding),
     ("TMDB search + episode response parsing", TestTmdbResponseParsing),
     ("TVDB login/search/episodes URL building", TestTvdbUrlBuilding),
-    ("TVDB token + series id + episode overview parsing", TestTvdbResponseParsing),
+    ("TVDB token + series id parsing (numeric tvdb_id)", TestTvdbResponseParsing),
+    ("TVDB string tvdb_id + record id fallback", TestTvdbSeriesIdStringAndFallback),
+    ("TVDB episodes overview + next link parsing", TestTvdbEpisodesParsing),
     ("Ollama translator HTML stripping", TestOllamaTranslatorStripHtml),
-    ("Ollama translator request body + response parsing", TestOllamaTranslatorRequestAndResponse)
+    ("Ollama translator request body + response parsing", TestOllamaTranslatorRequestAndResponse),
+    ("Ollama translator \\uXXXX unicode escapes", TestOllamaTranslatorUnicodeEscapes),
+    ("Search scorer folds Italian accents for matching", TestSearchScorerAccentFolding)
 };
 
 foreach (var test in tests)

@@ -112,62 +112,100 @@ public class AnimeClickIdentifyController : ControllerBase
             "AnimeClick IdentifyAndRefresh: item {ItemId} ({Name}) set AnimeClick='{NewId}' (was '{OldId}'), replaceAllImages={ReplaceAll}",
             item.Id, item.Name, request.AnimeClickId, previousId ?? "<none>", request.ReplaceAllImages);
 
-        // ── Optional: wipe existing remote images so ImageFetchers can re-download ──
+        // Wrap the entire downstream flow (image wipe, AniList lookup,
+        // image download, metadata refresh) in a 30-second hard cap so the
+        // user doesn't face an infinite spinner on the first try when one
+        // of the upstream APIs is slow. The state already persisted on the
+        // item above (SetProviderId + UpdateItemAsync) will be picked up by
+        // a later scheduled refresh even if the timeout fires.
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(30));
+        var linkedToken = cts.Token;
+
         int deletedImages = 0;
-        if (request.ReplaceAllImages)
-        {
-            deletedImages = await WipeRemoteImagesAsync(item, cancellationToken).ConfigureAwait(false);
-        }
-
-        // ── Ensure AniList/TMDB/IMDB provider IDs are populated so ImageFetchers
-        // can do their lookup. AnimeClick does not provide TMDB/IMDB IDs but
-        // we can fetch them by title via the AniList GraphQL API.
-        var anilistIdFound = await EnsureAniListIdAsync(item, cancellationToken).ConfigureAwait(false);
-        if (anilistIdFound is not null)
-        {
-            _logger.LogInformation(
-                "AnimeClick IdentifyAndRefresh: ensured AniList ID={AniListId} for {ItemId} ({Name})",
-                anilistIdFound, item.Id, item.Name);
-        }
-
-        // ── Always fetch the best remote images from each enabled ImageFetcher ──
-        // Jellyfin 10.11.x with ReplaceAllMetadata=true does NOT reliably call
-        // every metadata provider and does NOT always re-download remote images,
-        // so we do it explicitly here. The wipe above ensures we can save
-        // fresh images over the existing slots.
-        var downloadedImages = await DownloadBestRemoteImagesAsync(item, cancellationToken).ConfigureAwait(false);
-
-        // ── Trigger full metadata refresh (text + cast + tags + …) ──
-        var refreshOptions = new MetadataRefreshOptions(new DirectoryService(BaseItem.FileSystem))
-        {
-            MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-            ReplaceAllMetadata = request.ReplaceAllMetadata,
-            ReplaceAllImages = request.ReplaceAllImages,
-            EnableRemoteContentProbe = true,
-            ForceSave = true
-        };
-
-        bool refreshOk = false;
+        List<string>? downloadedImages = null;
         string? refreshError = null;
+        bool timedOut = false;
+
         try
         {
-            await item.RefreshMetadata(refreshOptions, cancellationToken).ConfigureAwait(false);
-            refreshOk = true;
-            _logger.LogInformation(
-                "AnimeClick IdentifyAndRefresh: full metadata refresh completed for {ItemId} ({Name})",
-                item.Id, item.Name);
+            // ── Optional: wipe existing remote images so ImageFetchers can re-download ──
+            if (request.ReplaceAllImages)
+            {
+                deletedImages = await WipeRemoteImagesAsync(item, linkedToken).ConfigureAwait(false);
+            }
+
+            // ── Ensure AniList/TMDB/IMDB provider IDs are populated so ImageFetchers
+            // can do their lookup. AnimeClick does not provide TMDB/IMDB IDs but
+            // we can fetch them by title via the AniList GraphQL API.
+            var anilistIdFound = await EnsureAniListIdAsync(item, linkedToken).ConfigureAwait(false);
+            if (anilistIdFound is not null)
+            {
+                _logger.LogInformation(
+                    "AnimeClick IdentifyAndRefresh: ensured AniList ID={AniListId} for {ItemId} ({Name})",
+                    anilistIdFound, item.Id, item.Name);
+            }
+
+            // ── Always fetch the best remote images from each enabled ImageFetcher ──
+            // Jellyfin 10.11.x with ReplaceAllMetadata=true does NOT reliably call
+            // every metadata provider and does NOT always re-download remote images,
+            // so we do it explicitly here. The wipe above ensures we can save
+            // fresh images over the existing slots.
+            downloadedImages = await DownloadBestRemoteImagesAsync(item, linkedToken).ConfigureAwait(false);
+
+            // ── Trigger full metadata refresh (text + cast + tags + …) ──
+            var refreshOptions = new MetadataRefreshOptions(new DirectoryService(BaseItem.FileSystem))
+            {
+                MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
+                ReplaceAllMetadata = request.ReplaceAllMetadata,
+                ReplaceAllImages = request.ReplaceAllImages,
+                EnableRemoteContentProbe = true,
+                ForceSave = true
+            };
+
+            try
+            {
+                await item.RefreshMetadata(refreshOptions, linkedToken).ConfigureAwait(false);
+                _logger.LogInformation(
+                    "AnimeClick IdentifyAndRefresh: full metadata refresh completed for {ItemId} ({Name})",
+                    item.Id, item.Name);
+            }
+            catch (OperationCanceledException) when (linkedToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                timedOut = true;
+            }
+            catch (Exception ex)
+            {
+                refreshError = ex.Message;
+                _logger.LogError(ex,
+                    "AnimeClick IdentifyAndRefresh: refresh failed for {ItemId} ({Name})",
+                    item.Id, item.Name);
+            }
+        }
+        catch (OperationCanceledException) when (linkedToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            timedOut = true;
         }
         catch (Exception ex)
         {
             refreshError = ex.Message;
             _logger.LogError(ex,
-                "AnimeClick IdentifyAndRefresh: refresh failed for {ItemId} ({Name})",
+                "AnimeClick IdentifyAndRefresh: error during identify flow for {ItemId} ({Name})",
+                item.Id, item.Name);
+        }
+
+        if (timedOut)
+        {
+            refreshError = "Timeout dopo 30 secondi. La serie è stata identificata; riprova per completare refresh immagini e metadati. "
+                + "I metadati basic sono stati già salvati sul db.";
+            _logger.LogWarning(
+                "AnimeClick IdentifyAndRefresh: timeout (30s) for {ItemId} ({Name}) — partial completion, retry to finish",
                 item.Id, item.Name);
         }
 
         return Ok(new IdentifyAndRefreshResponse
         {
-            Success = refreshOk,
+            Success = !timedOut && refreshError is null,
             ItemId = item.Id.ToString(),
             Name = item.Name,
             AnimeClickId = request.AnimeClickId,
@@ -175,7 +213,7 @@ public class AnimeClickIdentifyController : ControllerBase
             RefreshTriggered = true,
             ReplaceAllImages = request.ReplaceAllImages,
             DeletedImages = deletedImages,
-            DownloadedImages = downloadedImages,
+            DownloadedImages = downloadedImages ?? new List<string>(),
             Error = refreshError
         });
     }

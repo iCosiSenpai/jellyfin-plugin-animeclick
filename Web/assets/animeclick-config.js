@@ -4,7 +4,7 @@
 (function () {
     'use strict';
 
-    var V = '0.3.5.0';
+    var V = '0.3.6.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
 
     /* ===== util ===== */
@@ -335,6 +335,24 @@
         h2.appendChild(el('span', 'ac-subtitle', '📺 TheTVDB — fonte preferita'));
         c2.appendChild(h2);
         var b2 = el('div', 'ac-card-body');
+
+        // TheTVDB attribution (required for free API use — see https://thetvdb.com/api-information#attribution)
+        var attr = el('div', 'ac-tvdb-attribution');
+        attr.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;margin:0 0 14px 0;background:rgba(60,90,180,0.10);border:1px solid rgba(60,90,180,0.30);border-radius:8px;font-size:12px;line-height:1.4;color:inherit;';
+        var attrLogo = el('strong', null, 'TheTVDB');
+        attrLogo.style.cssText = 'font-size:13px;letter-spacing:0.3px;color:#3c5ab4;flex-shrink:0;';
+        attr.appendChild(attrLogo);
+        var attrText = el('span', null, 'Metadata provided by TheTVDB. Please consider adding missing information or ');
+        var attrLink = el('a', null, 'subscribing');
+        attrLink.href = 'https://thetvdb.com/subscribe';
+        attrLink.target = '_blank';
+        attrLink.rel = 'noopener noreferrer';
+        attrLink.style.cssText = 'color:#3c5ab4;text-decoration:underline;';
+        attrText.appendChild(attrLink);
+        attrText.appendChild(document.createTextNode('.'));
+        attr.appendChild(attrText);
+        b2.appendChild(attr);
+
         b2.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa TheTVDB per sinossi in italiano', 'Quando TVDB ha la traduzione IT, viene usata direttamente (zero chiamate Ollama). Altrimenti ricade su TMDB + Ollama Cloud.'));
         b2.appendChild(makeField('acTvdbApiKey', 'API Key TheTVDB', 'password', 'Ottieni una API key gratuita su <a href="https://thetvdb.com/dashboard" target="_blank">thetvdb.com/dashboard</a>.'));
         b2.appendChild(makeField('acTvdbLanguage', 'Lingua TVDB', 'text', 'Codice lingua a 3 caratteri (es: ita, eng, fra).'));

@@ -403,12 +403,14 @@ public class AnimeClickTvdbClient
                 continue;
             }
 
-            if (!item.TryGetProperty("tvdb_id", out var idEl) || idEl.ValueKind != JsonValueKind.Number)
+            if (!TryReadIntField(item, "tvdb_id", out var id))
             {
-                continue;
+                if (!TryReadIntField(item, "id", out id))
+                {
+                    continue;
+                }
             }
 
-                var id = idEl.GetInt32();
                 if (!preferredYear.HasValue)
                 {
                     return id;
@@ -429,6 +431,23 @@ public class AnimeClickTvdbClient
         {
             return null;
         }
+    }
+
+    private static bool TryReadIntField(JsonElement obj, string name, out int value)
+    {
+        value = 0;
+        if (!obj.TryGetProperty(name, out var el))
+        {
+            return false;
+        }
+
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out value))
+        {
+            return true;
+        }
+
+        return el.ValueKind == JsonValueKind.String
+            && int.TryParse(el.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
     }
 
     /// <summary>Parses the episodes from a single /series/{id}/episodes page (testable, no network).</summary>

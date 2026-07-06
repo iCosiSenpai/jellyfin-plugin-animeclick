@@ -211,7 +211,37 @@ L'output sarà in `pub/`.
 
 **Requisiti**: Jellyfin **10.11+**, .NET **9.0** runtime.
 
+## 🙏 Attribution / Fonti dei dati
+
+Questo plugin integra metadati e immagini da diverse fonti pubbliche. Si ringraziano:
+
+| Fonte | Ruolo | Sito |
+|---|---|---|
+| **[AnimeClick.it](https://www.animeclick.it/)** | Titoli, trame, generi, cast, staff, sigle OP/ED (fonte primaria italiana) | https://www.animeclick.it/ |
+| **[TheTVDB](https://thetvdb.com/)** | Sinossi episodi in italiano (fonte preferita, zero traduzione Ollama) | https://thetvdb.com/ |
+| **[TheMovieDB (TMDB)](https://www.themoviedb.org/)** | Fallback metadati e immagini, overview episodi EN (poi tradotte via Ollama) | https://www.themoviedb.org/ |
+| **[AniList](https://anilist.co/)** | ID incrociati, immagini di copertina | https://anilist.co/ |
+| **[Fanart.tv](https://fanart.tv/)** | Poster, banner e sfondi HD | https://fanart.tv/ |
+
+### TheTVDB — Attribution obbligatoria
+
+L'uso gratuito dell'API di TheTVDB (revenue < $50k/anno) richiede di mostrare agli utenti finali la dicitura:
+
+> **TheTVDB** — *Metadata provided by TheTVDB. Please consider adding missing information or [subscribing](https://thetvdb.com/subscribe).*
+
+Questa attribution è mostrata anche nel pannello **Sinossi** della pagina di configurazione del plugin. Per contribuire direttamente o abbonarsi: [https://thetvdb.com/subscribe](https://thetvdb.com/subscribe).
+
 ## 📝 Changelog
+
+### v0.3.6.0 (Fix TVDB string id + accenti italiani + timeout identify)
+
+- **BUG 1 — TVDB `tvdb_id` come stringa**: l'API TVDB v4 `/search` restituisce `tvdb_id` come stringa JSON (es. `"78857"`), non come numero. Il parser precedente scartava tutti i risultati → nessuna sinossi IT da TVDB. Ora accettiamo stringa e numero, e come ultimo fallback anche il campo `id` (record TVDB) quando `tvdb_id` è assente.
+- **BUG 2 — Sinossi episodi IT da TVDB**: indirettamente risolto dal BUG 1. Il percorso TVDB diretto IT ora funzionante.
+- **BUG 3 — Accenti italiani nella ricerca AnimeClick**: i titoli con accenti (es. "Caffè", "L'incorreggibile Ladro", "più") venivano inviati a AnimeClick come byte accented e il matcher di score trattava `Caffè` ≠ `Caffe` (token diverso). Aggiunto `RemoveDiacritics` (`NormalizationForm.FormD` + strip combining marks) applicato (a) alla query utente prima di tutti i 4 tentativi di ricerca AnimeClick, e (b) dentro `NormalizeForScore` nello scorer. Risultato: un anime con accenti nel nome Jellyfin ma senza accenti su AnimeClick ora matcha al primo tentativo con bonus +100.
+- **BUG 4 — IdentifyAndRefresh timeout / spinner infinito**: il flow sequenziale (wipe immagini → AniList lookup → download immagini → RefreshMetadata) ora ha un hard cap di 30 secondi via `CancellationTokenSource.CreateLinkedTokenSource`. Su timeout restituisce `Success=false` con messaggio "Timeout dopo 30 secondi; riprova". La serie resta comunque identificata (l'AnimeClick ID è già persistito) — basta un secondo click per completare il refresh.
+- **BUG 2b — Ollama `\uXXXX` escapes**: `ParseTranslatedContent` gestisce ora `\uXXXX` (4 hex) e le surrogate pairs `\UXXXXXXXX` non standard. Prima gli accenti italiani emessi come escape JSON (es. `\u00E8` = `è`) venivano decodificati come `"u00E8"` letterale.
+- **TASK — Attribution TheTVDB** (richiesta per uso gratuito API): banner nel pannello *Sinossi* della config page e nuova sezione `Attribution / Fonti dei dati` nel README con link a thetvdb.com/subscribe.
+- **Test**: 8 nuovi test — `tvdb_id` come stringa, fallback a `id` record, `\uXXXX` + surrogate pair Ollama, `RemoveDiacritics` diretto, e scorer accent-folding (Caffè vs Caffe → match esatto +100).
 
 ### v0.2.11.0 (Total redesign dashboard glassmorphism)
 - 🎨 **Dashboard premium glassmorphism**: header sticky con chip versione e link rapidi, tab bar a pillole con icone Material, dashboard Overview con tile stato provider, quick actions e riepilogo opzioni attive. Card glassmorphism su Metadati, Sinossi e Strumenti; save dock fisso in basso a destra.
