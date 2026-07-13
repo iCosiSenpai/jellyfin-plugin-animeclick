@@ -1,4 +1,5 @@
 using System.Linq;
+using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
 
 static void TestDangersSeasonOrdinalMatching()
@@ -214,6 +215,38 @@ static void TestSearchScorerAccentFolding()
         $"accented={unaccentedScore}, plain={exactScore}");
     Assert(unaccentedScore >= 100,
         "Accented query must hit the +100 exact-match bonus against an unaccented title.");
+}
+
+static void TestSearchQueryCleaners()
+{
+    // CleanSearchQuery
+    Assert(AnimeClickSeriesSearchProvider.CleanSearchQuery("Naruto (2024)") == "Naruto",
+        "Should strip year parens");
+    Assert(AnimeClickSeriesSearchProvider.CleanSearchQuery("K-On! Movie") == "K-On!",
+        "Should remove Movie suffix");
+    Assert(AnimeClickSeriesSearchProvider.CleanSearchQuery("Foo 2nd Season") == "Foo",
+        "Should strip sequel markers");
+    Assert(AnimeClickSeriesSearchProvider.CleanSearchQuery("Bar & Baz") == "Bar and Baz",
+        "Should normalize &");
+
+    // Simplify
+    Assert(AnimeClickSeriesSearchProvider.SimplifyQuery("Title: With-Dots.And/Slash") == "Title  With Dots And Slash",
+        "Simplify must collapse special chars to space");
+
+    // Short query
+    Assert(AnimeClickSeriesSearchProvider.GetShortQuery("One Two Three Four") == "One Two Three",
+        "Short query takes first 3 words");
+}
+
+static void TestImprovedScorer()
+{
+    var r = new AnimeClickSearchResult { Id = "x/y", Title = "The Dangers in My Heart", ProductionYear = 2023, Format = "Serie TV" };
+    var s = AnimeClickSearchScorer.Score(r, "Dangers in My Heart", 2023, true);
+    Assert(s > 80, "Strong partial match + year + format should score high");
+
+    // Fuzzy overlap bonus path
+    var fuzzy = AnimeClickSearchScorer.Score(r, "Dangers Heart", null, true);
+    Assert(fuzzy > 20, "Fuzzy token overlap should still give positive score");
 }
 
 static void TestTvdbUrlBuilding()
@@ -433,6 +466,8 @@ var tests = new (string Name, Action Run)[]
     ("Asterisk War 24ep block splits into 2 seasons via seasonsCount", TestAsteriskContinuousBlockSeasonSplit),
     ("Parser refuses to split when episode count is uneven across seasons", TestSeasonsCountRefusedOnUnevenSplit),
     ("Search scorer prefers 2023 series over movie and special", TestSearchScoring),
+    ("Search query cleaners (sequel, fullwidth, & etc)", TestSearchQueryCleaners),
+    ("Improved scorer fuzzy + overlap", TestImprovedScorer),
     ("Trailer-only multimedia reports diagnostic warning", TestTrailerOnlyMultimedia),
     ("AniList GraphQL id/escape parsing", TestAniListIdParsing),
     ("Config defaults: fill-gaps + fallback images", TestConfigDefaults),

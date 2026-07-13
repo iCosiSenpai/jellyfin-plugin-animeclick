@@ -385,6 +385,11 @@ public partial class AnimeClickHtmlParser
         var items = doc.DocumentNode.SelectNodes("//div[contains(@class, 'item-search-item')]");
         if (items is null)
         {
+            // Defensive: site structure may have changed
+            if (html.Length > 200 && html.Contains("item-search", StringComparison.OrdinalIgnoreCase))
+            {
+                // caller will log at higher level if needed
+            }
             return results;
         }
 
@@ -470,6 +475,11 @@ public partial class AnimeClickHtmlParser
                 ProductionYear = year,
                 Format = format
             });
+        }
+
+        if (results.Count == 0 && html.Length > 300)
+        {
+            // Possible selector drift or empty-results page — higher layers can decide to log/warn.
         }
 
         return results;

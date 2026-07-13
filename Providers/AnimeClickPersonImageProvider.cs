@@ -30,7 +30,8 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
     }
 
     public string Name => "AnimeClick";
-    public int Order => 0;
+    /// <summary>Low priority so AniList/TMDB/etc person photos (often higher res) are preferred.</summary>
+    public int Order => 100;
 
     public bool Supports(BaseItem item) => item is Person;
 

@@ -291,6 +291,7 @@
         c2.appendChild(h2);
         var b2 = el('div', 'ac-card-body');
         b2.appendChild(makeCheck('acEnableAnimeClickImages', 'Locandina AnimeClick come fallback', 'Fornisce la locandina italiana di AnimeClick come immagine di backup (priorità bassa: AniList/Fanart vincono se hanno immagini).'));
+        b2.appendChild(makeField('acMinPosterWidth', 'Larghezza minima locandina (px)', 'number', 'Se la locandina da AnimeClick è più stretta di questo valore viene scartata. Jellyfin user\u00e0 i poster da Fanart/AniList/TheMovieDb (pi\u00f9 alti). 0 = disabilita filtro. Consigliato 400.', { min: '0', max: '2000', step: '50' }));
         c2.appendChild(b2);
         p.appendChild(c2);
 
@@ -355,7 +356,7 @@
 
         b2.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa TheTVDB per sinossi in italiano', 'Quando TVDB ha la traduzione IT, viene usata direttamente (zero chiamate Ollama). Altrimenti ricade su TMDB + Ollama Cloud.'));
         b2.appendChild(makeField('acTvdbApiKey', 'API Key TheTVDB', 'password', 'Ottieni una API key gratuita su <a href="https://thetvdb.com/dashboard" target="_blank">thetvdb.com/dashboard</a>.'));
-        b2.appendChild(makeField('acTvdbLanguage', 'Lingua TVDB', 'text', 'Codice lingua a 3 caratteri (es: ita, eng, fra).'));
+        b2.appendChild(makeField('acTvdbLanguage', 'Lingua TVDB', 'text', 'Codice lingua a 3 caratteri singolo (es: ita, eng). Il plugin usa solo il primo codice valido.'));
         c2.appendChild(b2);
         p.appendChild(c2);
 
@@ -492,6 +493,7 @@
         val('acEnablePlot').checked = cfg.EnablePlot;
         val('acOverwriteNonItalianFields').checked = cfg.OverwriteNonItalianFields;
         val('acEnableAnimeClickImages').checked = cfg.EnableAnimeClickImages;
+        val('acMinPosterWidth').value = (cfg.MinPosterWidth ?? 400);
         val('acEnableGenres').checked = cfg.EnableGenres;
         val('acEnableStudios').checked = cfg.EnableStudios;
         val('acEnableCommunityRating').checked = cfg.EnableCommunityRating;
@@ -548,6 +550,7 @@
         cfg.EnablePlot = val('acEnablePlot').checked;
         cfg.OverwriteNonItalianFields = val('acOverwriteNonItalianFields').checked;
         cfg.EnableAnimeClickImages = val('acEnableAnimeClickImages').checked;
+        cfg.MinPosterWidth = parseInt(val('acMinPosterWidth').value, 10) || 0;
         cfg.EnableGenres = val('acEnableGenres').checked;
         cfg.EnableStudios = val('acEnableStudios').checked;
         cfg.EnableCommunityRating = val('acEnableCommunityRating').checked;
@@ -592,6 +595,7 @@
             ['Titolo IT', cfg.PreferItalianTitle],
             ['Trama', cfg.EnablePlot],
             ['Immagini AC', cfg.EnableAnimeClickImages],
+            ['Min locandina', (cfg.MinPosterWidth || 0) + 'px'],
             ['Generi', cfg.EnableGenres],
             ['Studi', cfg.EnableStudios],
             ['Rating', cfg.EnableCommunityRating],

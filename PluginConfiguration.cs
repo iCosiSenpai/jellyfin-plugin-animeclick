@@ -25,10 +25,11 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>
     /// Larghezza minima (px) della locandina AnimeClick. Sotto questa soglia il poster IT
     /// viene scartato e Jellyfin passa al provider immagini successivo (Fanart/TMDB/AniList).
-    /// 0 = nessun filtro (comportamento storico). Consigliato ~400 per evitare cover a bassa
-    /// risoluzione.
+    /// 0 = nessun filtro (comportamento storico). Default 400: evita locandine a bassa risoluzione
+    /// da AnimeClick quando provider a priorità più alta (Fanart, AniList, TheMovieDb) possono fornire
+    /// artwork migliore.
     /// </summary>
-    public int MinPosterWidth { get; set; }
+    public int MinPosterWidth { get; set; } = 400;
 
     /// <summary>Importa la sinossi/trama in italiano.</summary>
     public bool EnablePlot { get; set; } = true;
@@ -119,6 +120,7 @@ public class PluginConfiguration : BasePluginConfiguration
     public int RequestDelayMilliseconds { get; set; } = 1000;
 
     // ── Avanzate ──
-    /// <summary>User-Agent per le richieste HTTP.</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.3.5.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
+    /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.3.8.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 }
