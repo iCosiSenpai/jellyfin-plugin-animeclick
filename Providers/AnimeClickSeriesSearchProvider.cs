@@ -229,20 +229,31 @@ public class AnimeClickSeriesSearchProvider
     /// Removes media type suffixes that Jellyfin or file naming conventions add
     /// but AnimeClick doesn't understand (TV, Movie, OVA, etc.).
     /// Also removes year suffixes like "(2024)".
+    /// Fortified with full-width chars, quotes, ampersands and more sequel forms.
     /// </summary>
-    private static string CleanSearchQuery(string query)
+    internal static string CleanSearchQuery(string query)
     {
+        var cleaned = query;
+
+        // Normalize some full-width and fancy punctuation early
+        cleaned = Regex.Replace(cleaned, "[\uFF01-\uFF5E]", m => ((char)(m.Value[0] - 0xFEE0)).ToString());
+        cleaned = cleaned.Replace('\u2019', '\'').Replace('\u2018', '\'').Replace('\u201C', '"').Replace('\u201D', '"');
+
         // Remove common suffixes in parentheses: (TV), (Movie), (2024), (Serie TV), (OVA)
-        var cleaned = Regex.Replace(query, @"\s*\((?:TV|Movie|Film|Serie\s*TV|OVA|OAV|Special|ONA|\d{4})\)\s*", " ",
+        cleaned = Regex.Replace(cleaned, @"\s*\((?:TV|Movie|Film|Serie\s*TV|OVA|OAV|Special|ONA|OVA|OAV|\d{4})\)\s*", " ",
             RegexOptions.IgnoreCase);
 
         // Remove standalone media type words at end
-        cleaned = Regex.Replace(cleaned, @"\s+(?:TV|Movie|Film|the Animation|Season \d+)\s*$", "",
+        cleaned = Regex.Replace(cleaned, @"\s+(?:TV|Movie|Film|the Animation|Season \d+|S\d)\s*$", "",
             RegexOptions.IgnoreCase);
 
-        // Remove season indicators: S01, Season 1, etc.
-        cleaned = Regex.Replace(cleaned, @"\s+(?:S\d+|Season\s*\d+|Stagione\s*\d+)\s*$", "",
+        // Remove season indicators: S01, Season 1, 2nd Season, Part 2, etc.
+        cleaned = Regex.Replace(cleaned, @"\s+(?:S\d+|Season\s*\d+|Stagione\s*\d+|2nd Season|Second Season|Part \d+|II|III)\s*$", "",
             RegexOptions.IgnoreCase);
+
+        // Collapse & / and variants, quotes
+        cleaned = Regex.Replace(cleaned, @"\s*&\s*", " and ");
+        cleaned = Regex.Replace(cleaned, @"[""']", " ");
 
         return cleaned.Trim();
     }
@@ -251,10 +262,10 @@ public class AnimeClickSeriesSearchProvider
     /// Simplifies by removing special characters (colons, dashes, dots) that
     /// might cause AnimeClick search to fail.
     /// </summary>
-    private static string SimplifyQuery(string query)
+    internal static string SimplifyQuery(string query)
     {
-        // Replace colons, dashes, dots with spaces
-        var simplified = Regex.Replace(query, @"[:.\-–—]", " ");
+        // Replace colons, dashes, dots, slashes with spaces
+        var simplified = Regex.Replace(query, @"[:.\-–—/\\]", " ");
         // Collapse multiple spaces
         simplified = Regex.Replace(simplified, @"\s{2,}", " ");
         return simplified.Trim();
@@ -263,7 +274,7 @@ public class AnimeClickSeriesSearchProvider
     /// <summary>
     /// Extracts the first 2-3 meaningful words for a "fuzzy" search fallback.
     /// </summary>
-    private static string? GetShortQuery(string query)
+    internal static string? GetShortQuery(string query)
     {
         var words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Where(w => w.Length > 1) // skip single-char words

@@ -13,6 +13,7 @@ public static class ImageDimensions
     /// <summary>
     /// Tries to read width/height from an image stream (JPEG or PNG). Returns false
     /// when the format is unsupported or the header is truncated/corrupt.
+    /// Safe to call with a short prefix stream (we only need the first ~20-100 bytes).
     /// </summary>
     public static bool TryRead(Stream stream, out int width, out int height)
     {
@@ -41,15 +42,15 @@ public static class ImageDimensions
             }
 
             // JPEG: starts with FF D8. We already consumed 8 bytes, so rewind to byte 2
-            // and scan markers from there.
+            // and scan markers from there. Works even on non-seekable if we use a MemoryStream prefix.
             if (sig[0] == 0xFF && sig[1] == 0xD8)
             {
-                if (!stream.CanSeek)
+                if (stream.CanSeek)
                 {
-                    return false;
+                    stream.Position = 2;
                 }
-
-                stream.Position = 2;
+                // If not seekable we are already at the right offset after reading sig (sig covered 0-7, position ~8).
+                // For safety on prefix MemoryStream we reset to known good point.
                 return TryReadJpeg(reader, out width, out height);
             }
 

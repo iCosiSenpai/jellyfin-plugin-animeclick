@@ -47,6 +47,19 @@ public static class AnimeClickSearchScorer
         {
             score += 45;
         }
+        else
+        {
+            // Light fuzzy: token overlap ratio gives a small bonus even on imperfect matches
+            var qTokens = queryNormalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var tTokens = titleNormalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (qTokens.Length > 0 && tTokens.Length > 0)
+            {
+                int overlap = tTokens.Count(t => qTokens.Contains(t, StringComparer.OrdinalIgnoreCase));
+                double ratio = (double)overlap / Math.Max(qTokens.Length, 1);
+                if (ratio >= 0.6) score += 18;
+                else if (ratio >= 0.4) score += 8;
+            }
+        }
 
         var queryTokens = queryNormalized.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var titleTokens = titleNormalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -55,16 +68,19 @@ public static class AnimeClickSearchScorer
         if (productionYear.HasValue && result.ProductionYear.HasValue)
         {
             var diff = Math.Abs(result.ProductionYear.Value - productionYear.Value);
-            score += diff == 0 ? 35 : Math.Max(-30, 12 - (diff * 6));
+            int yearBonus = diff == 0 ? 35 : Math.Max(-30, 12 - (diff * 6));
+            // Year bonus is stronger only when we have a decent title match already
+            score += (score > 20) ? yearBonus : (yearBonus / 2);
         }
 
         var format = result.Format ?? string.Empty;
         if (seriesRequest)
         {
-            if (format.Contains("Serie TV", StringComparison.OrdinalIgnoreCase) ||
-                format.Contains("TV", StringComparison.OrdinalIgnoreCase))
+            bool titleStrong = score >= 40; // avoid format bonus on weak title hits
+            if ((format.Contains("Serie TV", StringComparison.OrdinalIgnoreCase) ||
+                 format.Contains("TV", StringComparison.OrdinalIgnoreCase)) && titleStrong)
             {
-                score += 35;
+                score += 25;
             }
 
             if (format.Contains("Movie", StringComparison.OrdinalIgnoreCase) ||

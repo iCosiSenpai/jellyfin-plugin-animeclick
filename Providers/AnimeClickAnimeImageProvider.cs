@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
@@ -117,28 +119,36 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
             return results;
         }
 
-        // Resolve dimensions so Jellyfin can sort by quality and so we can enforce the
-        // configured minimum width. On any error we fall back to offering the poster
-        // unfiltered (better a low-res IT cover than none).
+        // Cheap dimension probe (Range request + prefix only) + cache so we avoid
+        // full-image downloads just to decide whether to advertise the poster.
+        // If width known and below threshold we return empty list → other providers win.
         int width = 0;
         int height = 0;
         try
         {
-            using var imageResponse = await GetImageResponse(imageUrl, cancellationToken);
-            if (imageResponse.IsSuccessStatusCode)
+            var dimCacheKey = $"imagedim::{imageUrl}";
+            var cachedDim = await _cache.GetAsync<ImageDim>(dimCacheKey, 24 * 7, cancellationToken); // 7 days
+            if (cachedDim is not null)
             {
-                await using var stream = await imageResponse.Content.ReadAsStreamAsync(cancellationToken);
-                ImageDimensions.TryRead(stream, out width, out height);
+                width = cachedDim.W;
+                height = cachedDim.H;
+            }
+            else
+            {
+                (width, height) = await ProbePosterDimensionsAsync(imageUrl, configuration, cancellationToken);
+                await _cache.SetAsync(dimCacheKey, new ImageDim { W = width, H = height }, cancellationToken);
             }
         }
         catch (Exception)
         {
-            // Dimension probe is best-effort; ignore and keep width/height = 0.
+            // best-effort only
         }
 
         // Below the configured threshold → skip so the next image fetcher wins (Order = 100).
+        // width == 0 means probe failed; in that case we still offer (conservative, same as before).
         if (configuration.MinPosterWidth > 0 && width > 0 && width < configuration.MinPosterWidth)
         {
+            // Low-res AC poster deliberately not advertised so higher-priority providers (Fanart etc.) are preferred.
             return results;
         }
 
@@ -152,6 +162,57 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
         });
 
         return results;
+    }
+
+    private async Task<(int width, int height)> ProbePosterDimensionsAsync(string imageUrl, PluginConfiguration configuration, CancellationToken cancellationToken)
+    {
+        var client = _httpClientFactory.CreateClient();
+        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(imageUrl));
+        request.Headers.Range = new RangeHeaderValue(0, 4095); // header only
+        request.Headers.UserAgent.ParseAdd(configuration.UserAgent);
+        if (Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var referer))
+        {
+            request.Headers.Referrer = referer;
+        }
+
+        try
+        {
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return (0, 0);
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+
+            // Read a safe prefix into memory (handles non-seekable streams from HttpContent)
+            var prefix = new byte[4096];
+            int total = 0;
+            while (total < prefix.Length)
+            {
+                int n = await stream.ReadAsync(prefix, total, prefix.Length - total, cancellationToken);
+                if (n <= 0) break;
+                total += n;
+            }
+
+            using var ms = new MemoryStream(prefix, 0, total, writable: false);
+            if (ImageDimensions.TryRead(ms, out var w, out var h))
+            {
+                return (w, h);
+            }
+            return (0, 0);
+        }
+        catch
+        {
+            return (0, 0);
+        }
+    }
+
+    // Small DTO for caching dimensions (kept private to this provider)
+    private sealed class ImageDim
+    {
+        public int W { get; set; }
+        public int H { get; set; }
     }
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)

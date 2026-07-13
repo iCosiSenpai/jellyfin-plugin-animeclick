@@ -160,7 +160,8 @@ public class AnimeClickTvdbClient
             return null;
         }
 
-        var lang = string.IsNullOrWhiteSpace(configuration.TvdbLanguage) ? "ita" : configuration.TvdbLanguage!;
+        var rawLang = string.IsNullOrWhiteSpace(configuration.TvdbLanguage) ? "ita" : configuration.TvdbLanguage!;
+        var lang = SanitizeTvdbLanguage(rawLang);
         var listCacheKey = $"tvdbEpisodes::{tvdbId}::{lang}";
 
         var episodes = await _cache.GetAsync<List<TvdbEpisodeRecord>>(listCacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
@@ -360,6 +361,19 @@ public class AnimeClickTvdbClient
     /// <summary>Builds the TVDB /series/{id}/episodes/default/{lang} URL (testable, no network).</summary>
     internal static string BuildEpisodesUrl(int tvdbId, string lang, int page)
         => $"{BaseUrl}/series/{tvdbId}/episodes/default/{Uri.EscapeDataString(lang)}?page={page.ToString(CultureInfo.InvariantCulture)}";
+
+    /// <summary>
+    /// Sanitizes user-provided language to a single 3-char code (handles "ita, eng", spaces, etc).
+    /// </summary>
+    internal static string SanitizeTvdbLanguage(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "ita";
+        // take first token that looks like 3 letters
+        var token = raw.Split(new[] { ',', ';', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+                       .Select(t => t.Trim().ToLowerInvariant())
+                       .FirstOrDefault(t => t.Length == 3 && t.All(char.IsLetter));
+        return token ?? "ita";
+    }
 
     /// <summary>Parses the bearer token from a /login response (testable, no network).</summary>
     internal static string? ParseLoginToken(string json)

@@ -26,7 +26,8 @@ Plugin per [Jellyfin](https://jellyfin.org/) che fornisce **metadati anime in it
 - Registi, autori, compositori
 
 **Immagini**
-- Locandina italiana di fallback per Serie e Film (priorità bassa: AniList/Fanart/TMDB vincono se hanno immagini; AnimeClick riempie solo i buchi)
+- Locandina italiana di fallback per Serie e Film (priorità bassa). Se la locandina è a bassa risoluzione (sotto MinPosterWidth configurabile, default 400px) viene automaticamente saltata e Jellyfin preferisce poster ad alta risoluzione da Fanart/AniList/TheMovieDb.
+- Filtro qualità immagini + probe efficiente (Range + header-only) per non scaricare poster interi solo per misurarli.
 - Foto doppiatori/staff per le entità Person
 
 **Collezioni e stagioni**
@@ -81,7 +82,7 @@ Scheda iniziale con:
 | Preferisci titolo italiano | ✅ | Usa il titolo italiano come nome della serie |
 | Sovrascrivi campi non-italiani | ❌ | Se attivo, sovrascrive anche titolo originale, studio, rating, data (campi che AniList/TMDB/OMDb gestiscono meglio). Spento = fill-gaps, lascia i buchi agli altri provider |
 | Importa trama / generi / studi / valutazione / cast / tag / titoli episodi / sigle | ✅ | Campi localizzati in italiano da AnimeClick |
-| Usa locandina AnimeClick come fallback | ✅ | Locandina IT come ultima risorsa (AniList/Fanart/TMDB vincono se hanno immagini) |
+| Usa locandina AnimeClick come fallback | ✅ | Locandina IT come ultima risorsa. Con MinPosterWidth (default 400) le cover troppo piccole vengono scartate automaticamente. |
 | Crea collezioni automatiche | ❌ | Raggruppa sequel/prequel in BoxSet (sperimentale) |
 
 ### Sinossi episodi in italiano
@@ -232,6 +233,18 @@ L'uso gratuito dell'API di TheTVDB (revenue < $50k/anno) richiede di mostrare ag
 Questa attribution è mostrata anche nel pannello **Sinossi** della pagina di configurazione del plugin. Per contribuire direttamente o abbonarsi: [https://thetvdb.com/subscribe](https://thetvdb.com/subscribe).
 
 ## 📝 Changelog
+
+### v0.3.8.0 (Fortificazione ricerca metadata + filtro qualità immagini)
+- **Immagini bassa risoluzione**: `MinPosterWidth` (default 400px) è ora esposto nella UI di configurazione. Se AnimeClick fornisce una locandina (o artwork) sotto la soglia, il provider **non la restituisce** — Jellyfin passa automaticamente ai provider configurati dall'utente (Fanart, AniList, TMDB...). Probe dimensioni ora usa Range request + buffer prefix (solo ~4KB invece del file intero) + cache.
+- **Person images**: Order portato a 100 (bassa priorità) per non oscurare foto migliori da altri provider.
+- **Ricerca metadata fortificata e ottimizzata**:
+  - Query cleaner più robusto (fullwidth, sequel "2nd Season"/Part II, & → and, virgolette, ecc.).
+  - Scorer migliorato con fuzzy token overlap e bonus year/format condizionali.
+  - Retry automatico limitato su errori transienti 5xx / rete nel client (rispetta sempre il rate gate).
+  - Parser search difensivo + avviso struttura.
+- **Bug fixes**: versioning assembly corretto via csproj props; User-Agent ora effettivo con versione assembly; `TvdbLanguage` sanitizzato (accetta "ita, eng" ma usa solo "ita"); default MinPosterWidth=400.
+- **UI**: campo numerico per larghezza minima + etichette aggiornate.
+- Mantiene filosofia "AC = testi IT + fallback solo se alta qualità".
 
 ### v0.3.7.0 (Fix multi-stagione quando AnimeClick elenca episodi in blocco unico)
 
