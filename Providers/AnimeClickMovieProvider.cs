@@ -49,13 +49,12 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
     }
 
     public string Name => "AnimeClick";
+
     /// <summary>
-    /// Run AFTER the other metadata providers so that fields we don't populate
-    /// (Studios, OfficialRating, Genres when empty, etc.) are filled in first
-    /// by AniList / TheMovieDb / OMDb, and only then we overlay the Italian
-    /// title, Italian overview, Italian genres/tags, cast, etc.
+    /// AnimeClick runs first because Jellyfin merges remote metadata with first-value-wins
+    /// semantics. The post-merge authority provider then reapplies only enabled fields.
     /// </summary>
-    public int Order => 100;
+    public int Order => 0;
 
     public async Task<MetadataResult<Movie>> GetMetadata(MovieInfo info, CancellationToken cancellationToken)
     {
@@ -63,6 +62,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         var result = new MetadataResult<Movie> { Item = new Movie() };
 
         var animeClickId = info.GetProviderId("AnimeClick");
+        using var authorityLease = AnimeClickMetadataAuthorityStore.Begin<Movie>(info.Path, animeClickId);
         _logger.LogInformation(
             "AnimeClick MovieProvider.GetMetadata called: name=\"{Name}\" year={Year} providerId={ProviderId} path={Path}",
             info.Name,
@@ -71,17 +71,22 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             info.Path ?? "<none>");
         string? url = null;
 
-        if (!string.IsNullOrWhiteSpace(animeClickId))
+        if (!string.IsNullOrWhiteSpace(animeClickId)
+            && !AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, animeClickId, out url))
         {
-            url = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
+            _logger.LogWarning("AnimeClick MovieProvider ignored invalid provider ID '{ProviderId}'", animeClickId);
+            url = null;
         }
-        else if (!string.IsNullOrWhiteSpace(info.Name))
+
+        if (url is null && !string.IsNullOrWhiteSpace(info.Name))
         {
             var search = await _searchProvider.SearchAsync(info.Name, configuration, cancellationToken, info.Year, seriesRequest: false);
             var first = search.FirstOrDefault();
-            if (first is not null && first.ProviderIds.TryGetValue("AnimeClick", out var searchId))
+            if (first is not null
+                && first.ProviderIds.TryGetValue("AnimeClick", out var searchId)
+                && AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, searchId, out var searchUrl))
             {
-                url = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, searchId);
+                url = searchUrl;
             }
         }
 
@@ -102,6 +107,16 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         if (configuration.EnableCast && anime.People.Count == 0)
         {
             await FetchPeopleAsync(anime, configuration, cancellationToken);
+        }
+
+        if ((configuration.EnableThemeSongs || configuration.EnableTrailers)
+            && !anime.MultimediaLoaded)
+        {
+            await FetchMultimediaAsync(anime, configuration, cancellationToken);
+        }
+
+        if (configuration.EnableCast || configuration.EnableThemeSongs || configuration.EnableTrailers)
+        {
             await _cache.SetAsync(cacheKey, anime, cancellationToken);
         }
 
@@ -111,31 +126,55 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         if (configuration.EnableCast)
         {
             result.People = anime.People
-                .Select(p => new PersonInfo
+                .Select(p =>
                 {
-                    Name = p.Name,
-                    Type = MapPersonType(p.Type),
-                    Role = p.Role,
-                    ImageUrl = p.ImageUrl
+                    var person = new PersonInfo
+                    {
+                        Name = p.Name,
+                        Type = MapPersonType(p.Type),
+                        Role = p.Role,
+                        ImageUrl = p.ImageUrl
+                    };
+
+                    if (!string.IsNullOrWhiteSpace(p.Id))
+                    {
+                        person.ProviderIds = new Dictionary<string, string>
+                        {
+                            ["AnimeClick"] = p.Id
+                        };
+                    }
+
+                    return person;
                 })
                 .ToList();
         }
 
         result.HasMetadata = true;
 
-        // AnimeClick exposes no cross-site IDs. Resolve an AniList ID by title
-        // (best-effort) so Jellyfin's AniList ImageFetcher can fetch artwork and
-        // downstream providers have a stable ID on future refreshes.
-        if (!anime.ProviderIds.ContainsKey("AniList"))
+        // Preserve a verified Jellyfin ID. Only discover a new mapping when none
+        // exists, and require AniList title/year/format confidence before writing it.
+        var existingAniListId = info.GetProviderId("AniList");
+        if (!string.IsNullOrWhiteSpace(existingAniListId))
+        {
+            result.Item.SetProviderId("AniList", existingAniListId);
+        }
+        else if (string.IsNullOrWhiteSpace(result.Item.GetProviderId("AniList")))
         {
             var aniListId = await _aniListResolver.ResolveAniListIdAsync(
-                anime.OriginalTitle ?? anime.Title, cancellationToken);
+                anime.Id,
+                anime.OriginalTitle ?? anime.Title,
+                anime.Title,
+                anime.ProductionYear,
+                seriesRequest: false,
+                configuration,
+                cancellationToken);
             if (!string.IsNullOrWhiteSpace(aniListId))
             {
                 result.Item.SetProviderId("AniList", aniListId);
                 _logger.LogInformation(
-                    "AnimeClick MovieProvider resolved AniList ID={AniListId} by title for \"{Title}\"",
-                    aniListId, anime.Title);
+                    "AnimeClick MovieProvider resolved validated AniList ID={AniListId} for \"{Title}\"",
+                    aniListId,
+                    anime.Title);
             }
         }
 
@@ -152,6 +191,8 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
                 string.Join(", ", emptyFields), anime.Title);
         }
 
+        // Consumed once by AnimeClickMovieAuthorityProvider after all remote providers.
+        authorityLease.Capture(result.Item);
         return result;
     }
 
@@ -184,6 +225,10 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             await _cache.SetAsync(cacheKey, anime, cancellationToken);
             return anime;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Errore parsing AnimeClick per {Url}", url);
@@ -209,9 +254,44 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             _logger.LogInformation("AnimeClick cast: {Actors} doppiatori, {Staff} staff per {Title}",
                 actors.Count, staff.Count, anime.Title);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Errore fetch cast/staff per {Title}", anime.Title);
+        }
+    }
+
+    private async Task FetchMultimediaAsync(
+        AnimeClickAnime anime,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        var animeUrl = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, anime.Id);
+
+        try
+        {
+            var html = await _client.GetStringAsync(animeUrl + "/multimedia", configuration, cancellationToken);
+            var diagnostics = _parser.ParseMultimediaDiagnostics(html);
+            anime.ThemeSongs.AddRange(diagnostics.Songs);
+            anime.Trailers.AddRange(diagnostics.Trailers);
+            anime.MultimediaLoaded = true;
+
+            _logger.LogInformation(
+                "AnimeClick multimedia: {Songs} OP/ED and {Trailers} labelled trailers/PV for {Title}",
+                diagnostics.Songs.Count,
+                diagnostics.Trailers.Count,
+                anime.Title);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Errore fetch multimedia per {Title}", anime.Title);
         }
     }
 
@@ -238,7 +318,29 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
 
         if (configuration.EnableTags && source.Tags.Count > 0)
         {
-            target.Tags = source.Tags.ToArray();
+            var allTags = new List<string>(source.Tags);
+            if (configuration.EnableThemeSongs)
+            {
+                allTags.AddRange(source.ThemeSongs.Select(song => song.DisplayName));
+            }
+
+            target.Tags = allTags.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+        else if (configuration.EnableThemeSongs && source.ThemeSongs.Count > 0)
+        {
+            target.Tags = source.ThemeSongs.Select(song => song.DisplayName).ToArray();
+        }
+
+        if (configuration.EnableProductionLocations && source.ProductionLocations.Count > 0)
+        {
+            target.ProductionLocations = source.ProductionLocations.ToArray();
+        }
+
+        if (configuration.EnableTrailers && source.Trailers.Count > 0)
+        {
+            target.RemoteTrailers = source.Trailers
+                .Select(trailer => new MediaUrl { Name = trailer.Name, Url = trailer.Url })
+                .ToArray();
         }
 
         // ── Campi non-italiani (language-neutral): solo se l'utente ha attivato
@@ -288,6 +390,12 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         "Director" => PersonKind.Director,
         "Writer" => PersonKind.Writer,
         "Composer" => PersonKind.Composer,
-        _ => PersonKind.Actor
+        "Producer" => PersonKind.Producer,
+        "Artist" => PersonKind.Artist,
+        "Editor" => PersonKind.Editor,
+        "Colorist" => PersonKind.Colorist,
+        "Engineer" => PersonKind.Engineer,
+        "Actor" => PersonKind.Actor,
+        _ => PersonKind.Unknown
     };
 }

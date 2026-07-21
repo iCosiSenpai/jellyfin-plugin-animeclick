@@ -78,7 +78,11 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
             return results;
         }
 
-        var url = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
+        if (!AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, animeClickId, out var url))
+        {
+            return results;
+        }
+
         var cacheKey = $"anime::{url}";
 
         AnimeClickAnime? anime;
@@ -95,6 +99,10 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
                 anime = _parser.ParseAnimePage(url, html);
                 await _cache.SetAsync(cacheKey, anime, cancellationToken);
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception)
         {
@@ -139,6 +147,10 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
                 await _cache.SetAsync(dimCacheKey, new ImageDim { W = width, H = height }, cancellationToken);
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception)
         {
             // best-effort only
@@ -169,7 +181,9 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
         var client = _httpClientFactory.CreateClient();
         var request = new HttpRequestMessage(HttpMethod.Get, new Uri(imageUrl));
         request.Headers.Range = new RangeHeaderValue(0, 4095); // header only
-        request.Headers.UserAgent.ParseAdd(configuration.UserAgent);
+        request.Headers.TryAddWithoutValidation(
+            "User-Agent",
+            AnimeClickClient.GetEffectiveUserAgent(configuration));
         if (Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var referer))
         {
             request.Headers.Referrer = referer;
@@ -202,6 +216,10 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
             }
             return (0, 0);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch
         {
             return (0, 0);
@@ -223,7 +241,9 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
         // AnimeClick's CDN rejects requests without a browser-like User-Agent (HTTP 403),
         // so mirror the headers used by AnimeClickClient for HTML fetches.
         var request = new HttpRequestMessage(HttpMethod.Get, new Uri(url));
-        request.Headers.UserAgent.ParseAdd(configuration.UserAgent);
+        request.Headers.TryAddWithoutValidation(
+            "User-Agent",
+            AnimeClickClient.GetEffectiveUserAgent(configuration));
         if (Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var referer))
         {
             request.Headers.Referrer = referer;

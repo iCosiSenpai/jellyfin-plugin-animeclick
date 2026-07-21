@@ -33,6 +33,27 @@ public static class AnimeClickSearchScorer
         }
         return sb.ToString().Normalize(NormalizationForm.FormC);
     }
+    internal static bool IsFormatCompatible(AnimeClickSearchResult result, bool seriesRequest)
+    {
+        var format = result.Format ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(format))
+        {
+            // Keep unknown formats: a missing label must not suppress a valid result.
+            return true;
+        }
+
+        var isTelevision = format.Contains("Serie TV", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(format.Trim(), "TV", StringComparison.OrdinalIgnoreCase);
+        var isMovie = format.Contains("Film", StringComparison.OrdinalIgnoreCase)
+            || format.Contains("Movie", StringComparison.OrdinalIgnoreCase);
+        var isSideContent = format.Contains("OVA", StringComparison.OrdinalIgnoreCase)
+            || format.Contains("OAV", StringComparison.OrdinalIgnoreCase)
+            || format.Contains("ONA", StringComparison.OrdinalIgnoreCase)
+            || format.Contains("Special", StringComparison.OrdinalIgnoreCase);
+
+        return seriesRequest ? isTelevision : isMovie || (!isTelevision && !isSideContent);
+    }
+
     public static int Score(AnimeClickSearchResult result, string query, int? productionYear, bool seriesRequest)
     {
         var score = 0;
@@ -78,20 +99,37 @@ public static class AnimeClickSearchScorer
         {
             bool titleStrong = score >= 40; // avoid format bonus on weak title hits
             if ((format.Contains("Serie TV", StringComparison.OrdinalIgnoreCase) ||
-                 format.Contains("TV", StringComparison.OrdinalIgnoreCase)) && titleStrong)
+                 string.Equals(format.Trim(), "TV", StringComparison.OrdinalIgnoreCase)) && titleStrong)
             {
                 score += 25;
             }
 
-            if (format.Contains("Movie", StringComparison.OrdinalIgnoreCase) ||
-                format.Contains("Film", StringComparison.OrdinalIgnoreCase))
+            if (format.Contains("Movie", StringComparison.OrdinalIgnoreCase)
+                || format.Contains("Film", StringComparison.OrdinalIgnoreCase))
             {
                 score -= 60;
             }
 
-            if (format.Contains("Special", StringComparison.OrdinalIgnoreCase))
+            if (format.Contains("Special", StringComparison.OrdinalIgnoreCase)
+                || format.Contains("OVA", StringComparison.OrdinalIgnoreCase)
+                || format.Contains("OAV", StringComparison.OrdinalIgnoreCase)
+                || format.Contains("ONA", StringComparison.OrdinalIgnoreCase))
             {
-                score -= 45;
+                score -= 80;
+            }
+        }
+        else
+        {
+            if (format.Contains("Movie", StringComparison.OrdinalIgnoreCase)
+                || format.Contains("Film", StringComparison.OrdinalIgnoreCase))
+            {
+                score += 25;
+            }
+
+            if (format.Contains("Serie TV", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(format.Trim(), "TV", StringComparison.OrdinalIgnoreCase))
+            {
+                score -= 60;
             }
         }
 

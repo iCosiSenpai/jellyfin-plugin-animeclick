@@ -37,6 +37,22 @@ public static class AnimeClickEpisodeMatcher
                     return AnimeClickEpisodeMatch.Found(sameSeasonAbsolute, "absolute");
                 }
 
+                // AnimeClick may describe two cours as two synthetic seasons while
+                // Jellyfin keeps all absolute episodes under season 1. Cross the
+                // inferred boundary only in that specific representation; explicit
+                // S1/S2 groups must remain isolated.
+                if (jellyfinSeasonNumber.Value == 1
+                    && seasonEpisodes.All(e => e.SeasonNumberIsSynthetic))
+                {
+                    var syntheticAbsolute = episodes.FirstOrDefault(e =>
+                        e.SeasonNumberIsSynthetic
+                        && e.AbsoluteNumber == jellyfinEpisodeNumber);
+                    if (syntheticAbsolute is not null)
+                    {
+                        return AnimeClickEpisodeMatch.Found(syntheticAbsolute, "syntheticAbsolute");
+                    }
+                }
+
                 return AnimeClickEpisodeMatch.None("seasonGroupNoMatch");
             }
         }
@@ -52,7 +68,11 @@ public static class AnimeClickEpisodeMatcher
         if (!jellyfinSeasonNumber.HasValue || jellyfinSeasonNumber.Value <= 1)
         {
             var absolute = episodes.FirstOrDefault(e => e.AbsoluteNumber == jellyfinEpisodeNumber);
-            if (absolute is not null)
+            if (absolute is not null
+                && (!jellyfinSeasonNumber.HasValue
+                    || absolute.SeasonNumber is null
+                    || absolute.SeasonNumberIsSynthetic
+                    || absolute.SeasonNumber == jellyfinSeasonNumber.Value))
             {
                 return AnimeClickEpisodeMatch.Found(absolute, "absolute");
             }

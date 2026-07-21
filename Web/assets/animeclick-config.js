@@ -1,127 +1,177 @@
-/* AnimeClick — configuration page logic (AC.config).
-   Form built from descriptors, dirty-state tracked, save bar appears on change.
-   Pattern matches KometaThemes config.js architecture exactly. */
+/* AnimeClick — premium configuration dashboard.
+   Cloud-first onboarding, authority visibility and privacy-safe diagnostics. */
 (function () {
     'use strict';
 
-    var V = '0.3.7.0';
+    var V = '0.4.0.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
+    var page;
+    var savedConfig;
+    var dirty = false;
+    var toastHost;
 
-    /* ===== util ===== */
+    /* ===== utilities ===== */
 
-    function esc(v) {
-        return String(v == null ? '' : v)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    function esc(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
+
     function el(tag, cls, text) {
-        var n = document.createElement(tag);
-        if (cls) n.className = cls;
-        if (text != null) n.textContent = text;
-        return n;
+        var node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text != null) node.textContent = text;
+        return node;
     }
-    function clear(n) { while (n && n.firstChild) n.removeChild(n.firstChild); }
 
-    /* ===== api (MediaBrowser auth) ===== */
+    function clear(node) {
+        while (node && node.firstChild) node.removeChild(node.firstChild);
+    }
+
+    function valueOf(obj, name) {
+        if (!obj) return undefined;
+        if (obj[name] !== undefined) return obj[name];
+        var pascal = name.charAt(0).toUpperCase() + name.slice(1);
+        return obj[pascal];
+    }
+
+    function asArray(value) {
+        return Array.isArray(value) ? value : [];
+    }
+
+    function truncate(value, max) {
+        var text = String(value == null ? '' : value);
+        return text.length > max ? text.slice(0, max - 1) + '…' : text;
+    }
+
+    function setBusy(button, busy, idleLabel, busyLabel) {
+        if (!button) return;
+        button.disabled = !!busy;
+        button.textContent = busy ? busyLabel : idleLabel;
+    }
+
+    function val(id) {
+        return page.querySelector('#' + id);
+    }
+
+    /* ===== authenticated API ===== */
 
     function authHeader() {
         try {
             if (typeof ApiClient !== 'undefined' && typeof ApiClient.accessToken === 'function') {
-                var t = ApiClient.accessToken();
-                if (t) return 'MediaBrowser Token="' + t + '"';
+                var token = ApiClient.accessToken();
+                if (token) return 'MediaBrowser Token="' + token + '"';
             }
-        } catch (e) { /* */ }
+        } catch (error) {
+            // Jellyfin may inject ApiClient after the page markup; requests will still
+            // use same-origin credentials when no explicit token is available.
+        }
         return null;
     }
+
     function apiUrl(path) {
         try {
-            if (typeof ApiClient !== 'undefined' && typeof ApiClient.getUrl === 'function')
+            if (typeof ApiClient !== 'undefined' && typeof ApiClient.getUrl === 'function') {
                 return ApiClient.getUrl(path);
-        } catch (e) { /* */ }
+            }
+        } catch (error) {
+            // Fall back to a relative server URL.
+        }
         return path;
     }
+
     function request(method, path, body) {
         var headers = { Accept: 'application/json' };
         var auth = authHeader();
         if (auth) headers.Authorization = auth;
-        var opts = { method: method, credentials: 'same-origin', headers: headers };
+        var options = { method: method, credentials: 'same-origin', headers: headers };
         if (body !== undefined) {
             headers['Content-Type'] = 'application/json';
-            opts.body = JSON.stringify(body);
+            options.body = JSON.stringify(body);
         }
-        return fetch(apiUrl(path), opts).then(function (r) {
-            var isJson = (r.headers.get('Content-Type') || '').indexOf('json') > -1;
-            if (!r.ok) {
-                return (isJson ? r.json() : r.text()).catch(function () { return null; })
-                    .then(function (p) {
-                        var msg = (p && (p.error || p.message)) || (typeof p === 'string' && p) || ('HTTP ' + r.status);
-                        var err = new Error(msg); err.status = r.status; throw err;
+
+        return fetch(apiUrl(path), options).then(function (response) {
+            var isJson = (response.headers.get('Content-Type') || '').toLowerCase().indexOf('json') > -1;
+            if (!response.ok) {
+                return (isJson ? response.json() : response.text()).catch(function () { return null; })
+                    .then(function (payload) {
+                        var message = payload && (payload.error || payload.message);
+                        if (!message && typeof payload === 'string') message = payload;
+                        var error = new Error(message || ('HTTP ' + response.status));
+                        error.status = response.status;
+                        throw error;
                     });
             }
-            if (r.status === 204 || !isJson) return null;
-            return r.json();
+            if (response.status === 204 || !isJson) return null;
+            return response.json();
         });
     }
 
-    /* ===== toast ===== */
+    function getPluginConfig() {
+        return new Promise(function (resolve, reject) {
+            try {
+                ApiClient.getPluginConfiguration(GUID).then(resolve, reject);
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
 
-    var toastHost;
+    function savePluginConfig(config) {
+        return new Promise(function (resolve, reject) {
+            try {
+                ApiClient.updatePluginConfiguration(GUID, config).then(resolve, reject);
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
+    /* ===== feedback ===== */
+
     function ensureToastHost() {
         if (!toastHost || !document.body.contains(toastHost)) {
             toastHost = el('div', 'ac-toast-host');
             document.body.appendChild(toastHost);
         }
     }
-    function toast(msg, type) {
-        ensureToastHost();
-        var t = el('div', 'ac-toast' + (type ? ' ' + type : ''), msg);
-        toastHost.appendChild(t);
-        setTimeout(function () {
-            t.classList.add('leaving');
-            setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 200);
-        }, 3000);
-    }
 
-    /* ===== confirm modal ===== */
+    function toast(message, type) {
+        ensureToastHost();
+        var item = el('div', 'ac-toast' + (type ? ' ' + type : ''), message);
+        toastHost.appendChild(item);
+        setTimeout(function () {
+            item.classList.add('leaving');
+            setTimeout(function () {
+                if (item.parentNode) item.parentNode.removeChild(item);
+            }, 200);
+        }, 3400);
+    }
 
     function confirmModal(title, message) {
         return new Promise(function (resolve) {
             var veil = el('div', 'ac-modal-veil');
             var modal = el('div', 'ac-modal');
-            var h = el('h3', null, title);
-            var p = el('p', null, message);
-            var row = el('div', 'ac-row');
-            var btnCancel = el('button', 'ac-btn ac-btn-ghost', 'Annulla');
-            var btnOk = el('button', 'ac-btn ac-btn-primary', 'Conferma');
-            btnCancel.type = 'button';
-            btnOk.type = 'button';
-            row.appendChild(btnCancel);
-            row.appendChild(btnOk);
-            modal.appendChild(h);
-            modal.appendChild(p);
-            modal.appendChild(row);
+            var heading = el('h3', null, title);
+            var copy = el('p', null, message);
+            var actions = el('div', 'ac-row');
+            var cancel = el('button', 'ac-btn ac-btn-ghost', 'Annulla');
+            var confirm = el('button', 'ac-btn ac-btn-primary', 'Conferma');
+            cancel.type = 'button';
+            confirm.type = 'button';
+            actions.appendChild(cancel);
+            actions.appendChild(confirm);
+            modal.appendChild(heading);
+            modal.appendChild(copy);
+            modal.appendChild(actions);
             veil.appendChild(modal);
             document.body.appendChild(veil);
-            btnCancel.onclick = function () { veil.remove(); resolve(false); };
-            btnOk.onclick = function () { veil.remove(); resolve(true); };
-        });
-    }
-
-    /* ===== config state ===== */
-
-    var page, savedConfig;
-    var dirty = false;
-
-    function getPluginConfig() {
-        return new Promise(function (resolve, reject) {
-            try { ApiClient.getPluginConfiguration(GUID).then(resolve, reject); }
-            catch (e) { reject(e); }
-        });
-    }
-    function savePluginConfig(cfg) {
-        return new Promise(function (resolve, reject) {
-            try { ApiClient.updatePluginConfiguration(GUID, cfg).then(resolve, reject); }
-            catch (e) { reject(e); }
+            cancel.onclick = function () { veil.remove(); resolve(false); };
+            confirm.onclick = function () { veil.remove(); resolve(true); };
         });
     }
 
@@ -129,649 +179,1192 @@
         dirty = true;
         var bar = page.querySelector('#acSaveBar');
         if (bar) bar.style.display = '';
+        updateProviderPresence();
     }
+
     function markClean() {
         dirty = false;
         var bar = page.querySelector('#acSaveBar');
         if (bar) bar.style.display = 'none';
     }
 
-    /* ===== DOM helpers for building forms ===== */
+    /* ===== form primitives ===== */
 
-    function makeCheck(id, label, desc) {
+    function makeCard(kicker, title, copy) {
+        var card = el('section', 'ac-card ac-card-flush');
+        var head = el('div', 'ac-card-head ac-card-head-copy');
+        var titleBox = el('div', 'ac-stack ac-card-titlebox');
+        if (kicker) titleBox.appendChild(el('p', 'ac-kicker', kicker));
+        titleBox.appendChild(el('h2', 'ac-subtitle', title));
+        if (copy) titleBox.appendChild(el('p', 'ac-note', copy));
+        head.appendChild(titleBox);
+        var body = el('div', 'ac-card-body');
+        card.appendChild(head);
+        card.appendChild(body);
+        return { card: card, head: head, body: body };
+    }
+
+    function makeCheck(id, label, description, trackDirty) {
         var wrap = el('div', 'ac-check');
-        var lbl = el('label');
-        var cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.className = 'ac-checkbox';
-        cb.id = id;
-        lbl.appendChild(cb);
-        var span = el('span');
-        span.innerHTML = '<span style="font-weight:600">' + esc(label) + '</span>';
-        if (desc) span.innerHTML += '<div class="ac-field-desc">' + desc + '</div>';
-        lbl.appendChild(span);
-        wrap.appendChild(lbl);
-        cb.addEventListener('change', markDirty);
+        var labelNode = el('label');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'ac-checkbox';
+        checkbox.id = id;
+        labelNode.appendChild(checkbox);
+        var copy = el('span');
+        copy.innerHTML = '<span class="ac-check-title">' + esc(label) + '</span>';
+        if (description) copy.innerHTML += '<span class="ac-field-desc">' + description + '</span>';
+        labelNode.appendChild(copy);
+        wrap.appendChild(labelNode);
+        if (trackDirty !== false) checkbox.addEventListener('change', markDirty);
         return wrap;
     }
-    function makeField(id, label, type, desc, attrs) {
+
+    function makeField(id, label, type, description, attrs, trackDirty) {
         var wrap = el('div', 'ac-field');
-        var lbl = el('label', null, label);
-        lbl.setAttribute('for', id);
-        wrap.appendChild(lbl);
-        var input;
-        if (type === 'select') {
-            input = el('select', 'ac-select');
-        } else {
-            input = el('input', 'ac-input');
-            input.type = type || 'text';
-        }
+        var labelNode = el('label', null, label);
+        labelNode.setAttribute('for', id);
+        var input = el('input', 'ac-input');
+        input.type = type || 'text';
         input.id = id;
-        if (attrs) {
-            Object.keys(attrs).forEach(function (k) { input.setAttribute(k, attrs[k]); });
-        }
+        Object.keys(attrs || {}).forEach(function (key) {
+            input.setAttribute(key, attrs[key]);
+        });
+        wrap.appendChild(labelNode);
         wrap.appendChild(input);
-        if (desc) {
-            var d = el('div', 'ac-field-desc');
-            d.innerHTML = desc;
-            wrap.appendChild(d);
+        if (description) {
+            var desc = el('div', 'ac-field-desc');
+            desc.innerHTML = description;
+            wrap.appendChild(desc);
+        }
+        if (trackDirty !== false) {
+            input.addEventListener('input', markDirty);
+            input.addEventListener('change', markDirty);
+        }
+        return wrap;
+    }
+
+    function makeSecretField(id, label, description) {
+        var wrap = el('div', 'ac-field');
+        var labelNode = el('label', null, label);
+        labelNode.setAttribute('for', id);
+        var control = el('div', 'ac-input-action');
+        var input = el('input', 'ac-input');
+        input.type = 'password';
+        input.id = id;
+        input.autocomplete = 'new-password';
+        var toggle = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Mostra');
+        toggle.type = 'button';
+        toggle.setAttribute('data-secret-toggle', id);
+        control.appendChild(input);
+        control.appendChild(toggle);
+        wrap.appendChild(labelNode);
+        wrap.appendChild(control);
+        if (description) {
+            var desc = el('div', 'ac-field-desc');
+            desc.innerHTML = description;
+            wrap.appendChild(desc);
         }
         input.addEventListener('input', markDirty);
         input.addEventListener('change', markDirty);
         return wrap;
     }
 
-    /* ===== tab switching ===== */
+    function makeTextArea(id, label, description, trackDirty) {
+        var wrap = el('div', 'ac-field');
+        var labelNode = el('label', null, label);
+        labelNode.setAttribute('for', id);
+        var input = el('textarea', 'ac-input ac-textarea');
+        input.id = id;
+        input.rows = 5;
+        wrap.appendChild(labelNode);
+        wrap.appendChild(input);
+        if (description) wrap.appendChild(el('div', 'ac-field-desc', description));
+        if (trackDirty !== false) input.addEventListener('input', markDirty);
+        return wrap;
+    }
+
+    function makeDetails(summary, copy) {
+        var details = el('details', 'ac-details');
+        var summaryNode = el('summary', null, summary);
+        details.appendChild(summaryNode);
+        var body = el('div', 'ac-details-body');
+        if (copy) body.appendChild(el('p', 'ac-note', copy));
+        details.appendChild(body);
+        return { details: details, body: body };
+    }
+
+    function makeCallout(title, copy, tone) {
+        var callout = el('div', 'ac-callout' + (tone ? ' ' + tone : ''));
+        callout.appendChild(el('strong', null, title));
+        callout.appendChild(el('span', null, copy));
+        return callout;
+    }
+
+    /* ===== navigation ===== */
 
     function initTabs() {
-        var tabs = page.querySelectorAll('.ac-tab');
-        tabs.forEach(function (tab) {
+        page.querySelectorAll('.ac-tab').forEach(function (tab) {
             tab.addEventListener('click', function () {
-                tabs.forEach(function (t) { t.setAttribute('aria-selected', 'false'); });
+                page.querySelectorAll('.ac-tab').forEach(function (item) {
+                    item.setAttribute('aria-selected', 'false');
+                });
                 tab.setAttribute('aria-selected', 'true');
-                var panels = page.querySelectorAll('.ac-panel');
-                panels.forEach(function (p) { p.classList.remove('active'); });
+                page.querySelectorAll('.ac-panel').forEach(function (panel) {
+                    panel.classList.remove('active');
+                });
                 var target = page.querySelector('.ac-panel[data-panel="' + tab.dataset.panel + '"]');
                 if (target) target.classList.add('active');
             });
         });
     }
 
-    /* ===== build panels ===== */
+    /* ===== overview ===== */
 
-    function buildOverviewPanel() {
-        var p = page.querySelector('#acPanelOverview');
-        clear(p);
-
-        // --- Provider status card ---
-        var card1 = el('div', 'ac-card ac-card-flush');
-        var head1 = el('div', 'ac-card-head');
-        head1.appendChild(el('span', 'ac-subtitle', '🔌 Stato provider'));
-        card1.appendChild(head1);
-        var body1 = el('div', 'ac-card-body');
-
-        ['tmdb', 'ollama', 'tvdb'].forEach(function (prov) {
-            var names = { tmdb: 'TMDB', ollama: 'Ollama Cloud', tvdb: 'TheTVDB' };
-            var row = el('div', 'ac-row');
-            row.style.cssText = 'justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--ac-border);';
-            var left = el('div', 'ac-row');
-            left.style.gap = '8px';
-            var dot = el('span', 'ac-live-dot is-idle');
-            dot.id = 'acDot_' + prov;
-            left.appendChild(dot);
-            left.appendChild(el('span', null, names[prov]));
-            var badge = el('span', 'ac-badge neutral', '…');
-            badge.id = 'acBadge_' + prov;
-            left.appendChild(badge);
-            row.appendChild(left);
-            var btn = el('button', 'ac-btn ac-btn-sm', 'Test');
-            btn.type = 'button';
-            btn.id = 'acTest_' + prov;
-            row.appendChild(btn);
-            body1.appendChild(row);
-
-            var detail = el('div', 'ac-log');
-            detail.id = 'acDetail_' + prov;
-            detail.style.display = 'none';
-            body1.appendChild(detail);
-        });
-        card1.appendChild(body1);
-        p.appendChild(card1);
-
-        // --- Quick actions card ---
-        var card2 = el('div', 'ac-card ac-card-flush');
-        var head2 = el('div', 'ac-card-head');
-        head2.appendChild(el('span', 'ac-subtitle', '⚡ Azioni rapide'));
-        card2.appendChild(head2);
-        var body2 = el('div', 'ac-card-body');
-        var btnClear = el('button', 'ac-btn ac-btn-danger', '🗑 Svuota cache');
-        btnClear.type = 'button';
-        btnClear.id = 'acBtnClearCache';
-        body2.appendChild(el('div', 'ac-field-desc', 'Svuota tutta la cache dei metadati scaricati. Utile per forzare un aggiornamento completo.'));
-        body2.appendChild(btnClear);
-        var cacheResult = el('div', 'ac-state');
-        cacheResult.id = 'acCacheResult';
-        body2.appendChild(cacheResult);
-        card2.appendChild(body2);
-        p.appendChild(card2);
-
-        // --- Active features ---
-        var card3 = el('div', 'ac-card ac-card-flush');
-        var head3 = el('div', 'ac-card-head');
-        head3.appendChild(el('span', 'ac-subtitle', '📋 Funzionalità attive'));
-        card3.appendChild(head3);
-        var body3 = el('div', 'ac-card-body');
-        var chips = el('div', 'ac-row');
-        chips.id = 'acFeatureChips';
-        body3.appendChild(chips);
-        card3.appendChild(body3);
-        p.appendChild(card3);
+    function addPriorityTile(container, label, value, copy, tone) {
+        var tile = el('div', 'ac-priority-tile' + (tone ? ' ' + tone : ''));
+        tile.appendChild(el('span', 'ac-kicker', label));
+        tile.appendChild(el('strong', 'ac-priority-value', value));
+        tile.appendChild(el('span', 'ac-note', copy));
+        container.appendChild(tile);
     }
 
+    function buildOverviewPanel() {
+        var panel = page.querySelector('#acPanelOverview');
+        clear(panel);
+
+        var authority = makeCard(
+            'AnimeClick-first',
+            'Metadati italiani protetti',
+            'AnimeClick viene eseguito per primo e i valori prodotti nel refresh sono riapplicati dopo il merge, rispettando i lock di Jellyfin.'
+        );
+        var priorityGrid = el('div', 'ac-priority-grid');
+        addPriorityTile(priorityGrid, 'Testo', 'Ordine 0', 'Titoli, trama, generi, tag e cast restano autorevoli.', 'good');
+        addPriorityTile(priorityGrid, 'Immagini', 'Fallback 100', 'I provider ad alta risoluzione mantengono la precedenza.', 'neutral');
+        addPriorityTile(priorityGrid, 'Sinossi episodi', 'IT → EN → AI', 'Ollama viene chiamato soltanto quando manca una fonte italiana.', 'warn');
+        authority.body.appendChild(priorityGrid);
+        panel.appendChild(authority.card);
+
+        var providers = makeCard(
+            'Connettività',
+            'Salute dei provider di fallback',
+            'I test usano i valori attualmente inseriti nel modulo. Le API key non vengono mai incluse nei risultati mostrati.'
+        );
+        ['tmdb', 'ollama', 'tvdb'].forEach(function (provider) {
+            var names = { tmdb: 'TMDB', ollama: 'Ollama Cloud', tvdb: 'TheTVDB' };
+            var roles = {
+                tmdb: 'Italiano nativo e fonte inglese',
+                ollama: 'Ultimo fallback EN→IT, cloud-only',
+                tvdb: 'Italiano nativo preferito'
+            };
+            var row = el('div', 'ac-provider-row');
+            var identity = el('div', 'ac-provider-identity');
+            var dot = el('span', 'ac-live-dot is-idle');
+            dot.id = 'acDot_' + provider;
+            var copy = el('div', 'ac-stack ac-provider-copy');
+            copy.appendChild(el('strong', null, names[provider]));
+            copy.appendChild(el('span', 'ac-field-desc', roles[provider]));
+            identity.appendChild(dot);
+            identity.appendChild(copy);
+            var actions = el('div', 'ac-row');
+            var badge = el('span', 'ac-badge neutral', 'Non verificato');
+            badge.id = 'acBadge_' + provider;
+            var button = el('button', 'ac-btn ac-btn-sm', 'Verifica');
+            button.type = 'button';
+            button.setAttribute('data-ac-test', provider);
+            actions.appendChild(badge);
+            actions.appendChild(button);
+            row.appendChild(identity);
+            row.appendChild(actions);
+            providers.body.appendChild(row);
+            var detail = el('div', 'ac-state ac-provider-detail');
+            detail.id = 'acDetail_' + provider;
+            detail.style.display = 'none';
+            providers.body.appendChild(detail);
+        });
+        panel.appendChild(providers.card);
+
+        var libraries = makeCard(
+            'Jellyfin',
+            'Priorità effettiva nelle librerie',
+            'La verifica distingue l’ordine configurato dai provider realmente abilitati. Le librerie non anime possono lasciare AnimeClick disattivato intenzionalmente.'
+        );
+        var refresh = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Aggiorna');
+        refresh.type = 'button';
+        refresh.id = 'acBtnRefreshLibraries';
+        libraries.head.appendChild(refresh);
+        var libraryResult = el('div', 'ac-library-list');
+        libraryResult.id = 'acLibraryHealth';
+        libraryResult.appendChild(el('div', 'ac-state', 'Caricamento librerie…'));
+        libraries.body.appendChild(libraryResult);
+        panel.appendChild(libraries.card);
+
+        var features = makeCard(
+            'Copertura',
+            'Funzionalità attive',
+            'Riepilogo della configurazione salvata. I campi non disponibili restano agli altri provider Jellyfin.'
+        );
+        var chips = el('div', 'ac-row');
+        chips.id = 'acFeatureChips';
+        features.body.appendChild(chips);
+        panel.appendChild(features.card);
+    }
+
+    /* ===== metadata ===== */
+
     function buildMetadatiPanel() {
-        var p = page.querySelector('#acPanelMetadati');
-        clear(p);
+        var panel = page.querySelector('#acPanelMetadati');
+        clear(panel);
+        panel.appendChild(makeCallout(
+            'Strategia fill-gaps sicura',
+            'AnimeClick protegge i metadati italiani che possiede; gli altri provider possono completare soltanto i campi mancanti.',
+            'good'
+        ));
 
-        // Titoli & Trama
-        var c1 = el('div', 'ac-card ac-card-flush');
-        var h1 = el('div', 'ac-card-head');
-        h1.appendChild(el('span', 'ac-subtitle', '📝 Titoli & Trama'));
-        c1.appendChild(h1);
-        var b1 = el('div', 'ac-card-body');
-        b1.appendChild(makeCheck('acPreferItalianTitle', 'Preferisci titolo italiano', 'Usa il titolo italiano come nome principale della serie/film.'));
-        b1.appendChild(makeCheck('acEnablePlot', 'Importa trama', 'Importa la sinossi/trama in italiano da AnimeClick.'));
-        b1.appendChild(makeCheck('acOverwriteNonItalianFields', 'Sovrascrivi campi non-italiani', 'Se attivo, AnimeClick sovrascrive anche titolo originale, studio, rating, data. Se disattivo, lascia questi campi agli altri provider (AniList/TMDB).'));
-        c1.appendChild(b1);
-        p.appendChild(c1);
+        var primary = makeCard('Essenziali', 'Identità italiana', 'I valori principali che definiscono la scheda nel catalogo.');
+        primary.body.appendChild(makeCheck('acPreferItalianTitle', 'Titolo italiano', 'Usa il titolo AnimeClick come nome principale.'));
+        primary.body.appendChild(makeCheck('acEnablePlot', 'Trama italiana', 'Importa la sinossi AnimeClick quando disponibile.'));
+        panel.appendChild(primary.card);
 
-        // Immagini
-        var c2 = el('div', 'ac-card ac-card-flush');
-        var h2 = el('div', 'ac-card-head');
-        h2.appendChild(el('span', 'ac-subtitle', '🖼 Immagini'));
-        c2.appendChild(h2);
-        var b2 = el('div', 'ac-card-body');
-        b2.appendChild(makeCheck('acEnableAnimeClickImages', 'Locandina AnimeClick come fallback', 'Fornisce la locandina italiana di AnimeClick come immagine di backup (priorità bassa: AniList/Fanart vincono se hanno immagini).'));
-        b2.appendChild(makeField('acMinPosterWidth', 'Larghezza minima locandina (px)', 'number', 'Se la locandina da AnimeClick è più stretta di questo valore viene scartata. Jellyfin user\u00e0 i poster da Fanart/AniList/TheMovieDb (pi\u00f9 alti). 0 = disabilita filtro. Consigliato 400.', { min: '0', max: '2000', step: '50' }));
-        c2.appendChild(b2);
-        p.appendChild(c2);
-
-        // Dettagli opzionali
-        var c3 = el('div', 'ac-card ac-card-flush');
-        var h3 = el('div', 'ac-card-head');
-        h3.appendChild(el('span', 'ac-subtitle', '🔧 Dettagli opzionali'));
-        c3.appendChild(h3);
-        var b3 = el('div', 'ac-card-body');
+        var enrichment = makeCard('Copertura', 'Arricchimento semantico', 'Ogni dato viene scritto soltanto nel campo Jellyfin semanticamente corrispondente.');
         var grid = el('div', 'ac-grid-2');
-        grid.appendChild(makeCheck('acEnableGenres', 'Generi', 'Importa generi in italiano (Azione, Avventura…).'));
-        grid.appendChild(makeCheck('acEnableStudios', 'Studi', 'Importa gli studi di animazione.'));
-        grid.appendChild(makeCheck('acEnableCommunityRating', 'Valutazione', 'Importa il rating medio della community.'));
-        grid.appendChild(makeCheck('acEnableCast', 'Cast & Staff', 'Importa doppiatori, registi, autori.'));
-        grid.appendChild(makeCheck('acEnableTags', 'Tag', 'Importa tag (Shounen, Seinen, ecc.).'));
-        grid.appendChild(makeCheck('acEnableEpisodeTitles', 'Titoli episodi', 'Importa titoli italiani degli episodi dalla pagina /episodi.'));
-        grid.appendChild(makeCheck('acEnableThemeSongs', 'Sigle', 'Importa nomi delle sigle (OP/ED) nei tag.'));
-        grid.appendChild(makeCheck('acEnableCollections', 'Collezioni', 'Crea collezioni automatiche basate su sequel/prequel/spin-off.'));
-        b3.appendChild(grid);
-        c3.appendChild(b3);
-        p.appendChild(c3);
+        grid.appendChild(makeCheck('acEnableGenres', 'Generi', 'Generi localizzati in italiano.'));
+        grid.appendChild(makeCheck('acEnableTags', 'Tag e origine', 'Target, tag generici e opera di origine.'));
+        grid.appendChild(makeCheck('acEnableProductionLocations', 'Nazionalità', 'Mappata come località di produzione.'));
+        grid.appendChild(makeCheck('acEnableTrailers', 'Trailer e PV', 'Solo video YouTube esplicitamente etichettati.'));
+        grid.appendChild(makeCheck('acEnableCast', 'Cast e staff', 'Doppiatori e ruoli staff granulari.'));
+        grid.appendChild(makeCheck('acEnableEpisodeTitles', 'Titoli episodi', 'Titoli italiani dalla lista episodi.'));
+        grid.appendChild(makeCheck('acEnableThemeSongs', 'Sigle', 'Nomi di opening ed ending nei tag.'));
+        enrichment.body.appendChild(grid);
+        panel.appendChild(enrichment.card);
+
+        var images = makeCard('Artwork', 'Immagini come fallback', 'AnimeClick resta deliberatamente dopo i provider di artwork ad alta risoluzione.');
+        images.body.appendChild(makeCheck('acEnableAnimeClickImages', 'Abilita locandina AnimeClick', 'Usala solo quando i provider immagini precedenti non producono un poster.'));
+        images.body.appendChild(makeField(
+            'acMinPosterWidth',
+            'Larghezza minima locandina',
+            'number',
+            'Sotto questa soglia il poster viene scartato. 0 disabilita il filtro; 400 px è il valore consigliato.',
+            { min: '0', max: '2000', step: '50' }
+        ));
+        panel.appendChild(images.card);
+
+        var advanced = makeDetails(
+            'Opzioni avanzate e potenzialmente invasive',
+            'Queste impostazioni non sono necessarie per il flusso AnimeClick-first consigliato.'
+        );
+        advanced.body.appendChild(makeCheck(
+            'acOverwriteNonItalianFields',
+            'Sovrascrivi campi non italiani',
+            'Consente ad AnimeClick di sostituire anche titolo originale, studio, rating e data. Lascia disattivato per un merge conservativo.'
+        ));
+        advanced.body.appendChild(makeCheck(
+            'acEnableStudios',
+            'Studi AnimeClick',
+            'Effettivo soltanto quando la sovrascrittura dei campi non italiani è attiva.'
+        ));
+        advanced.body.appendChild(makeCheck(
+            'acEnableCommunityRating',
+            'Valutazione community AnimeClick',
+            'Effettiva soltanto quando la sovrascrittura dei campi non italiani è attiva.'
+        ));
+        advanced.body.appendChild(makeCheck(
+            'acEnableCollections',
+            'Collezioni automatiche',
+            'Crea raggruppamenti da relazioni sequel, prequel e spin-off.'
+        ));
+        panel.appendChild(advanced.details);
+    }
+
+    /* ===== synopsis fallback ===== */
+
+    function appendChainStep(chain, number, title, copy, badge) {
+        var step = el('div', 'ac-chain-step');
+        step.appendChild(el('span', 'ac-step-number', String(number)));
+        var content = el('div', 'ac-stack ac-grow');
+        var heading = el('div', 'ac-row');
+        heading.appendChild(el('strong', null, title));
+        if (badge) heading.appendChild(el('span', 'ac-badge neutral', badge));
+        content.appendChild(heading);
+        content.appendChild(el('span', 'ac-field-desc', copy));
+        step.appendChild(content);
+        chain.appendChild(step);
     }
 
     function buildSinossiPanel() {
-        var p = page.querySelector('#acPanelSinossi');
-        clear(p);
+        var panel = page.querySelector('#acPanelSinossi');
+        clear(panel);
 
-        // Abilitazione
-        var c1 = el('div', 'ac-card ac-card-flush');
-        var h1 = el('div', 'ac-card-head');
-        h1.appendChild(el('span', 'ac-subtitle', '🌐 Sinossi episodi in italiano'));
-        c1.appendChild(h1);
-        var b1 = el('div', 'ac-card-body');
-        b1.appendChild(makeCheck('acEnableEpisodeSynopsisTranslation', 'Abilita traduzione sinossi episodi',
-            'AnimeClick non pubblica sinossi per-episodio. Il plugin recupera l\'overview da TMDB/TVDB e la traduce in italiano via Ollama Cloud. Richiede API key TMDB e Ollama Cloud.'));
-        c1.appendChild(b1);
-        p.appendChild(c1);
+        var onboarding = makeCard(
+            'Cloud-only',
+            'Sinossi episodi italiane, senza GPU sul NAS',
+            'Il plugin cerca prima una traduzione umana già disponibile. Ollama Cloud Free viene usato soltanto come ultimo fallback e le traduzioni sono memorizzate a lungo.'
+        );
+        onboarding.body.appendChild(makeCheck(
+            'acEnableEpisodeSynopsisTranslation',
+            'Abilita il fallback sinossi episodi',
+            'AnimeClick non pubblica trame per episodio; il campo resta invariato se tutta la catena fallisce.'
+        ));
+        var chain = el('div', 'ac-chain');
+        appendChainStep(chain, 1, 'Italiano nativo', 'TheTVDB ita, poi TMDB it-IT.', 'nessuna AI');
+        appendChainStep(chain, 2, 'Fonte inglese', 'TMDB en-US, poi TheTVDB eng.', 'solo se serve');
+        appendChainStep(chain, 3, 'Ollama Cloud', 'Traduzione EN→IT serializzata e content-addressed.', 'ultimo fallback');
+        onboarding.body.appendChild(chain);
+        panel.appendChild(onboarding.card);
 
-        // TheTVDB
-        var c2 = el('div', 'ac-card ac-card-flush');
-        var h2 = el('div', 'ac-card-head');
-        h2.appendChild(el('span', 'ac-subtitle', '📺 TheTVDB — fonte preferita'));
-        c2.appendChild(h2);
-        var b2 = el('div', 'ac-card-body');
+        var sources = makeCard('Sorgenti', 'Credenziali dei provider', 'TheTVDB è opzionale; TMDB amplia la copertura italiana e fornisce la fonte inglese per Ollama.');
+        var sourceGrid = el('div', 'ac-grid-2');
+        var tvdbBlock = el('div', 'ac-credential-block');
+        var tvdbHead = el('div', 'ac-row ac-credential-head');
+        tvdbHead.appendChild(el('strong', null, 'TheTVDB'));
+        tvdbHead.appendChild(el('span', 'ac-badge neutral', 'preferito'));
+        tvdbBlock.appendChild(tvdbHead);
+        tvdbBlock.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa fonte italiana TVDB', 'Salta Ollama quando esiste una overview ita.'));
+        tvdbBlock.appendChild(makeSecretField(
+            'acTvdbApiKey',
+            'API key TheTVDB',
+            'Disponibile dal <a href="https://thetvdb.com/dashboard" target="_blank" rel="noopener noreferrer">dashboard TheTVDB</a>.'
+        ));
+        var tvdbTest = el('button', 'ac-btn ac-btn-sm', 'Verifica TheTVDB');
+        tvdbTest.type = 'button';
+        tvdbTest.setAttribute('data-ac-test', 'tvdb');
+        tvdbBlock.appendChild(tvdbTest);
+        var tvdbResult = el('div', 'ac-state');
+        tvdbResult.id = 'acInlineResult_tvdb';
+        tvdbBlock.appendChild(tvdbResult);
+        sourceGrid.appendChild(tvdbBlock);
 
-        // TheTVDB attribution (required for free API use — see https://thetvdb.com/api-information#attribution)
-        var attr = el('div', 'ac-tvdb-attribution');
-        attr.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 12px;margin:0 0 14px 0;background:rgba(60,90,180,0.10);border:1px solid rgba(60,90,180,0.30);border-radius:8px;font-size:12px;line-height:1.4;color:inherit;';
-        var attrLogo = el('strong', null, 'TheTVDB');
-        attrLogo.style.cssText = 'font-size:13px;letter-spacing:0.3px;color:#3c5ab4;flex-shrink:0;';
-        attr.appendChild(attrLogo);
-        var attrText = el('span', null, 'Metadata provided by TheTVDB. Please consider adding missing information or ');
-        var attrLink = el('a', null, 'subscribing');
-        attrLink.href = 'https://thetvdb.com/subscribe';
-        attrLink.target = '_blank';
-        attrLink.rel = 'noopener noreferrer';
-        attrLink.style.cssText = 'color:#3c5ab4;text-decoration:underline;';
-        attrText.appendChild(attrLink);
-        attrText.appendChild(document.createTextNode('.'));
-        attr.appendChild(attrText);
-        b2.appendChild(attr);
+        var cloudBlock = el('div', 'ac-credential-block featured');
+        var cloudHead = el('div', 'ac-row ac-credential-head');
+        cloudHead.appendChild(el('strong', null, 'TMDB + Ollama Cloud'));
+        cloudHead.appendChild(el('span', 'ac-badge success', 'cloud'));
+        cloudBlock.appendChild(cloudHead);
+        cloudBlock.appendChild(makeSecretField(
+            'acTmdbApiKey',
+            'API key TMDB',
+            'Creala nelle <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">impostazioni API TMDB</a>.'
+        ));
+        cloudBlock.appendChild(makeSecretField(
+            'acOllamaCloudApiKey',
+            'API key Ollama Cloud',
+            'Creala su <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener noreferrer">ollama.com/settings/keys</a>.'
+        ));
+        cloudBlock.appendChild(makeField(
+            'acOllamaCloudModel',
+            'Modello cloud',
+            'text',
+            'Consigliato: <strong>gemma4:31b-cloud</strong>. Usa qwen3.5:cloud soltanto come override manuale se il tuo account non abilita Gemma.',
+            { spellcheck: 'false', autocomplete: 'off', placeholder: 'gemma4:31b-cloud' }
+        ));
+        var modelReset = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Ripristina modello consigliato');
+        modelReset.type = 'button';
+        modelReset.id = 'acBtnRecommendedModel';
+        cloudBlock.appendChild(modelReset);
+        var cloudTests = el('div', 'ac-row');
+        var tmdbTest = el('button', 'ac-btn ac-btn-sm', 'Verifica TMDB');
+        tmdbTest.type = 'button';
+        tmdbTest.setAttribute('data-ac-test', 'tmdb');
+        var ollamaTest = el('button', 'ac-btn ac-btn-sm', 'Verifica Ollama');
+        ollamaTest.type = 'button';
+        ollamaTest.setAttribute('data-ac-test', 'ollama');
+        cloudTests.appendChild(tmdbTest);
+        cloudTests.appendChild(ollamaTest);
+        cloudBlock.appendChild(cloudTests);
+        var tmdbResult = el('div', 'ac-state');
+        tmdbResult.id = 'acInlineResult_tmdb';
+        var ollamaResult = el('div', 'ac-state');
+        ollamaResult.id = 'acInlineResult_ollama';
+        cloudBlock.appendChild(tmdbResult);
+        cloudBlock.appendChild(ollamaResult);
+        sourceGrid.appendChild(cloudBlock);
+        sources.body.appendChild(sourceGrid);
 
-        b2.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa TheTVDB per sinossi in italiano', 'Quando TVDB ha la traduzione IT, viene usata direttamente (zero chiamate Ollama). Altrimenti ricade su TMDB + Ollama Cloud.'));
-        b2.appendChild(makeField('acTvdbApiKey', 'API Key TheTVDB', 'password', 'Ottieni una API key gratuita su <a href="https://thetvdb.com/dashboard" target="_blank">thetvdb.com/dashboard</a>.'));
-        b2.appendChild(makeField('acTvdbLanguage', 'Lingua TVDB', 'text', 'Codice lingua a 3 caratteri singolo (es: ita, eng). Il plugin usa solo il primo codice valido.'));
-        c2.appendChild(b2);
-        p.appendChild(c2);
+        var providerAttribution = el('p', 'ac-field-desc');
+        providerAttribution.innerHTML = 'Metadata provided by TheTVDB. Considera di <a href="https://thetvdb.com/subscribe" target="_blank" rel="noopener noreferrer">supportare TheTVDB</a>. Dati TMDB usati secondo i relativi termini API.';
+        sources.body.appendChild(providerAttribution);
+        panel.appendChild(sources.card);
 
-        // TMDB + Ollama
-        var c3 = el('div', 'ac-card ac-card-flush');
-        var h3 = el('div', 'ac-card-head');
-        h3.appendChild(el('span', 'ac-subtitle', '🤖 TMDB + Ollama Cloud — fallback'));
-        c3.appendChild(h3);
-        var b3 = el('div', 'ac-card-body');
-        var grid = el('div', 'ac-grid-2');
-        grid.appendChild(makeField('acTmdbApiKey', 'API Key TMDB', 'password', 'Ottieni su <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org</a>.'));
-        grid.appendChild(makeField('acOllamaCloudApiKey', 'API Key Ollama Cloud', 'password', 'Ottieni su <a href="https://ollama.com/settings/keys" target="_blank">ollama.com/settings/keys</a>.'));
-        b3.appendChild(grid);
-        b3.appendChild(makeField('acOllamaCloudEndpoint', 'Endpoint Ollama Cloud', 'url', 'URL dell\'API chat di Ollama Cloud.'));
+        var advanced = makeDetails(
+            'Parametri avanzati cloud e cache',
+            'I valori predefiniti sono ottimizzati per Ollama Cloud Free e per un NAS senza accelerazione GPU.'
+        );
+        advanced.body.appendChild(makeField(
+            'acOllamaCloudEndpoint',
+            'Endpoint Ollama Cloud',
+            'url',
+            'Endpoint chat ufficiale. Non inserire endpoint locali per questo profilo cloud-only.',
+            { placeholder: 'https://ollama.com/api/chat' }
+        ));
+        var advancedGrid = el('div', 'ac-grid-2');
+        advancedGrid.appendChild(makeField(
+            'acEpisodeTranslationTimeoutSec',
+            'Timeout richiesta',
+            'number',
+            'Secondi per una singola chiamata.',
+            { min: '5', max: '120' }
+        ));
+        advancedGrid.appendChild(makeField(
+            'acTranslationCacheHours',
+            'Cache traduzioni',
+            'number',
+            'Ore di conservazione. Il default equivale a circa 10 anni e viene comunque invalidato quando cambia il contenuto.',
+            { min: '1', max: '87600' }
+        ));
+        advanced.body.appendChild(advancedGrid);
+        panel.appendChild(advanced.details);
 
-        // Model select
-        var modelField = el('div', 'ac-field');
-        modelField.appendChild(el('label', null, 'Modello Ollama'));
-        var sel = el('select', 'ac-select');
-        sel.id = 'acOllamaCloudModel';
-        var models = [
-            { group: 'Consigliati', items: [
-                ['gemma4:cloud', 'gemma4:cloud (consigliato)'],
-                ['minimax-m2.1:cloud', 'minimax-m2.1:cloud'],
-                ['qwen3.5:cloud', 'qwen3.5:cloud'],
-                ['gpt-oss:cloud', 'gpt-oss:cloud']
-            ]},
-            { group: 'Altri', items: [
-                ['glm-5.2:cloud', 'glm-5.2:cloud'],
-                ['minimax-m3:cloud', 'minimax-m3:cloud'],
-                ['kimi-k2.7-code:cloud', 'kimi-k2.7-code:cloud'],
-                ['nemotron-3-ultra:cloud', 'nemotron-3-ultra:cloud'],
-                ['glm-5.1:cloud', 'glm-5.1:cloud'],
-                ['minimax-m2.7:cloud', 'minimax-m2.7:cloud'],
-                ['nemotron-3-super:cloud', 'nemotron-3-super:cloud'],
-                ['glm-5:cloud', 'glm-5:cloud'],
-                ['minimax-m2.5:cloud', 'minimax-m2.5:cloud'],
-                ['kimi-k2.6:cloud', 'kimi-k2.6:cloud'],
-                ['deepseek-v4-pro:cloud', 'deepseek-v4-pro:cloud'],
-                ['deepseek-v4-flash:cloud', 'deepseek-v4-flash:cloud'],
-                ['kimi-k2.5:cloud', 'kimi-k2.5:cloud'],
-                ['qwen3-coder:cloud', 'qwen3-coder:cloud'],
-                ['glm-4.7:cloud', 'glm-4.7:cloud'],
-                ['gemini-3-flash-preview:cloud', 'gemini-3-flash-preview:cloud']
-            ]},
-            { group: 'Custom', items: [
-                ['__custom__', '✏️ Modello personalizzato…']
-            ]}
-        ];
-        models.forEach(function (g) {
-            var og = el('optgroup');
-            og.label = g.group;
-            g.items.forEach(function (m) {
-                var opt = el('option', null, m[1]);
-                opt.value = m[0];
-                og.appendChild(opt);
-            });
-            sel.appendChild(og);
-        });
-        sel.addEventListener('change', function () {
-            var customWrap = page.querySelector('#acCustomModelWrap');
-            if (customWrap) customWrap.style.display = sel.value === '__custom__' ? '' : 'none';
-            markDirty();
-        });
-        modelField.appendChild(sel);
-        modelField.appendChild(el('div', 'ac-field-desc', 'Modello cloud per la traduzione EN→IT delle sinossi.'));
-        b3.appendChild(modelField);
+        var preview = makeCard('Diagnostica', 'Test e anteprima traduzione', 'Usa gli stessi prompt, modello, cache e limite di concorrenza della pipeline reale. Le credenziali non sono restituite dalla API.');
+        preview.body.appendChild(makeTextArea(
+            'acPreviewSource',
+            'Testo inglese',
+            'Incolla una breve sinossi da tradurre. Massimo 8000 caratteri.',
+            false
+        ));
+        var previewButton = el('button', 'ac-btn ac-btn-primary', 'Genera anteprima');
+        previewButton.type = 'button';
+        previewButton.id = 'acBtnPreviewTranslation';
+        preview.body.appendChild(previewButton);
+        var previewResult = el('div', 'ac-preview-result');
+        previewResult.id = 'acTranslationPreviewResult';
+        previewResult.style.display = 'none';
+        preview.body.appendChild(previewResult);
+        panel.appendChild(preview.card);
 
-        var customWrap = makeField('acCustomModel', 'Nome modello personalizzato', 'text', 'Inserisci il nome esatto del modello cloud.');
-        customWrap.id = 'acCustomModelWrap';
-        customWrap.style.display = 'none';
-        b3.appendChild(customWrap);
-
-        b3.appendChild(makeField('acEpisodeTranslationTimeoutSec', 'Timeout traduzione (secondi)', 'number', 'Timeout per una singola chiamata di traduzione.', { min: '5', max: '120' }));
-        c3.appendChild(b3);
-        p.appendChild(c3);
+        var fallback = makeCard('Pipeline reale', 'Anteprima fallback episodio', 'Esegue la catena salvata per un episodio e indica la fonte vincente senza mostrare chiavi.');
+        var fallbackGrid = el('div', 'ac-grid-3');
+        fallbackGrid.appendChild(makeField('acFallbackAnimeId', 'ID AnimeClick', 'text', 'Esempio: 72/naruto.', {}, false));
+        fallbackGrid.appendChild(makeField('acFallbackSeason', 'Stagione', 'number', '0 per gli special.', { min: '0', value: '1' }, false));
+        fallbackGrid.appendChild(makeField('acFallbackEpisode', 'Episodio', 'number', 'Numero episodio.', { min: '1', value: '1' }, false));
+        fallback.body.appendChild(fallbackGrid);
+        var fallbackButton = el('button', 'ac-btn', 'Esegui catena salvata');
+        fallbackButton.type = 'button';
+        fallbackButton.id = 'acBtnPreviewFallback';
+        fallback.body.appendChild(fallbackButton);
+        var fallbackResult = el('div', 'ac-preview-result');
+        fallbackResult.id = 'acFallbackPreviewResult';
+        fallbackResult.style.display = 'none';
+        fallback.body.appendChild(fallbackResult);
+        panel.appendChild(fallback.card);
     }
+
+    /* ===== tools ===== */
 
     function buildStrumentiPanel() {
-        var p = page.querySelector('#acPanelStrumenti');
-        clear(p);
+        var panel = page.querySelector('#acPanelStrumenti');
+        clear(panel);
 
-        // Identifica & Aggiorna
-        var c1 = el('div', 'ac-card ac-card-flush');
-        var h1 = el('div', 'ac-card-head');
-        h1.appendChild(el('span', 'ac-subtitle', '🔍 Identifica & Aggiorna'));
-        c1.appendChild(h1);
-        var b1 = el('div', 'ac-card-body');
-        b1.appendChild(el('div', 'ac-field-desc', 'Identifica manualmente un elemento Jellyfin con un anime AnimeClick specifico, aggiorna i metadati e scarica le immagini da tutti i provider attivi.'));
-        var g1 = el('div', 'ac-grid-2');
-        g1.appendChild(makeField('acItemId', 'ID elemento Jellyfin', 'text', 'L\'ID interno dell\'elemento nella tua libreria.'));
-        g1.appendChild(makeField('acAnimeClickId', 'ID/slug AnimeClick', 'text', 'Es: "naruto" oppure "2966-naruto".'));
-        b1.appendChild(g1);
-        b1.appendChild(makeCheck('acReplaceAllImages', 'Sostituisci tutte le immagini', 'Rimuovi le immagini esistenti e scarica di nuovo da tutti i provider.'));
-        var btnId = el('button', 'ac-btn ac-btn-primary', '🚀 Identifica & Aggiorna');
-        btnId.type = 'button';
-        btnId.id = 'acBtnIdentify';
-        b1.appendChild(btnId);
-        var idResult = el('div', 'ac-log');
-        idResult.id = 'acIdentifyResult';
-        idResult.style.display = 'none';
-        b1.appendChild(idResult);
-        c1.appendChild(b1);
-        p.appendChild(c1);
+        var identify = makeCard('Manutenzione elemento', 'Identifica e aggiorna', 'Associa un elemento Jellyfin a un ID AnimeClick e avvia un refresh completo dei provider configurati.');
+        var identifyGrid = el('div', 'ac-grid-2');
+        identifyGrid.appendChild(makeField('acItemId', 'ID elemento Jellyfin', 'text', 'ID interno dell’elemento.', {}, false));
+        identifyGrid.appendChild(makeField('acAnimeClickId', 'ID AnimeClick', 'text', 'Numero o numero/slug.', {}, false));
+        identify.body.appendChild(identifyGrid);
+        identify.body.appendChild(makeCheck(
+            'acReplaceAllImages',
+            'Sostituisci tutte le immagini',
+            'Rimuove gli artwork esistenti prima del refresh. Operazione reversibile con un nuovo refresh immagini.',
+            false
+        ));
+        var identifyButton = el('button', 'ac-btn ac-btn-primary', 'Identifica e aggiorna');
+        identifyButton.type = 'button';
+        identifyButton.id = 'acBtnIdentify';
+        identify.body.appendChild(identifyButton);
+        var identifyResult = el('div', 'ac-preview-result');
+        identifyResult.id = 'acIdentifyResult';
+        identifyResult.style.display = 'none';
+        identify.body.appendChild(identifyResult);
+        panel.appendChild(identify.card);
 
-        // Ricerca, Cache & Avanzate
-        var c2 = el('div', 'ac-card ac-card-flush');
-        var h2 = el('div', 'ac-card-head');
-        h2.appendChild(el('span', 'ac-subtitle', '⚙️ Ricerca, Cache & Avanzate'));
-        c2.appendChild(h2);
-        var b2 = el('div', 'ac-card-body');
-        var g2 = el('div', 'ac-grid-2');
-        g2.appendChild(makeField('acMaxSearchResults', 'Max risultati ricerca', 'number', 'Numero massimo di risultati per ricerca (1–25).', { min: '1', max: '25' }));
-        g2.appendChild(makeField('acCacheHours', 'Cache metadati (ore)', 'number', 'Per quante ore i metadati restano in cache (1–720).', { min: '1', max: '720' }));
-        g2.appendChild(makeField('acNegativeCacheHours', 'Cache negativa (ore)', 'number', 'Per quante ore i risultati vuoti restano in cache (1–168).', { min: '1', max: '168' }));
-        g2.appendChild(makeField('acRequestDelay', 'Pausa tra richieste (ms)', 'number', 'Ritardo in millisecondi tra richieste HTTP ad AnimeClick (500–10000).', { min: '500', max: '10000' }));
-        b2.appendChild(g2);
-        b2.appendChild(makeCheck('acFilterToAnimeOnly', 'Filtra solo anime', 'Escludi manga, novel, drama e mostra solo risultati anime.'));
-        b2.appendChild(makeField('acBaseUrl', 'URL base AnimeClick', 'url', 'Non modificare a meno che il sito non cambi dominio.'));
-        b2.appendChild(makeField('acUserAgent', 'User-Agent', 'text', 'User-Agent per le richieste HTTP verso AnimeClick.'));
-        c2.appendChild(b2);
-        p.appendChild(c2);
+        var cache = makeCard('Cache', 'Invalidazione controllata', 'Svuota tutta la cache soltanto quando vuoi forzare una nuova acquisizione dei metadati.');
+        var cacheActions = el('div', 'ac-row');
+        var clearButton = el('button', 'ac-btn ac-btn-danger', 'Svuota tutta la cache');
+        clearButton.type = 'button';
+        clearButton.id = 'acBtnClearCache';
+        cacheActions.appendChild(clearButton);
+        var cacheResult = el('span', 'ac-state');
+        cacheResult.id = 'acCacheResult';
+        cacheActions.appendChild(cacheResult);
+        cache.body.appendChild(cacheActions);
+        panel.appendChild(cache.card);
+
+        var advanced = makeDetails(
+            'Ricerca, rete e compatibilità',
+            'Modifica questi valori solo per diagnostica o se AnimeClick cambia comportamento.'
+        );
+        var grid = el('div', 'ac-grid-2');
+        grid.appendChild(makeField('acMaxSearchResults', 'Risultati ricerca', 'number', 'Da 1 a 25.', { min: '1', max: '25' }));
+        grid.appendChild(makeField('acCacheHours', 'Cache metadati', 'number', 'Ore, da 1 a 720.', { min: '1', max: '720' }));
+        grid.appendChild(makeField('acNegativeCacheHours', 'Cache negativa', 'number', 'Ore, da 1 a 168.', { min: '1', max: '168' }));
+        grid.appendChild(makeField('acRequestDelay', 'Pausa richieste', 'number', 'Millisecondi tra richieste AnimeClick.', { min: '500', max: '10000' }));
+        advanced.body.appendChild(grid);
+        advanced.body.appendChild(makeField('acBaseUrl', 'URL base AnimeClick', 'url', 'Modifica solo in caso di cambio dominio.'));
+        advanced.body.appendChild(makeField('acUserAgent', 'User-Agent', 'text', 'Identificativo HTTP del plugin.', { spellcheck: 'false' }));
+        panel.appendChild(advanced.details);
     }
 
-    /* ===== load config into form ===== */
+    /* ===== configuration mapping ===== */
 
-    function val(id) { return page.querySelector('#' + id); }
+    function setChecked(id, value, fallback) {
+        var input = val(id);
+        input.checked = value == null ? fallback : !!value;
+    }
 
-    function loadForm(cfg) {
-        savedConfig = cfg;
+    function setValue(id, value, fallback) {
+        var input = val(id);
+        input.value = value == null || value === '' ? fallback : value;
+    }
 
-        // Metadati
-        val('acPreferItalianTitle').checked = cfg.PreferItalianTitle;
-        val('acEnablePlot').checked = cfg.EnablePlot;
-        val('acOverwriteNonItalianFields').checked = cfg.OverwriteNonItalianFields;
-        val('acEnableAnimeClickImages').checked = cfg.EnableAnimeClickImages;
-        val('acMinPosterWidth').value = (cfg.MinPosterWidth ?? 400);
-        val('acEnableGenres').checked = cfg.EnableGenres;
-        val('acEnableStudios').checked = cfg.EnableStudios;
-        val('acEnableCommunityRating').checked = cfg.EnableCommunityRating;
-        val('acEnableCast').checked = cfg.EnableCast;
-        val('acEnableTags').checked = cfg.EnableTags;
-        val('acEnableEpisodeTitles').checked = cfg.EnableEpisodeTitles;
-        val('acEnableThemeSongs').checked = cfg.EnableThemeSongs;
-        val('acEnableCollections').checked = cfg.EnableCollections;
-
-        // Sinossi
-        val('acEnableEpisodeSynopsisTranslation').checked = cfg.EnableEpisodeSynopsisTranslation;
-        val('acEnableTvdbSynopsis').checked = cfg.EnableTvdbSynopsis;
-        val('acTvdbApiKey').value = cfg.TvdbApiKey || '';
-        val('acTvdbLanguage').value = cfg.TvdbLanguage || 'ita';
-        val('acTmdbApiKey').value = cfg.TmdbApiKey || '';
-        val('acOllamaCloudApiKey').value = cfg.OllamaCloudApiKey || '';
-        val('acOllamaCloudEndpoint').value = cfg.OllamaCloudEndpoint || '';
-        val('acEpisodeTranslationTimeoutSec').value = cfg.EpisodeTranslationTimeoutSec || 30;
-
-        // Model select
-        var modelSel = val('acOllamaCloudModel');
-        var model = cfg.OllamaCloudModel || 'gemma4:cloud';
-        var found = false;
-        for (var i = 0; i < modelSel.options.length; i++) {
-            if (modelSel.options[i].value === model) { modelSel.selectedIndex = i; found = true; break; }
+    function normalizeOllamaEndpoint(value) {
+        try {
+            var endpoint = new URL(String(value || '').trim());
+            if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+                return null;
+            }
+            return endpoint.href;
+        } catch (error) {
+            return null;
         }
-        if (!found) {
-            modelSel.value = '__custom__';
-            val('acCustomModel').value = model;
-            var cw = page.querySelector('#acCustomModelWrap');
-            if (cw) cw.style.display = '';
-        } else {
-            var cw2 = page.querySelector('#acCustomModelWrap');
-            if (cw2) cw2.style.display = 'none';
-        }
+    }
 
-        // Strumenti
-        val('acMaxSearchResults').value = cfg.MaxSearchResults || 10;
-        val('acFilterToAnimeOnly').checked = cfg.FilterToAnimeOnly;
-        val('acCacheHours').value = cfg.CacheHours || 48;
-        val('acNegativeCacheHours').value = cfg.NegativeCacheHours || 12;
-        val('acRequestDelay').value = cfg.RequestDelayMilliseconds || 1000;
-        val('acBaseUrl').value = cfg.BaseUrl || 'https://www.animeclick.it';
-        val('acUserAgent').value = cfg.UserAgent || '';
+    function ollamaEndpointChanged() {
+        var current = normalizeOllamaEndpoint(val('acOllamaCloudEndpoint').value);
+        var stored = normalizeOllamaEndpoint(savedConfig && savedConfig.OllamaCloudEndpoint);
+        return current == null || stored == null || current !== stored;
+    }
 
-        updateFeatureChips(cfg);
+    function ollamaCredentialAvailable() {
+        return !!val('acOllamaCloudApiKey').value.trim()
+            || (!ollamaEndpointChanged() && !!(savedConfig && savedConfig.OllamaCloudApiKey));
+    }
+
+    function loadForm(config) {
+        savedConfig = config;
+
+        setChecked('acPreferItalianTitle', config.PreferItalianTitle, true);
+        setChecked('acEnablePlot', config.EnablePlot, true);
+        setChecked('acOverwriteNonItalianFields', config.OverwriteNonItalianFields, false);
+        setChecked('acEnableAnimeClickImages', config.EnableAnimeClickImages, true);
+        setValue('acMinPosterWidth', config.MinPosterWidth, 400);
+        setChecked('acEnableGenres', config.EnableGenres, true);
+        setChecked('acEnableStudios', config.EnableStudios, true);
+        setChecked('acEnableCommunityRating', config.EnableCommunityRating, true);
+        setChecked('acEnableCast', config.EnableCast, true);
+        setChecked('acEnableTags', config.EnableTags, true);
+        setChecked('acEnableProductionLocations', config.EnableProductionLocations, true);
+        setChecked('acEnableTrailers', config.EnableTrailers, true);
+        setChecked('acEnableEpisodeTitles', config.EnableEpisodeTitles, true);
+        setChecked('acEnableThemeSongs', config.EnableThemeSongs, true);
+        setChecked('acEnableCollections', config.EnableCollections, false);
+
+        setChecked('acEnableEpisodeSynopsisTranslation', config.EnableEpisodeSynopsisTranslation, false);
+        setChecked('acEnableTvdbSynopsis', config.EnableTvdbSynopsis, false);
+        setValue('acTvdbApiKey', config.TvdbApiKey, '');
+        setValue('acTmdbApiKey', config.TmdbApiKey, '');
+        var ollamaKeyInput = val('acOllamaCloudApiKey');
+        ollamaKeyInput.value = '';
+        ollamaKeyInput.placeholder = config.OllamaCloudApiKey
+            ? 'Chiave salvata — lascia vuoto per mantenerla'
+            : 'Inserisci la chiave Ollama Cloud';
+        setValue('acOllamaCloudEndpoint', config.OllamaCloudEndpoint, 'https://ollama.com/api/chat');
+        setValue('acOllamaCloudModel', config.OllamaCloudModel, 'gemma4:31b-cloud');
+        setValue('acEpisodeTranslationTimeoutSec', config.EpisodeTranslationTimeoutSec, 30);
+        setValue('acTranslationCacheHours', config.TranslationCacheHours, 87600);
+
+        setValue('acMaxSearchResults', config.MaxSearchResults, 10);
+        setValue('acCacheHours', config.CacheHours, 48);
+        setValue('acNegativeCacheHours', config.NegativeCacheHours, 12);
+        setValue('acRequestDelay', config.RequestDelayMilliseconds, 1000);
+        setValue('acBaseUrl', config.BaseUrl, 'https://www.animeclick.it');
+        setValue('acUserAgent', config.UserAgent, '');
+
+        updateFeatureChips(config);
+        updateHeroStats(config);
+        updateProviderPresence();
         markClean();
     }
 
-    /* ===== read form back to config ===== */
+    function readForm(config) {
+        config.PreferItalianTitle = val('acPreferItalianTitle').checked;
+        config.EnablePlot = val('acEnablePlot').checked;
+        config.OverwriteNonItalianFields = val('acOverwriteNonItalianFields').checked;
+        config.EnableAnimeClickImages = val('acEnableAnimeClickImages').checked;
+        config.MinPosterWidth = parseInt(val('acMinPosterWidth').value, 10) || 0;
+        config.EnableGenres = val('acEnableGenres').checked;
+        config.EnableStudios = val('acEnableStudios').checked;
+        config.EnableCommunityRating = val('acEnableCommunityRating').checked;
+        config.EnableCast = val('acEnableCast').checked;
+        config.EnableTags = val('acEnableTags').checked;
+        config.EnableProductionLocations = val('acEnableProductionLocations').checked;
+        config.EnableTrailers = val('acEnableTrailers').checked;
+        config.EnableEpisodeTitles = val('acEnableEpisodeTitles').checked;
+        config.EnableThemeSongs = val('acEnableThemeSongs').checked;
+        config.EnableCollections = val('acEnableCollections').checked;
 
-    function readForm(cfg) {
-        cfg.PreferItalianTitle = val('acPreferItalianTitle').checked;
-        cfg.EnablePlot = val('acEnablePlot').checked;
-        cfg.OverwriteNonItalianFields = val('acOverwriteNonItalianFields').checked;
-        cfg.EnableAnimeClickImages = val('acEnableAnimeClickImages').checked;
-        cfg.MinPosterWidth = parseInt(val('acMinPosterWidth').value, 10) || 0;
-        cfg.EnableGenres = val('acEnableGenres').checked;
-        cfg.EnableStudios = val('acEnableStudios').checked;
-        cfg.EnableCommunityRating = val('acEnableCommunityRating').checked;
-        cfg.EnableCast = val('acEnableCast').checked;
-        cfg.EnableTags = val('acEnableTags').checked;
-        cfg.EnableEpisodeTitles = val('acEnableEpisodeTitles').checked;
-        cfg.EnableThemeSongs = val('acEnableThemeSongs').checked;
-        cfg.EnableCollections = val('acEnableCollections').checked;
+        config.EnableEpisodeSynopsisTranslation = val('acEnableEpisodeSynopsisTranslation').checked;
+        config.EnableTvdbSynopsis = val('acEnableTvdbSynopsis').checked;
+        config.TvdbApiKey = val('acTvdbApiKey').value.trim();
+        config.TmdbApiKey = val('acTmdbApiKey').value.trim();
+        var enteredOllamaKey = val('acOllamaCloudApiKey').value.trim();
+        var enteredOllamaEndpoint = val('acOllamaCloudEndpoint').value.trim()
+            || 'https://ollama.com/api/chat';
+        var normalizedOllamaEndpoint = normalizeOllamaEndpoint(enteredOllamaEndpoint);
+        var freshOllamaEndpoint = normalizeOllamaEndpoint(config.OllamaCloudEndpoint);
+        if (normalizedOllamaEndpoint == null) {
+            throw new Error('L’endpoint Ollama deve essere HTTPS e non può includere credenziali, query o frammenti.');
+        }
+        if (enteredOllamaKey) {
+            config.OllamaCloudApiKey = enteredOllamaKey;
+        } else if (freshOllamaEndpoint == null || normalizedOllamaEndpoint !== freshOllamaEndpoint) {
+            // The configuration may have changed in another admin tab after this
+            // page loaded. Never pair its newly persisted key with our stale URL.
+            throw new Error('Il profilo Ollama è cambiato sul server: ricarica la pagina o reinserisci la chiave.');
+        }
+        config.OllamaCloudEndpoint = normalizedOllamaEndpoint;
+        config.OllamaCloudModel = val('acOllamaCloudModel').value.trim() || 'gemma4:31b-cloud';
+        config.EpisodeTranslationTimeoutSec = parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 30;
+        config.TranslationCacheHours = parseInt(val('acTranslationCacheHours').value, 10) || 87600;
 
-        cfg.EnableEpisodeSynopsisTranslation = val('acEnableEpisodeSynopsisTranslation').checked;
-        cfg.EnableTvdbSynopsis = val('acEnableTvdbSynopsis').checked;
-        cfg.TvdbApiKey = val('acTvdbApiKey').value.trim();
-        cfg.TvdbLanguage = val('acTvdbLanguage').value.trim() || 'ita';
-        cfg.TmdbApiKey = val('acTmdbApiKey').value.trim();
-        cfg.OllamaCloudApiKey = val('acOllamaCloudApiKey').value.trim();
-        cfg.OllamaCloudEndpoint = val('acOllamaCloudEndpoint').value.trim();
-        cfg.EpisodeTranslationTimeoutSec = parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 30;
-
-        var modelSel = val('acOllamaCloudModel');
-        cfg.OllamaCloudModel = modelSel.value === '__custom__'
-            ? (val('acCustomModel').value.trim() || 'gemma4:cloud')
-            : modelSel.value;
-
-        cfg.MaxSearchResults = parseInt(val('acMaxSearchResults').value, 10) || 10;
-        cfg.FilterToAnimeOnly = val('acFilterToAnimeOnly').checked;
-        cfg.CacheHours = parseInt(val('acCacheHours').value, 10) || 48;
-        cfg.NegativeCacheHours = parseInt(val('acNegativeCacheHours').value, 10) || 12;
-        cfg.RequestDelayMilliseconds = parseInt(val('acRequestDelay').value, 10) || 1000;
-        cfg.BaseUrl = val('acBaseUrl').value.trim() || 'https://www.animeclick.it';
-        cfg.UserAgent = val('acUserAgent').value.trim();
-
-        return cfg;
+        config.MaxSearchResults = parseInt(val('acMaxSearchResults').value, 10) || 10;
+        config.CacheHours = parseInt(val('acCacheHours').value, 10) || 48;
+        config.NegativeCacheHours = parseInt(val('acNegativeCacheHours').value, 10) || 12;
+        config.RequestDelayMilliseconds = parseInt(val('acRequestDelay').value, 10) || 1000;
+        config.BaseUrl = val('acBaseUrl').value.trim() || 'https://www.animeclick.it';
+        config.UserAgent = val('acUserAgent').value.trim();
+        return config;
     }
 
-    /* ===== feature chips ===== */
+    function validateForm() {
+        var enteredEndpoint = val('acOllamaCloudEndpoint').value.trim()
+            || 'https://ollama.com/api/chat';
+        if (normalizeOllamaEndpoint(enteredEndpoint) == null) {
+            return 'L’endpoint Ollama deve essere HTTPS e non può includere credenziali, query o frammenti.';
+        }
 
-    function updateFeatureChips(cfg) {
+        var ollamaKey = val('acOllamaCloudApiKey').value.trim();
+        if (ollamaEndpointChanged() && !ollamaKey) {
+            return 'Reinserisci la chiave Ollama dopo aver cambiato endpoint.';
+        }
+
+        var model = val('acOllamaCloudModel').value.trim();
+        if (ollamaCredentialAvailable() && !/cloud$/i.test(model)) {
+            return 'Il profilo cloud-only richiede un modello con tag cloud.';
+        }
+
+        if (!val('acEnableEpisodeSynopsisTranslation').checked) return null;
+        var tvdbReady = val('acEnableTvdbSynopsis').checked && !!val('acTvdbApiKey').value.trim();
+        var tmdbReady = !!val('acTmdbApiKey').value.trim();
+        if (!tvdbReady && !tmdbReady) {
+            return 'Abilita almeno una fonte italiana: TheTVDB oppure TMDB.';
+        }
+        return null;
+    }
+
+    /* ===== summaries ===== */
+
+    function updateFeatureChips(config) {
         var container = page.querySelector('#acFeatureChips');
         if (!container) return;
         clear(container);
         var features = [
-            ['Titolo IT', cfg.PreferItalianTitle],
-            ['Trama', cfg.EnablePlot],
-            ['Immagini AC', cfg.EnableAnimeClickImages],
-            ['Min locandina', (cfg.MinPosterWidth || 0) + 'px'],
-            ['Generi', cfg.EnableGenres],
-            ['Studi', cfg.EnableStudios],
-            ['Rating', cfg.EnableCommunityRating],
-            ['Cast', cfg.EnableCast],
-            ['Tag', cfg.EnableTags],
-            ['Ep. titoli', cfg.EnableEpisodeTitles],
-            ['Sigle', cfg.EnableThemeSongs],
-            ['Collezioni', cfg.EnableCollections],
-            ['Sinossi EP', cfg.EnableEpisodeSynopsisTranslation],
-            ['TVDB', cfg.EnableTvdbSynopsis],
-            ['Solo anime', cfg.FilterToAnimeOnly]
+            ['Titolo IT', config.PreferItalianTitle],
+            ['Trama IT', config.EnablePlot],
+            ['Generi', config.EnableGenres],
+            ['Tag', config.EnableTags],
+            ['Nazionalità', config.EnableProductionLocations],
+            ['Trailer/PV', config.EnableTrailers],
+            ['Cast/Staff', config.EnableCast],
+            ['Studi', config.EnableStudios],
+            ['Rating', config.EnableCommunityRating],
+            ['Titoli episodi', config.EnableEpisodeTitles],
+            ['Sigle', config.EnableThemeSongs],
+            ['Poster fallback', config.EnableAnimeClickImages],
+            ['Sinossi episodi', config.EnableEpisodeSynopsisTranslation],
+            ['TVDB IT', config.EnableTvdbSynopsis]
         ];
-        features.forEach(function (f) {
-            var chip = el('span', 'ac-chip ' + (f[1] ? 'ac-chip-on' : 'ac-chip-off'), (f[1] ? '✓ ' : '✗ ') + f[0]);
-            container.appendChild(chip);
+        features.forEach(function (feature) {
+            var enabled = !!feature[1];
+            container.appendChild(el(
+                'span',
+                'ac-chip ' + (enabled ? 'ac-chip-on' : 'ac-chip-off'),
+                (enabled ? 'Attivo · ' : 'Off · ') + feature[0]
+            ));
         });
     }
 
-    /* ===== wire actions ===== */
-
-    function wireActions() {
-        // Save
-        page.querySelector('#acBtnSave').addEventListener('click', function () {
-            getPluginConfig().then(function (cfg) {
-                readForm(cfg);
-                return savePluginConfig(cfg);
-            }).then(function () {
-                toast('Configurazione salvata', 'success');
-                return getPluginConfig();
-            }).then(function (cfg) {
-                loadForm(cfg);
-            }).catch(function (e) {
-                toast('Errore: ' + e.message, 'error');
-            });
-        });
-
-        // Discard
-        page.querySelector('#acBtnDiscard').addEventListener('click', function () {
-            if (savedConfig) loadForm(savedConfig);
-            markClean();
-        });
-
-        // Test providers
-        ['tmdb', 'ollama', 'tvdb'].forEach(function (prov) {
-            var endpoints = { tmdb: 'Plugins/AnimeClick/TestTmdb', ollama: 'Plugins/AnimeClick/TestOllama', tvdb: 'Plugins/AnimeClick/TestTvdb' };
-            page.querySelector('#acTest_' + prov).addEventListener('click', function () {
-                var dot = page.querySelector('#acDot_' + prov);
-                var badge = page.querySelector('#acBadge_' + prov);
-                var detail = page.querySelector('#acDetail_' + prov);
-                dot.className = 'ac-live-dot is-idle';
-                badge.className = 'ac-badge neutral';
-                badge.textContent = '…';
-
-                request('POST', endpoints[prov], {}).then(function (r) {
-                    var ok = r && (r.success || r.Success);
-                    dot.className = 'ac-live-dot ' + (ok ? 'is-ok' : 'is-error');
-                    badge.className = 'ac-badge ' + (ok ? 'success' : 'danger');
-                    badge.textContent = ok ? 'Connesso' : 'Errore';
-                    if (detail) {
-                        detail.textContent = JSON.stringify(r, null, 2);
-                        detail.style.display = '';
-                    }
-                }).catch(function (e) {
-                    dot.className = 'ac-live-dot is-error';
-                    badge.className = 'ac-badge danger';
-                    badge.textContent = 'Errore';
-                    if (detail) {
-                        detail.textContent = e.message;
-                        detail.style.display = '';
-                    }
-                });
-            });
-        });
-
-        // Clear cache
-        page.querySelector('#acBtnClearCache').addEventListener('click', function () {
-            confirmModal('Svuota cache', 'Eliminare tutta la cache dei metadati scaricati?').then(function (ok) {
-                if (!ok) return;
-                var res = page.querySelector('#acCacheResult');
-                res.className = 'ac-state';
-                res.innerHTML = '<span class="ac-spinner"></span>Svuotamento in corso…';
-                request('POST', 'Plugins/AnimeClick/ClearCache', {}).then(function (r) {
-                    res.className = 'ac-state success';
-                    res.textContent = '✓ Cache svuotata' + (r && r.message ? ': ' + r.message : '');
-                    toast('Cache svuotata', 'success');
-                }).catch(function (e) {
-                    res.className = 'ac-state error';
-                    res.textContent = '✗ Errore: ' + e.message;
-                    toast('Errore: ' + e.message, 'error');
-                });
-            });
-        });
-
-        // Identify & Refresh
-        page.querySelector('#acBtnIdentify').addEventListener('click', function () {
-            var itemId = val('acItemId').value.trim();
-            var acId = val('acAnimeClickId').value.trim();
-            var replace = val('acReplaceAllImages').checked;
-            if (!itemId || !acId) {
-                toast('Inserisci entrambi gli ID', 'error');
-                return;
-            }
-            var resBox = page.querySelector('#acIdentifyResult');
-            resBox.style.display = '';
-            resBox.textContent = '';
-            resBox.innerHTML = '<span class="ac-spinner"></span>Identificazione in corso…';
-
-            request('POST', 'Plugins/AnimeClick/IdentifyAndRefresh', {
-                itemId: itemId,
-                animeClickId: acId,
-                replaceAllImages: replace
-            }).then(function (r) {
-                resBox.textContent = JSON.stringify(r, null, 2);
-                toast('Identificazione completata', 'success');
-            }).catch(function (e) {
-                resBox.textContent = '✗ Errore: ' + e.message;
-                toast('Errore: ' + e.message, 'error');
-            });
-        });
-    }
-
-    /* ===== hero stats ===== */
-
-    function updateHeroStats(cfg) {
-        var statEl = page.querySelector('#acStatProviders');
-        if (statEl) {
-            var count = 0;
-            if (cfg.TmdbApiKey) count++;
-            if (cfg.OllamaCloudApiKey) count++;
-            if (cfg.TvdbApiKey) count++;
-            statEl.querySelector('.ac-stat-value').textContent = count + '/3';
-            statEl.querySelector('.ac-stat-sub').textContent = 'configurati';
-            statEl.className = 'ac-stat ' + (count === 3 ? 'good' : count > 0 ? 'warn' : '');
+    function updateHeroStats(config) {
+        var providerStat = page.querySelector('#acStatProviders');
+        if (providerStat) {
+            var count = [config.TmdbApiKey, config.OllamaCloudApiKey, config.TvdbApiKey].filter(Boolean).length;
+            providerStat.querySelector('.ac-stat-value').textContent = count + '/3';
+            providerStat.querySelector('.ac-stat-sub').textContent = 'fallback configurati';
+            providerStat.className = 'ac-stat ' + (count === 3 ? 'good' : count > 0 ? 'warn' : '');
         }
         var cacheStat = page.querySelector('#acStatCache');
         if (cacheStat) {
-            cacheStat.querySelector('.ac-stat-value').textContent = cfg.CacheHours + 'h';
-            cacheStat.querySelector('.ac-stat-sub').textContent = 'durata cache';
+            cacheStat.querySelector('.ac-stat-value').textContent = (config.CacheHours || 48) + 'h';
+            cacheStat.querySelector('.ac-stat-sub').textContent = 'cache metadati';
         }
-        var featStat = page.querySelector('#acStatFeatures');
-        if (featStat) {
-            var active = [cfg.PreferItalianTitle, cfg.EnablePlot, cfg.EnableAnimeClickImages,
-                cfg.EnableGenres, cfg.EnableStudios, cfg.EnableCommunityRating,
-                cfg.EnableCast, cfg.EnableTags, cfg.EnableEpisodeTitles,
-                cfg.EnableThemeSongs, cfg.EnableCollections, cfg.EnableEpisodeSynopsisTranslation].filter(Boolean).length;
-            featStat.querySelector('.ac-stat-value').textContent = active + '/12';
-            featStat.querySelector('.ac-stat-sub').textContent = 'funzionalità attive';
-            featStat.className = 'ac-stat ' + (active > 8 ? 'good' : active > 4 ? 'warn' : '');
+        var featureStat = page.querySelector('#acStatFeatures');
+        if (featureStat) {
+            var active = [
+                config.PreferItalianTitle,
+                config.EnablePlot,
+                config.EnableAnimeClickImages,
+                config.EnableGenres,
+                config.OverwriteNonItalianFields && config.EnableStudios,
+                config.OverwriteNonItalianFields && config.EnableCommunityRating,
+                config.EnableCast,
+                config.EnableTags,
+                config.EnableProductionLocations,
+                config.EnableTrailers,
+                config.EnableEpisodeTitles,
+                config.EnableThemeSongs,
+                config.EnableEpisodeSynopsisTranslation
+            ].filter(Boolean).length;
+            featureStat.querySelector('.ac-stat-value').textContent = active + '/13';
+            featureStat.querySelector('.ac-stat-sub').textContent = 'funzionalità attive';
+            featureStat.className = 'ac-stat ' + (active >= 10 ? 'good' : active >= 6 ? 'warn' : '');
         }
     }
 
-    /* ===== main show ===== */
+    function setProviderState(provider, state, label, detail) {
+        var dot = page.querySelector('#acDot_' + provider);
+        var badge = page.querySelector('#acBadge_' + provider);
+        var detailNode = page.querySelector('#acDetail_' + provider);
+        if (dot) dot.className = 'ac-live-dot ' + (state === 'ok' ? 'is-ok' : state === 'error' ? 'is-error' : 'is-idle');
+        if (badge) {
+            badge.className = 'ac-badge ' + (state === 'ok' ? 'success' : state === 'error' ? 'danger' : 'neutral');
+            badge.textContent = label;
+        }
+        if (detailNode) {
+            detailNode.textContent = detail || '';
+            detailNode.style.display = detail ? '' : 'none';
+        }
+    }
 
-    function show(pageEl) {
-        page = pageEl;
+    function updateProviderPresence() {
+        if (!page || !val('acTmdbApiKey')) return;
+        var present = {
+            tmdb: !!val('acTmdbApiKey').value.trim(),
+            ollama: ollamaCredentialAvailable(),
+            tvdb: !!val('acTvdbApiKey').value.trim()
+        };
+        Object.keys(present).forEach(function (provider) {
+            setProviderState(provider, 'idle', present[provider] ? 'Da verificare' : 'Non configurato', '');
+        });
+    }
 
-        // Build panels
+    /* ===== library provider health ===== */
+
+    function includesName(list, expected) {
+        var target = expected.toLowerCase();
+        return list.some(function (item) { return String(item).toLowerCase() === target; });
+    }
+
+    function activeOrder(typeOptions, kind) {
+        var enabled = asArray(valueOf(typeOptions, kind + 'Fetchers'));
+        var ordered = asArray(valueOf(typeOptions, kind + 'FetcherOrder'));
+        var result = ordered.filter(function (name) { return includesName(enabled, name); });
+        enabled.forEach(function (name) {
+            if (!includesName(result, name)) result.push(name);
+        });
+        return result;
+    }
+
+    function analyzeProvider(typeOptions, kind) {
+        var enabled = asArray(valueOf(typeOptions, kind + 'Fetchers'));
+        if (!includesName(enabled, 'AnimeClick')) {
+            return { enabled: false, label: 'AnimeClick non abilitato', tone: 'neutral' };
+        }
+        var order = activeOrder(typeOptions, kind);
+        var index = order.findIndex(function (name) { return String(name).toLowerCase() === 'animeclick'; });
+        var position = index < 0 ? 1 : index + 1;
+        if (kind === 'Metadata') {
+            return {
+                enabled: true,
+                label: position === 1 ? 'Metadata #1' : 'Metadata #' + position,
+                tone: position === 1 ? 'success' : 'warn'
+            };
+        }
+        var isFallback = order.length <= 1 || position === order.length;
+        return {
+            enabled: true,
+            label: isFallback ? 'Immagini fallback #' + position : 'Immagini #' + position,
+            tone: isFallback ? 'success' : 'warn'
+        };
+    }
+
+    function renderLibraryHealth(folders) {
+        var host = page.querySelector('#acLibraryHealth');
+        clear(host);
+        if (!folders.length) {
+            host.appendChild(el('div', 'ac-empty', 'Nessuna libreria disponibile.'));
+            return;
+        }
+
+        var relevantTypes = ['Series', 'Season', 'Episode', 'Movie'];
+        folders.forEach(function (folder) {
+            var options = valueOf(folder, 'libraryOptions') || {};
+            var typeOptions = asArray(valueOf(options, 'typeOptions')).filter(function (entry) {
+                return relevantTypes.indexOf(String(valueOf(entry, 'type'))) > -1;
+            });
+            if (!typeOptions.length) return;
+
+            var library = el('div', 'ac-library-card');
+            var heading = el('div', 'ac-library-heading');
+            heading.appendChild(el('strong', null, valueOf(folder, 'name') || 'Libreria'));
+            var collectionType = valueOf(folder, 'collectionType');
+            if (collectionType) heading.appendChild(el('span', 'ac-badge neutral', collectionType));
+            library.appendChild(heading);
+
+            typeOptions.forEach(function (entry) {
+                var row = el('div', 'ac-library-type');
+                row.appendChild(el('span', 'ac-library-type-name', valueOf(entry, 'type') || 'Tipo'));
+                var badges = el('div', 'ac-row');
+                var metadata = analyzeProvider(entry, 'Metadata');
+                var metadataBadge = el('span', 'ac-badge ' + metadata.tone, metadata.label);
+                badges.appendChild(metadataBadge);
+                var images = analyzeProvider(entry, 'Image');
+                if (images.enabled) badges.appendChild(el('span', 'ac-badge ' + images.tone, images.label));
+                row.appendChild(badges);
+                library.appendChild(row);
+            });
+            host.appendChild(library);
+        });
+
+        if (!host.children.length) {
+            host.appendChild(el('div', 'ac-empty', 'Nessun tipo Series, Season, Episode o Movie trovato.'));
+        }
+    }
+
+    function loadLibraryHealth() {
+        var host = page.querySelector('#acLibraryHealth');
+        if (!host) return;
+        clear(host);
+        host.appendChild(el('div', 'ac-state', 'Verifica delle priorità in corso…'));
+        request('GET', 'Library/VirtualFolders').then(function (folders) {
+            renderLibraryHealth(asArray(folders));
+        }).catch(function (error) {
+            clear(host);
+            host.appendChild(makeCallout('Verifica non disponibile', truncate(error.message, 240), 'warn'));
+        });
+    }
+
+    /* ===== diagnostics ===== */
+
+    function providerPayload(provider) {
+        if (provider === 'tmdb') {
+            return { apiKey: val('acTmdbApiKey').value.trim() };
+        }
+        if (provider === 'tvdb') {
+            return {
+                apiKey: val('acTvdbApiKey').value.trim()
+            };
+        }
+
+        var payload = {
+            model: val('acOllamaCloudModel').value.trim() || 'gemma4:31b-cloud',
+            timeoutSec: parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 30
+        };
+        var enteredApiKey = val('acOllamaCloudApiKey').value.trim();
+        if (ollamaEndpointChanged() || enteredApiKey) {
+            var visibleEndpoint = val('acOllamaCloudEndpoint').value.trim();
+            payload.endpoint = normalizeOllamaEndpoint(visibleEndpoint) || visibleEndpoint;
+        }
+        if (enteredApiKey) {
+            payload.apiKey = enteredApiKey;
+        }
+        return payload;
+    }
+
+    function formatProviderResult(provider, result, success) {
+        var status = valueOf(result, 'statusCode');
+        var error = valueOf(result, 'errorMessage');
+        if (!success) return truncate(error || ('Verifica fallita' + (status ? ' · HTTP ' + status : '')), 300);
+        if (provider === 'tmdb') {
+            return 'Connessione valida' + (status ? ' · HTTP ' + status : '') +
+                (valueOf(result, 'sampleName') ? ' · Risultato: ' + truncate(valueOf(result, 'sampleName'), 80) : '');
+        }
+        if (provider === 'tvdb') {
+            return 'Autenticazione e endpoint episodi validi' +
+                (valueOf(result, 'effectiveLanguage') ? ' · lingua ' + valueOf(result, 'effectiveLanguage') : '');
+        }
+        return 'Ollama Cloud raggiungibile' + (status ? ' · HTTP ' + status : '') +
+            ' · modello ' + (valueOf(result, 'model') || val('acOllamaCloudModel').value.trim());
+    }
+
+    function runProviderTest(provider, button) {
+        var endpoints = {
+            tmdb: 'Plugins/AnimeClick/TestTmdb',
+            ollama: 'Plugins/AnimeClick/TestOllama',
+            tvdb: 'Plugins/AnimeClick/TestTvdb'
+        };
+        var inline = page.querySelector('#acInlineResult_' + provider);
+        setBusy(button, true, button.getAttribute('data-idle-label') || button.textContent, 'Verifica…');
+        if (!button.getAttribute('data-idle-label')) button.setAttribute('data-idle-label', button.textContent === 'Verifica…' ? 'Verifica' : button.textContent);
+        if (inline) {
+            inline.className = 'ac-state';
+            inline.textContent = 'Connessione in corso…';
+        }
+        setProviderState(provider, 'idle', 'Verifica…', '');
+
+        request('POST', endpoints[provider], providerPayload(provider)).then(function (result) {
+            var success = !!valueOf(result, 'success');
+            var message = formatProviderResult(provider, result, success);
+            setProviderState(provider, success ? 'ok' : 'error', success ? 'Connesso' : 'Errore', message);
+            if (inline) {
+                inline.className = 'ac-state ' + (success ? 'success' : 'error');
+                inline.textContent = message;
+            }
+            toast(message, success ? 'success' : 'error');
+        }).catch(function (error) {
+            var message = truncate(error.message, 300);
+            setProviderState(provider, 'error', 'Errore', message);
+            if (inline) {
+                inline.className = 'ac-state error';
+                inline.textContent = message;
+            }
+            toast('Verifica fallita: ' + message, 'error');
+        }).finally(function () {
+            var idle = button.getAttribute('data-idle-label') || 'Verifica';
+            setBusy(button, false, idle, 'Verifica…');
+        });
+    }
+
+    function renderTranslationPreview(result) {
+        var host = page.querySelector('#acTranslationPreviewResult');
+        host.style.display = '';
+        clear(host);
+        var success = !!valueOf(result, 'success');
+        if (!success) {
+            host.appendChild(makeCallout('Nessuna traduzione', valueOf(result, 'errorMessage') || 'Esegui prima il test Ollama.', 'warn'));
+            return;
+        }
+        var meta = el('div', 'ac-row');
+        meta.appendChild(el('span', 'ac-badge success', 'EN → IT'));
+        meta.appendChild(el('span', 'ac-badge neutral', valueOf(result, 'model') || 'cloud'));
+        host.appendChild(meta);
+        host.appendChild(el('p', 'ac-preview-copy', valueOf(result, 'translation')));
+    }
+
+    function renderFallbackPreview(result) {
+        var host = page.querySelector('#acFallbackPreviewResult');
+        host.style.display = '';
+        clear(host);
+        var success = !!valueOf(result, 'success');
+        if (!success) {
+            host.appendChild(makeCallout('Nessuna fonte disponibile', valueOf(result, 'errorMessage') || 'La catena non ha prodotto una sinossi.', 'warn'));
+        } else {
+            var meta = el('div', 'ac-row');
+            meta.appendChild(el('span', 'ac-badge success', valueOf(result, 'source') || 'Fonte esterna'));
+            meta.appendChild(el('span', 'ac-badge neutral', valueOf(result, 'sourceLanguage') || 'it'));
+            if (valueOf(result, 'usedOllama')) meta.appendChild(el('span', 'ac-badge warn', valueOf(result, 'model') || 'Ollama Cloud'));
+            host.appendChild(meta);
+            host.appendChild(el('p', 'ac-preview-copy', valueOf(result, 'overview')));
+        }
+
+        var chain = asArray(valueOf(result, 'chain'));
+        if (chain.length) {
+            var chainRow = el('div', 'ac-fallback-report');
+            chain.forEach(function (step) {
+                var configured = !!valueOf(step, 'configured');
+                chainRow.appendChild(el(
+                    'span',
+                    'ac-chip ' + (configured ? 'ac-chip-on' : 'ac-chip-off'),
+                    (valueOf(step, 'source') || 'Fonte') + ' · ' + (valueOf(step, 'language') || '')
+                ));
+            });
+            host.appendChild(chainRow);
+        }
+    }
+
+    /* ===== actions ===== */
+
+    function saveCurrentConfiguration() {
+        var validationError = validateForm();
+        if (validationError) {
+            toast(validationError, 'error');
+            return Promise.reject(new Error(validationError));
+        }
+        return getPluginConfig().then(function (config) {
+            return savePluginConfig(readForm(config));
+        }).then(function () {
+            return getPluginConfig();
+        }).then(function (config) {
+            loadForm(config);
+            toast('Configurazione salvata', 'success');
+            return config;
+        });
+    }
+
+    function wireActions() {
+        page.querySelector('#acBtnSave').addEventListener('click', function () {
+            var button = this;
+            setBusy(button, true, 'Salva modifiche', 'Salvataggio…');
+            saveCurrentConfiguration().catch(function (error) {
+                if (error.message !== validateForm()) toast('Salvataggio fallito: ' + truncate(error.message, 240), 'error');
+            }).finally(function () {
+                setBusy(button, false, 'Salva modifiche', 'Salvataggio…');
+            });
+        });
+
+        page.querySelector('#acBtnDiscard').addEventListener('click', function () {
+            if (savedConfig) loadForm(savedConfig);
+        });
+
+        page.querySelectorAll('[data-secret-toggle]').forEach(function (button) {
+            button.addEventListener('click', function () {
+                var input = val(button.getAttribute('data-secret-toggle'));
+                var reveal = input.type === 'password';
+                input.type = reveal ? 'text' : 'password';
+                button.textContent = reveal ? 'Nascondi' : 'Mostra';
+            });
+        });
+
+        page.querySelectorAll('[data-ac-test]').forEach(function (button) {
+            button.setAttribute('data-idle-label', button.textContent);
+            button.addEventListener('click', function () {
+                runProviderTest(button.getAttribute('data-ac-test'), button);
+            });
+        });
+
+        page.querySelector('#acBtnRecommendedModel').addEventListener('click', function () {
+            val('acOllamaCloudModel').value = 'gemma4:31b-cloud';
+            markDirty();
+            toast('Modello consigliato ripristinato', 'success');
+        });
+
+        page.querySelector('#acBtnRefreshLibraries').addEventListener('click', loadLibraryHealth);
+
+        page.querySelector('#acBtnPreviewTranslation').addEventListener('click', function () {
+            var source = val('acPreviewSource').value.trim();
+            if (!source) {
+                toast('Inserisci una breve sinossi inglese', 'error');
+                return;
+            }
+            var button = this;
+            setBusy(button, true, 'Genera anteprima', 'Traduzione…');
+            var payload = providerPayload('ollama');
+            payload.sourceText = source;
+            request('POST', 'Plugins/AnimeClick/PreviewTranslation', payload).then(function (result) {
+                renderTranslationPreview(result);
+            }).catch(function (error) {
+                renderTranslationPreview({ success: false, errorMessage: truncate(error.message, 300) });
+            }).finally(function () {
+                setBusy(button, false, 'Genera anteprima', 'Traduzione…');
+            });
+        });
+
+        page.querySelector('#acBtnPreviewFallback').addEventListener('click', function () {
+            if (dirty) {
+                toast('Salva prima la configurazione: la pipeline usa soltanto valori persistiti.', 'error');
+                return;
+            }
+            var animeClickId = val('acFallbackAnimeId').value.trim();
+            var season = parseInt(val('acFallbackSeason').value, 10);
+            var episode = parseInt(val('acFallbackEpisode').value, 10);
+            if (!animeClickId || isNaN(season) || isNaN(episode)) {
+                toast('Inserisci ID AnimeClick, stagione ed episodio validi.', 'error');
+                return;
+            }
+            var button = this;
+            setBusy(button, true, 'Esegui catena salvata', 'Analisi…');
+            request('POST', 'Plugins/AnimeClick/PreviewEpisodeFallback', {
+                animeClickId: animeClickId,
+                season: season,
+                episode: episode
+            }).then(renderFallbackPreview).catch(function (error) {
+                renderFallbackPreview({ success: false, errorMessage: truncate(error.message, 300), chain: [] });
+            }).finally(function () {
+                setBusy(button, false, 'Esegui catena salvata', 'Analisi…');
+            });
+        });
+
+        page.querySelector('#acBtnClearCache').addEventListener('click', function () {
+            var button = this;
+            confirmModal('Svuota tutta la cache', 'Vuoi invalidare metadati, risoluzioni e traduzioni memorizzate?').then(function (confirmed) {
+                if (!confirmed) return;
+                var result = page.querySelector('#acCacheResult');
+                setBusy(button, true, 'Svuota tutta la cache', 'Svuotamento…');
+                result.className = 'ac-state';
+                result.textContent = 'Operazione in corso…';
+                request('POST', 'Plugins/AnimeClick/ClearCache', {}).then(function (response) {
+                    var removed = valueOf(response, 'removed');
+                    result.className = 'ac-state success';
+                    result.textContent = 'Cache svuotata' + (removed != null ? ' · ' + removed + ' elementi' : '');
+                    toast('Cache svuotata', 'success');
+                }).catch(function (error) {
+                    result.className = 'ac-state error';
+                    result.textContent = truncate(error.message, 240);
+                }).finally(function () {
+                    setBusy(button, false, 'Svuota tutta la cache', 'Svuotamento…');
+                });
+            });
+        });
+
+        page.querySelector('#acBtnIdentify').addEventListener('click', function () {
+            var itemId = val('acItemId').value.trim();
+            var animeClickId = val('acAnimeClickId').value.trim();
+            if (!itemId || !animeClickId) {
+                toast('Inserisci entrambi gli ID.', 'error');
+                return;
+            }
+            var button = this;
+            var result = page.querySelector('#acIdentifyResult');
+            result.style.display = '';
+            clear(result);
+            result.appendChild(el('div', 'ac-state', 'Identificazione in corso…'));
+            setBusy(button, true, 'Identifica e aggiorna', 'Aggiornamento…');
+            request('POST', 'Plugins/AnimeClick/IdentifyAndRefresh', {
+                itemId: itemId,
+                animeClickId: animeClickId,
+                replaceAllMetadata: false,
+                replaceAllImages: val('acReplaceAllImages').checked
+            }).then(function (response) {
+                var success = !!valueOf(response, 'success');
+                clear(result);
+                result.appendChild(makeCallout(
+                    success ? 'Aggiornamento completato' : 'Operazione incompleta',
+                    success ? 'L’ID AnimeClick è stato salvato e il refresh è stato richiesto.' : truncate(valueOf(response, 'error') || 'Errore sconosciuto.', 300),
+                    success ? 'good' : 'warn'
+                ));
+                toast(success ? 'Identificazione completata' : 'Identificazione incompleta', success ? 'success' : 'error');
+            }).catch(function (error) {
+                clear(result);
+                result.appendChild(makeCallout('Errore', truncate(error.message, 300), 'warn'));
+                toast('Identificazione fallita', 'error');
+            }).finally(function () {
+                setBusy(button, false, 'Identifica e aggiorna', 'Aggiornamento…');
+            });
+        });
+    }
+
+    /* ===== lifecycle ===== */
+
+    function buildPage() {
         buildOverviewPanel();
         buildMetadatiPanel();
         buildSinossiPanel();
         buildStrumentiPanel();
         initTabs();
         wireActions();
+    }
 
-        // Load config
-        getPluginConfig().then(function (cfg) {
-            loadForm(cfg);
-            updateHeroStats(cfg);
-        }).catch(function (e) {
-            toast('Errore caricamento config: ' + e.message, 'error');
+    function show(pageElement) {
+        page = pageElement;
+        if (page.getAttribute('data-ac-built') !== V) {
+            buildPage();
+            page.setAttribute('data-ac-built', V);
+        }
+
+        getPluginConfig().then(function (config) {
+            loadForm(config);
+            loadLibraryHealth();
+        }).catch(function (error) {
+            toast('Impossibile caricare la configurazione: ' + truncate(error.message, 240), 'error');
         });
     }
 
-    /* ===== export ===== */
-
     window.AC = window.AC || {};
     window.AC.config = { show: show };
-
-})();
+}());

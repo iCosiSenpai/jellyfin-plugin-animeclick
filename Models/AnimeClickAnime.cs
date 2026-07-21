@@ -32,9 +32,12 @@ public class AnimeClickAnime
     public List<string> Genres { get; set; } = [];
     public List<string> Studios { get; set; } = [];
     public List<string> Tags { get; set; } = [];
+    public List<string> ProductionLocations { get; set; } = [];
     public List<AnimeClickPerson> People { get; set; } = [];
     public List<AnimeClickEpisode> Episodes { get; set; } = [];
     public List<AnimeClickRelation> Relations { get; set; } = [];
     public List<AnimeClickThemeSong> ThemeSongs { get; set; } = [];
+    public List<AnimeClickTrailer> Trailers { get; set; } = [];
+    public bool MultimediaLoaded { get; set; }
     public Dictionary<string, string> ProviderIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

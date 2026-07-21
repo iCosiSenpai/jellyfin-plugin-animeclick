@@ -16,13 +16,20 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         : base(applicationPaths, xmlSerializer)
     {
         Instance = this;
+
+        // Migrate only the superseded default model. SaveConfiguration persists the
+        // normalized value while preserving every API key and any custom model choice.
+        if (Configuration.ApplyMigrations())
+        {
+            SaveConfiguration();
+        }
     }
 
     public override Guid Id => Guid.Parse("1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11");
 
     public override string Name => "AnimeClick Plugin";
 
-    public override string Description => "Provider metadati anime in italiano basato su AnimeClick con cache locale.";
+    public override string Description => "Autorità metadati anime in italiano con fallback cloud controllato.";
 
     public IEnumerable<PluginPageInfo> GetPages()
     {

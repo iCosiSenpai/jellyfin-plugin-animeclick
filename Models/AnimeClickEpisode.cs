@@ -8,6 +8,12 @@ public class AnimeClickEpisode
     /// <summary>Season number (null if not available from AnimeClick).</summary>
     public int? SeasonNumber { get; set; }
 
+    /// <summary>
+    /// True when <see cref="SeasonNumber"/> was inferred by evenly splitting a
+    /// continuous AnimeClick episode list rather than read from an explicit row label.
+    /// </summary>
+    public bool SeasonNumberIsSynthetic { get; set; }
+
     /// <summary>Episode number as shown by AnimeClick.</summary>
     public int Number { get; set; }
 

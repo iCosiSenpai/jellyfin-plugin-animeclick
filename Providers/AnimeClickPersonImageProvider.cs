@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -53,13 +54,26 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
         }
 
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        var baseUrl = configuration.BaseUrl ?? "https://www.animeclick.it";
-        var fullUrl = actorId.StartsWith("http") ? actorId : baseUrl + actorId;
+        if (!Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var baseUri)
+            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)
+            || !Uri.TryCreate(baseUri, actorId, out var personUri)
+            || !string.Equals(baseUri.Scheme, personUri.Scheme, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(baseUri.Host, personUri.Host, StringComparison.OrdinalIgnoreCase)
+            || baseUri.Port != personUri.Port
+            || !personUri.AbsolutePath.StartsWith("/autore/", StringComparison.OrdinalIgnoreCase))
+        {
+            // Provider IDs are persisted local data: never let a malformed/absolute value
+            // turn the metadata scanner into an arbitrary outbound request.
+            return results;
+        }
 
         try
         {
-            // Ethical fetching via synchronized semaphore client
-            var response = await _animeClickClient.GetStringAsync(fullUrl, configuration, cancellationToken);
+            // Ethical fetching via the process-wide AnimeClick rate gate.
+            var response = await _animeClickClient.GetStringAsync(
+                personUri.AbsoluteUri,
+                configuration,
+                cancellationToken);
 
             var doc = new HtmlAgilityPack.HtmlDocument();
             doc.LoadHtml(response);
@@ -68,12 +82,10 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
             var imgNode = doc.DocumentNode.SelectSingleNode("//div[contains(@class, 'thumbnail')]//img[contains(@src, 'autore') or contains(@src, 'immagini')] | //img[contains(@class, 'img-autore')]");
             var imageUrl = imgNode?.GetAttributeValue("src", null);
 
-            if (!string.IsNullOrWhiteSpace(imageUrl))
+            if (!string.IsNullOrWhiteSpace(imageUrl)
+                && TryResolveAllowedImageUri(baseUri, imageUrl, out var resolvedImageUri))
             {
-                if (!imageUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-                {
-                    imageUrl = baseUrl + imageUrl;
-                }
+                imageUrl = resolvedImageUri.AbsoluteUri;
 
                 // Skip generic placeholder
                 if (!imageUrl.Contains("not_found", StringComparison.OrdinalIgnoreCase))
@@ -87,6 +99,10 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
                 }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception)
         {
             // Ignore fetch errors to not crash Jellyfin Metadata pipeline
@@ -95,14 +111,49 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
         return results;
     }
 
+    private static bool TryResolveAllowedImageUri(Uri baseUri, string imageUrl, out Uri imageUri)
+    {
+        imageUri = null!;
+        if (!Uri.TryCreate(baseUri, imageUrl, out var resolved)
+            || resolved.Scheme != Uri.UriSchemeHttps)
+        {
+            return false;
+        }
+
+        var baseHost = baseUri.IdnHost.TrimEnd('.');
+        var imageHost = resolved.IdnHost.TrimEnd('.');
+        var exactConfiguredHost = string.Equals(baseHost, imageHost, StringComparison.OrdinalIgnoreCase)
+            && baseUri.Port == resolved.Port;
+        var configuredForAnimeClick = string.Equals(baseHost, "animeclick.it", StringComparison.OrdinalIgnoreCase)
+            || baseHost.EndsWith(".animeclick.it", StringComparison.OrdinalIgnoreCase);
+        var officialAnimeClickHost = string.Equals(imageHost, "animeclick.it", StringComparison.OrdinalIgnoreCase)
+            || imageHost.EndsWith(".animeclick.it", StringComparison.OrdinalIgnoreCase);
+        if (!exactConfiguredHost
+            && !(configuredForAnimeClick && officialAnimeClickHost && resolved.Port == 443))
+        {
+            return false;
+        }
+
+        imageUri = resolved;
+        return true;
+    }
+
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
     {
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (!Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var baseUri)
+            || !TryResolveAllowedImageUri(baseUri, url, out var imageUri))
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+        }
+
         var client = _httpClientFactory.CreateClient();
 
         // AnimeClick's CDN rejects requests without a browser-like User-Agent (HTTP 403).
-        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(url));
-        request.Headers.UserAgent.ParseAdd(configuration.UserAgent);
+        var request = new HttpRequestMessage(HttpMethod.Get, imageUri);
+        request.Headers.TryAddWithoutValidation(
+            "User-Agent",
+            AnimeClickClient.GetEffectiveUserAgent(configuration));
         if (Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var referer))
         {
             request.Headers.Referrer = referer;
