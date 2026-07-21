@@ -18,11 +18,15 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddHttpClient<AnimeClickClient>();
         services.AddSingleton<AnimeClickCacheService>();
         services.AddSingleton<AnimeClickHtmlParser>();
+        services.AddSingleton<AnimeClickEpisodeListLoader>();
+        services.AddSingleton<AnimeClickSeasonResolver>();
         services.AddSingleton<AnimeClickSeriesSearchProvider>();
         services.AddSingleton<AnimeClickAniListResolver>();
         services.AddSingleton<AnimeClickTmdbClient>();
         services.AddSingleton<AnimeClickOllamaTranslator>();
+        services.AddSingleton<AnimeClickTranslationQueue>();
         services.AddSingleton<AnimeClickTvdbClient>();
+        services.AddSingleton<AnimeClickMetadataFallbackService>();
     }
 
     public void RegisterServices(IServiceCollection services, IServerApplicationHost applicationHost)

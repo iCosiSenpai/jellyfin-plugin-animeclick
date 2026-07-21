@@ -43,6 +43,7 @@ public class AnimeClickIdentifyController : ControllerBase
     private readonly ILibraryManager _libraryManager;
     private readonly IProviderManager _providerManager;
     private readonly AnimeClickClient _client;
+    private readonly AnimeClickHtmlParser _parser;
     private readonly AnimeClickAniListResolver _aniListResolver;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AnimeClickIdentifyController> _logger;
@@ -53,6 +54,7 @@ public class AnimeClickIdentifyController : ControllerBase
         ILibraryManager libraryManager,
         IProviderManager providerManager,
         AnimeClickClient client,
+        AnimeClickHtmlParser parser,
         AnimeClickAniListResolver aniListResolver,
         IHttpClientFactory httpClientFactory,
         ILogger<AnimeClickIdentifyController> logger)
@@ -60,6 +62,7 @@ public class AnimeClickIdentifyController : ControllerBase
         _libraryManager = libraryManager;
         _providerManager = providerManager;
         _client = client;
+        _parser = parser;
         _aniListResolver = aniListResolver;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
@@ -93,6 +96,11 @@ public class AnimeClickIdentifyController : ControllerBase
             return BadRequest(new { error = "animeClickId is required" });
         }
 
+        if (!AnimeClickClient.TryNormalizeAnimeClickId(request.AnimeClickId, out var animeClickId))
+        {
+            return BadRequest(new { error = "animeClickId must be numeric or use the 'number/slug' format" });
+        }
+
         var item = _libraryManager.GetItemById(request.ItemId);
         if (item is null)
         {
@@ -105,12 +113,12 @@ public class AnimeClickIdentifyController : ControllerBase
         }
 
         var previousId = item.GetProviderId(ProviderKey);
-        item.SetProviderId(ProviderKey, request.AnimeClickId);
+        item.SetProviderId(ProviderKey, animeClickId);
         await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation(
             "AnimeClick IdentifyAndRefresh: item {ItemId} ({Name}) set AnimeClick='{NewId}' (was '{OldId}'), replaceAllImages={ReplaceAll}",
-            item.Id, item.Name, request.AnimeClickId, previousId ?? "<none>", request.ReplaceAllImages);
+            item.Id, item.Name, animeClickId, previousId ?? "<none>", request.ReplaceAllImages);
 
         // Wrap the entire downstream flow (image wipe, AniList lookup,
         // image download, metadata refresh) in a 30-second hard cap so the
@@ -126,32 +134,36 @@ public class AnimeClickIdentifyController : ControllerBase
         List<string>? downloadedImages = null;
         string? refreshError = null;
         bool timedOut = false;
+        bool refreshTriggered = false;
 
         try
         {
-            // ── Optional: wipe existing remote images so ImageFetchers can re-download ──
+            // ── Optional: replace remote images only when explicitly requested. ──
             if (request.ReplaceAllImages)
             {
                 deletedImages = await WipeRemoteImagesAsync(item, linkedToken).ConfigureAwait(false);
             }
 
-            // ── Ensure AniList/TMDB/IMDB provider IDs are populated so ImageFetchers
-            // can do their lookup. AnimeClick does not provide TMDB/IMDB IDs but
-            // we can fetch them by title via the AniList GraphQL API.
-            var anilistIdFound = await EnsureAniListIdAsync(item, linkedToken).ConfigureAwait(false);
-            if (anilistIdFound is not null)
+            // AniList IDs belong to the anime work, not to an individual season/episode.
+            // Persist one only on Series/Movie items so manual identify cannot attach a
+            // random anime ID to an episode title.
+            if (item is Series or Movie)
             {
-                _logger.LogInformation(
-                    "AnimeClick IdentifyAndRefresh: ensured AniList ID={AniListId} for {ItemId} ({Name})",
-                    anilistIdFound, item.Id, item.Name);
+                var anilistIdFound = await EnsureAniListIdAsync(item, linkedToken).ConfigureAwait(false);
+                if (anilistIdFound is not null)
+                {
+                    _logger.LogInformation(
+                        "AnimeClick IdentifyAndRefresh: ensured AniList ID={AniListId} for {ItemId} ({Name})",
+                        anilistIdFound, item.Id, item.Name);
+                }
             }
 
-            // ── Always fetch the best remote images from each enabled ImageFetcher ──
-            // Jellyfin 10.11.x with ReplaceAllMetadata=true does NOT reliably call
-            // every metadata provider and does NOT always re-download remote images,
-            // so we do it explicitly here. The wipe above ensures we can save
-            // fresh images over the existing slots.
-            downloadedImages = await DownloadBestRemoteImagesAsync(item, linkedToken).ConfigureAwait(false);
+            // Saving images at index zero can replace user-curated artwork. Do it only
+            // behind the explicit ReplaceAllImages option advertised by the UI/README.
+            if (request.ReplaceAllImages)
+            {
+                downloadedImages = await DownloadBestRemoteImagesAsync(item, linkedToken).ConfigureAwait(false);
+            }
 
             // ── Trigger full metadata refresh (text + cast + tags + …) ──
             var refreshOptions = new MetadataRefreshOptions(new DirectoryService(BaseItem.FileSystem))
@@ -165,10 +177,15 @@ public class AnimeClickIdentifyController : ControllerBase
 
             try
             {
+                refreshTriggered = true;
                 await item.RefreshMetadata(refreshOptions, linkedToken).ConfigureAwait(false);
                 _logger.LogInformation(
                     "AnimeClick IdentifyAndRefresh: full metadata refresh completed for {ItemId} ({Name})",
                     item.Id, item.Name);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (OperationCanceledException) when (linkedToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
@@ -181,6 +198,10 @@ public class AnimeClickIdentifyController : ControllerBase
                     "AnimeClick IdentifyAndRefresh: refresh failed for {ItemId} ({Name})",
                     item.Id, item.Name);
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (OperationCanceledException) when (linkedToken.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -208,9 +229,9 @@ public class AnimeClickIdentifyController : ControllerBase
             Success = !timedOut && refreshError is null,
             ItemId = item.Id.ToString(),
             Name = item.Name,
-            AnimeClickId = request.AnimeClickId,
+            AnimeClickId = animeClickId,
             PreviousAnimeClickId = previousId,
-            RefreshTriggered = true,
+            RefreshTriggered = refreshTriggered,
             ReplaceAllImages = request.ReplaceAllImages,
             DeletedImages = deletedImages,
             DownloadedImages = downloadedImages ?? new List<string>(),
@@ -274,7 +295,7 @@ public class AnimeClickIdentifyController : ControllerBase
         var query = new RemoteImageQuery(providerName: (string)null!)
         {
             ImageType = type is null ? null : ParseImageType(type),
-            IncludeDisabledProviders = true
+            IncludeDisabledProviders = false
         };
 
         var images = await _providerManager.GetAvailableRemoteImages(item, query, cancellationToken).ConfigureAwait(false);
@@ -323,6 +344,7 @@ public class AnimeClickIdentifyController : ControllerBase
         int deleted = 0;
         foreach (var type in supportedTypes)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var images = item.GetImages(type)?.ToList() ?? new List<ItemImageInfo>();
             if (images.Count == 0)
             {
@@ -410,7 +432,7 @@ public class AnimeClickIdentifyController : ControllerBase
                 var query = new RemoteImageQuery(providerName: (string)null!)
                 {
                     ImageType = type,
-                    IncludeDisabledProviders = true
+                    IncludeDisabledProviders = false
                 };
                 var candidates = (await _providerManager.GetAvailableRemoteImages(item, query, cancellationToken).ConfigureAwait(false)).ToList();
                 if (candidates.Count == 0)
@@ -457,6 +479,10 @@ public class AnimeClickIdentifyController : ControllerBase
                             "AnimeClick IdentifyAndRefresh: saved remote {Type} from {Provider} ({Width}x{Height}) for {ItemId}",
                             type, cand.Img.ProviderName, cand.Img.Width, cand.Img.Height, item.Id);
                     }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex,
@@ -464,6 +490,10 @@ public class AnimeClickIdentifyController : ControllerBase
                             type, cand.Img.ProviderName, cand.Img.Url, item.Id);
                     }
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -493,10 +523,9 @@ public class AnimeClickIdentifyController : ControllerBase
     }
 
     /// <summary>
-    /// If the item doesn't have an AniList provider ID yet, queries the
-    /// AniList GraphQL API by title and stores the resulting AniList ID on
-    /// the item so the AniList ImageFetcher can do its lookup. This is
-    /// best-effort: returns the new AniList ID on success, null on failure.
+    /// Preserves an existing AniList provider ID. Otherwise asks the validated
+    /// resolver to match the already-persisted AnimeClick work by title, year
+    /// and media format before storing a new ID for artwork providers.
     /// </summary>
     private async Task<string?> EnsureAniListIdAsync(BaseItem item, CancellationToken cancellationToken)
     {
@@ -506,14 +535,60 @@ public class AnimeClickIdentifyController : ControllerBase
             return existing;
         }
 
-        var anilistId = await _aniListResolver.ResolveAniListIdAsync(item.Name, cancellationToken).ConfigureAwait(false);
+        var animeClickId = item.GetProviderId(ProviderKey);
+        if (string.IsNullOrWhiteSpace(animeClickId) || item is not (Series or Movie))
+        {
+            return null;
+        }
+
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (!AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, animeClickId, out var animeUrl))
+        {
+            return null;
+        }
+
+        string? anilistId;
+        try
+        {
+            var html = await _client
+                .GetStringAsync(animeUrl, configuration, cancellationToken)
+                .ConfigureAwait(false);
+            var selectedAnime = _parser.ParseAnimePage(animeUrl, html);
+            anilistId = await _aniListResolver.ResolveAniListIdAsync(
+                    selectedAnime.Id,
+                    selectedAnime.OriginalTitle ?? selectedAnime.Title,
+                    selectedAnime.Title,
+                    selectedAnime.ProductionYear,
+                    seriesRequest: item is Series,
+                    configuration,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "AnimeClick IdentifyAndRefresh: AniList validation failed for selected AnimeClick ID {AnimeClickId}",
+                animeClickId);
+            return null;
+        }
+
         if (string.IsNullOrWhiteSpace(anilistId))
         {
             return null;
         }
 
         item.SetProviderId("AniList", anilistId);
-        await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+        await _libraryManager.UpdateItemAsync(
+                item,
+                item.GetParent(),
+                ItemUpdateType.MetadataEdit,
+                cancellationToken)
+            .ConfigureAwait(false);
         return anilistId;
     }
 
@@ -531,7 +606,7 @@ public sealed class IdentifyAndRefreshRequest
 {
     public string ItemId { get; set; } = string.Empty;
     public string AnimeClickId { get; set; } = string.Empty;
-    public bool ReplaceAllMetadata { get; set; } = true;
+    public bool ReplaceAllMetadata { get; set; } = false;
 
     /// <summary>
     /// When true, all existing remote (non-local) images for the item are

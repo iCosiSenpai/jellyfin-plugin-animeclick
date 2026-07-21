@@ -1,5 +1,6 @@
 using System;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -27,6 +28,12 @@ public class AnimeClickOllamaTranslator
         + "Restituisci SOLO la traduzione, senza commenti, note, virgolette aggiunte o testo prima/dopo. "
         + "Mantieni i nomi propri dei personaggi e dei luoghi. Non aggiungere informazioni non presenti nel testo.";
 
+    internal const string PromptVersion = "metadata-it-v2";
+
+    // Ollama Free allows one cloud model at a time. A process-wide gate prevents
+    // scans and diagnostics from competing for the same account slot.
+    private static readonly SemaphoreSlim TranslationGate = new(1, 1);
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickOllamaTranslator> _logger;
@@ -42,44 +49,134 @@ public class AnimeClickOllamaTranslator
     }
 
     /// <summary>
-    /// Translates an English synopsis to Italian. Returns null on any failure or empty input.
-    /// Cached per (tmdbId, season, episode, model).
+    /// Compatibility wrapper for episode synopsis translation.
     /// </summary>
-    public async Task<string?> TranslateSynopsisAsync(
+    public Task<string?> TranslateSynopsisAsync(
         string englishText,
         int tmdbId,
         int season,
         int episode,
         PluginConfiguration configuration,
         CancellationToken cancellationToken)
+        => TranslateMetadataFieldAsync(
+            englishText,
+            $"tmdb-{tmdbId}",
+            $"tmdb:tv:{tmdbId}:s{season}:e{episode}",
+            "episode.overview",
+            "en",
+            "it",
+            configuration,
+            cancellationToken);
+
+    /// <summary>
+    /// Translates one metadata field and caches it by source provider/id, field,
+    /// languages, model, endpoint, prompt version and source-text hash.
+    /// </summary>
+    public Task<string?> TranslateMetadataFieldAsync(
+        string sourceText,
+        string cacheScope,
+        string sourceIdentity,
+        string fieldName,
+        string sourceLanguage,
+        string targetLanguage,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+        => TranslateMetadataFieldCoreAsync(
+            sourceText,
+            cacheScope,
+            sourceIdentity,
+            fieldName,
+            sourceLanguage,
+            targetLanguage,
+            configuration,
+            publishToCache: true,
+            cancellationToken);
+
+    internal Task<string?> TranslateMetadataFieldWithoutPublishingAsync(
+        string sourceText,
+        string cacheScope,
+        string sourceIdentity,
+        string fieldName,
+        string sourceLanguage,
+        string targetLanguage,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+        => TranslateMetadataFieldCoreAsync(
+            sourceText,
+            cacheScope,
+            sourceIdentity,
+            fieldName,
+            sourceLanguage,
+            targetLanguage,
+            configuration,
+            publishToCache: false,
+            cancellationToken);
+
+    private async Task<string?> TranslateMetadataFieldCoreAsync(
+        string sourceText,
+        string cacheScope,
+        string sourceIdentity,
+        string fieldName,
+        string sourceLanguage,
+        string targetLanguage,
+        PluginConfiguration configuration,
+        bool publishToCache,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(configuration.OllamaCloudApiKey)
             || string.IsNullOrWhiteSpace(configuration.OllamaCloudModel)
-            || string.IsNullOrWhiteSpace(englishText))
+            || string.IsNullOrWhiteSpace(configuration.OllamaCloudEndpoint)
+            || string.IsNullOrWhiteSpace(sourceText))
         {
             return null;
         }
 
-        var cacheKey = $"episodeSynopsisIT::{tmdbId}::{season}::{episode}::{configuration.OllamaCloudModel}";
-        var cached = await _cache.GetAsync<string?>(cacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
+        var plain = StripHtml(sourceText);
+        if (string.IsNullOrWhiteSpace(plain)
+            || !TryNormalizeCloudEndpoint(configuration.OllamaCloudEndpoint, out var endpointUri))
+        {
+            return null;
+        }
+
+        var cacheKey = BuildTranslationCacheKey(
+            cacheScope,
+            sourceIdentity,
+            fieldName,
+            sourceLanguage,
+            targetLanguage,
+            configuration.OllamaCloudModel,
+            endpointUri.AbsoluteUri,
+            configuration.OllamaCloudApiKey,
+            plain);
+        var cacheHours = configuration.TranslationCacheHours <= 0
+            ? int.MaxValue
+            : configuration.TranslationCacheHours;
+        var cached = await _cache
+            .GetAsync<string?>(cacheKey, cacheHours, cancellationToken)
+            .ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(cached))
         {
             return cached;
         }
 
-        var plain = StripHtml(englishText);
-        if (string.IsNullOrWhiteSpace(plain))
-        {
-            return null;
-        }
-
+        await TranslationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // Double-check after waiting: another refresh may have populated it.
+            cached = await _cache
+                .GetAsync<string?>(cacheKey, cacheHours, cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(cached))
+            {
+                return cached;
+            }
+
             var body = BuildRequestBody(configuration.OllamaCloudModel, SystemPrompt, plain);
             var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(Math.Max(5, configuration.EpisodeTranslationTimeoutSec));
+            client.Timeout = TimeSpan.FromSeconds(
+                Math.Clamp(configuration.EpisodeTranslationTimeoutSec, 5, 120));
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, configuration.OllamaCloudEndpoint)
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpointUri)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             };
@@ -88,33 +185,89 @@ public class AnimeClickOllamaTranslator
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogDebug("OllamaTranslator: {Endpoint} returned {Status}", configuration.OllamaCloudEndpoint, response.StatusCode);
+                _logger.LogDebug(
+                    "OllamaTranslator: endpoint returned {Status} for field={Field} model={Model}",
+                    response.StatusCode,
+                    fieldName,
+                    configuration.OllamaCloudModel);
                 return null;
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            var translated = ParseTranslatedContent(json);
+            var translated = ParseTranslatedContent(json)?.Trim();
             if (string.IsNullOrWhiteSpace(translated))
             {
                 return null;
             }
 
-            translated = translated.Trim();
-            await _cache.SetAsync(cacheKey, translated, cancellationToken).ConfigureAwait(false);
+            if (publishToCache)
+            {
+                await _cache.SetAsync(cacheKey, translated, cancellationToken).ConfigureAwait(false);
+            }
+
             return translated;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("OllamaTranslator: translation failed for tmdb={Tmdb} S{S}E{E}: {Message}",
-                tmdbId, season, episode, ex.Message);
+            _logger.LogDebug(
+                "OllamaTranslator: translation failed for field={Field} source={Source}: {Message}",
+                fieldName,
+                sourceIdentity,
+                ex.Message);
             return null;
+        }
+        finally
+        {
+            TranslationGate.Release();
         }
     }
 
     /// <summary>
-    /// Diagnostics-only: validates the Ollama Cloud endpoint + key + model by sending a
-    /// trivial test prompt. Does NOT silent-catch — returns a detailed DTO so the UI can
-    /// show the real error (status code, response body, exception message).
+    /// Accepts only absolute HTTPS endpoints without embedded credentials, query
+    /// parameters or fragments. Custom cloud hosts remain possible, but a key can
+    /// never be hidden in the destination URL.
+    /// </summary>
+    internal static bool TryNormalizeCloudEndpoint(string? endpoint, out Uri endpointUri)
+    {
+        if (Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out var parsed)
+            && parsed.Scheme == Uri.UriSchemeHttps
+            && !string.IsNullOrWhiteSpace(parsed.Host)
+            && string.IsNullOrEmpty(parsed.UserInfo)
+            && string.IsNullOrEmpty(parsed.Query)
+            && string.IsNullOrEmpty(parsed.Fragment))
+        {
+            endpointUri = parsed;
+            return true;
+        }
+
+        endpointUri = null!;
+        return false;
+    }
+
+    internal static string BuildTranslationCacheKey(
+        string cacheScope,
+        string sourceIdentity,
+        string fieldName,
+        string sourceLanguage,
+        string targetLanguage,
+        string model,
+        string endpoint,
+        string apiKey,
+        string plainText)
+        => $"translation:v3::{cacheScope}::{fieldName}::{sourceLanguage}-{targetLanguage}"
+            + $"::{ShortHash(sourceIdentity)}::{ShortHash(model)}::{ShortHash(endpoint)}"
+            + $"::{ShortHash(apiKey)}::{PromptVersion}::{ShortHash(plainText)}";
+
+    private static string ShortHash(string value)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..24];
+
+    /// <summary>
+    /// Diagnostics-only: validates the Ollama Cloud profile with a trivial
+    /// prompt and returns only sanitized status and model information.
     /// </summary>
     public async Task<OllamaTestResult> TestConnectionAsync(
         string endpoint,
@@ -125,13 +278,12 @@ public class AnimeClickOllamaTranslator
     {
         var result = new OllamaTestResult
         {
-            Endpoint = endpoint,
             Model = model
         };
 
-        if (string.IsNullOrWhiteSpace(endpoint))
+        if (!TryNormalizeCloudEndpoint(endpoint, out var endpointUri))
         {
-            result.ErrorMessage = "Ollama endpoint is empty.";
+            result.ErrorMessage = "Ollama endpoint must be an absolute HTTPS URL without credentials, query or fragment.";
             return result;
         }
 
@@ -150,13 +302,14 @@ public class AnimeClickOllamaTranslator
         const string testSystemPrompt = "You are a test endpoint. Reply with exactly: ok";
         const string testUserContent = "traduci: hello";
 
+        await TranslationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var body = BuildRequestBody(model, testSystemPrompt, testUserContent);
             var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(Math.Max(5, timeoutSec <= 0 ? 30 : timeoutSec));
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec <= 0 ? 30 : timeoutSec, 5, 120));
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+            using var request = new HttpRequestMessage(HttpMethod.Post, endpointUri)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             };
@@ -166,7 +319,6 @@ public class AnimeClickOllamaTranslator
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
             result.StatusCode = (int)response.StatusCode;
-            result.ResponseBody = responseBody;
 
             if (!response.IsSuccessStatusCode)
             {
@@ -184,10 +336,18 @@ public class AnimeClickOllamaTranslator
 
             return result;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            result.ErrorMessage = ex.Message;
+            result.ErrorMessage = $"Connection test failed ({ex.GetType().Name}).";
             return result;
+        }
+        finally
+        {
+            TranslationGate.Release();
         }
     }
 
@@ -236,6 +396,7 @@ public class AnimeClickOllamaTranslator
         {
             model,
             stream = false,
+            think = false,
             messages = new[]
             {
                 new { role = "system", content = systemPrompt },
@@ -365,10 +526,8 @@ public class AnimeClickOllamaTranslator
 public sealed class OllamaTestResult
 {
     public bool Success { get; set; }
-    public string Endpoint { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public int StatusCode { get; set; }
-    public string? ResponseBody { get; set; }
     public string? ErrorMessage { get; set; }
     public string? Reply { get; set; }
 }

@@ -131,8 +131,8 @@ static void TestOllamaTranslatorStripHtml()
 
 static void TestOllamaTranslatorRequestAndResponse()
 {
-    var body = AnimeClickOllamaTranslator.BuildRequestBody("gemma4:cloud", "sys-prompt", "Translate this.");
-    Assert(body.Contains("\"model\":\"gemma4:cloud\"", StringComparison.OrdinalIgnoreCase),
+    var body = AnimeClickOllamaTranslator.BuildRequestBody("gemma4:31b-cloud", "sys-prompt", "Translate this.");
+    Assert(body.Contains("\"model\":\"gemma4:31b-cloud\"", StringComparison.OrdinalIgnoreCase),
         "BuildRequestBody must include the model.");
     Assert(body.Contains("\"stream\":false", StringComparison.OrdinalIgnoreCase),
         "BuildRequestBody must disable streaming.");
@@ -230,8 +230,8 @@ static void TestSearchQueryCleaners()
         "Should normalize &");
 
     // Simplify
-    Assert(AnimeClickSeriesSearchProvider.SimplifyQuery("Title: With-Dots.And/Slash") == "Title  With Dots And Slash",
-        "Simplify must collapse special chars to space");
+    Assert(AnimeClickSeriesSearchProvider.SimplifyQuery("Title: With-Dots.And/Slash") == "Title With Dots And Slash",
+        "Simplify must replace special characters and collapse repeated spaces");
 
     // Short query
     Assert(AnimeClickSeriesSearchProvider.GetShortQuery("One Two Three Four") == "One Two Three",
@@ -452,6 +452,65 @@ static void TestAniListIdParsing()
         "EscapeGraphQL must escape backslashes.");
 }
 
+static void TestTranslationQueuePolicy()
+{
+    Assert(
+        AnimeClickTranslationQueue.GetFailureBackoff(TimeSpan.FromSeconds(2), 30) == TimeSpan.FromMinutes(5),
+        "A fast translation failure must suppress retries for 5 minutes.");
+    Assert(
+        AnimeClickTranslationQueue.GetFailureBackoff(TimeSpan.FromSeconds(29), 30) == TimeSpan.FromMinutes(15),
+        "A timeout-shaped failure must suppress retries for 15 minutes.");
+    Assert(
+        AnimeClickTranslationQueue.GetFailureBackoff(TimeSpan.FromSeconds(4), 1) == TimeSpan.FromMinutes(15),
+        "Backoff classification must use the same 5-second lower timeout clamp as the translator.");
+}
+
+static void TestSyntheticSeasonAbsoluteFallback()
+{
+    var rows = string.Join(
+        '\n',
+        Enumerable.Range(1, 26).Select(number =>
+            $"<tr><td>Ep. {number:00}</td><td><a href=\"/episodio/{50000 + number}/nagi-{number}\">Nagi episodio {number}</a></td><td>23'</td></tr>"));
+    var html = "<html><body><table class=\"table\"><tbody>" + rows + "</tbody></table></body></html>";
+
+    var parser = new AnimeClickHtmlParser();
+    var episodes = parser.ParseEpisodesPage(html, "https://www.animeclick.it", seasonsCount: 2);
+
+    Assert(episodes.Count == 26, "Nagi regression must parse all 26 episodes.");
+    Assert(episodes.All(e => e.SeasonNumberIsSynthetic),
+        "Every evenly inferred season assignment must be marked synthetic.");
+
+    var s1e14 = AnimeClickEpisodeMatcher.Match(episodes, 1, 14);
+    Assert(s1e14.Episode?.AbsoluteNumber == 14,
+        "Jellyfin S01E14 must cross a synthetic cour boundary to AnimeClick absolute episode 14.");
+    Assert(s1e14.Strategy == "syntheticAbsolute", "S01E14 must report syntheticAbsolute strategy.");
+
+    var s1e26 = AnimeClickEpisodeMatcher.Match(episodes, 1, 26);
+    Assert(s1e26.Episode?.AbsoluteNumber == 26,
+        "Jellyfin S01E26 must cross a synthetic cour boundary to AnimeClick absolute episode 26.");
+    Assert(s1e26.Strategy == "syntheticAbsolute", "S01E26 must report syntheticAbsolute strategy.");
+
+    var s2e1 = AnimeClickEpisodeMatcher.Match(episodes, 2, 1);
+    Assert(s2e1.Episode?.AbsoluteNumber == 14 && s2e1.Strategy == "seasonOrdinal",
+        "A library that really uses S02E01 must retain seasonOrdinal matching.");
+
+    var explicitEpisodes = parser.ParseEpisodesPage(
+        TestFixtures.DangersEpisodesHtml,
+        "https://www.animeclick.it");
+    Assert(explicitEpisodes.All(e => !e.SeasonNumberIsSynthetic),
+        "Explicit AnimeClick S1/S2 labels must never be marked synthetic.");
+    var explicitS1E13 = AnimeClickEpisodeMatcher.Match(explicitEpisodes, 1, 13);
+    Assert(!explicitS1E13.Success && explicitS1E13.Strategy == "seasonGroupNoMatch",
+        "Explicit S1 must not cross into explicit S2 through absolute numbering.");
+
+    var explicitS2Only = parser.ParseEpisodesPage(
+        "<table><tr><td>S2 Ep. 01</td><td><a href=\"/episodio/60001/explicit-s2\">Explicit S2</a></td></tr></table>",
+        "https://www.animeclick.it");
+    var missingExplicitS1 = AnimeClickEpisodeMatcher.Match(explicitS2Only, 1, 1);
+    Assert(!missingExplicitS1.Success && missingExplicitS1.Strategy == "none",
+        "A missing explicit S1 group must not fall through to an explicit S2 absolute match.");
+}
+
 static void Assert(bool condition, string message)
 {
     if (!condition)
@@ -464,7 +523,9 @@ var tests = new (string Name, Action Run)[]
 {
     ("Dangers S2 matcher uses season ordinal", TestDangersSeasonOrdinalMatching),
     ("Asterisk War 24ep block splits into 2 seasons via seasonsCount", TestAsteriskContinuousBlockSeasonSplit),
+    ("Nagi S1E14-E26 crosses only synthetic season boundaries", TestSyntheticSeasonAbsoluteFallback),
     ("Parser refuses to split when episode count is uneven across seasons", TestSeasonsCountRefusedOnUnevenSplit),
+    ("Translation queue failure backoff policy", TestTranslationQueuePolicy),
     ("Search scorer prefers 2023 series over movie and special", TestSearchScoring),
     ("Search query cleaners (sequel, fullwidth, & etc)", TestSearchQueryCleaners),
     ("Improved scorer fuzzy + overlap", TestImprovedScorer),

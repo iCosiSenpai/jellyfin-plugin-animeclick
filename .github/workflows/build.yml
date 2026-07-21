@@ -16,9 +16,11 @@ jobs:
         with:
           dotnet-version: '9.0.x'
       - name: Restore
-        run: dotnet restore AnimeClick.Plugin.csproj
+        run: dotnet restore AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj
       - name: Build
         run: dotnet build AnimeClick.Plugin.csproj -c Release --no-restore
+      - name: Run regression harness
+        run: dotnet run --project AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release --no-restore
 
   release:
     needs: build
@@ -26,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CHECKSUM: ''
+      SOURCE_URL: ''
       VERSION: ''
     permissions:
       contents: write
@@ -35,26 +38,65 @@ jobs:
         with:
           dotnet-version: '9.0.x'
 
+      - name: Verify tag matches project version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PROJECT_VERSION="$(dotnet msbuild AnimeClick.Plugin.csproj -nologo -getProperty:Version | tr -d '\r' | tail -n 1)"
+          if [[ ! "${TAG_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must use vMAJOR.MINOR.PATCH.REVISION; got ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          if [[ "${TAG_VERSION}" != "${PROJECT_VERSION}" ]]; then
+            echo "Tag ${TAG_VERSION} does not match project version ${PROJECT_VERSION}" >&2
+            exit 1
+          fi
+          echo "VERSION=${TAG_VERSION}" >> "${GITHUB_ENV}"
+
       - name: Publish
         run: dotnet publish AnimeClick.Plugin.csproj -c Release -o publish
 
-      - name: Package
+      - name: Package and validate release metadata
+        shell: bash
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          cd publish
-          zip -j ../AnimeClick.Plugin.zip AnimeClick.Plugin.dll HtmlAgilityPack.dll
-          cd ..
-          echo "CHECKSUM=$(md5sum AnimeClick.Plugin.zip | cut -d ' ' -f 1 | tr 'a-f' 'A-F')" >> $GITHUB_ENV
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          set -euo pipefail
+          zip -j AnimeClick.Plugin.zip publish/AnimeClick.Plugin.dll publish/HtmlAgilityPack.dll
+          CHECKSUM_VALUE="$(md5sum AnimeClick.Plugin.zip | cut -d ' ' -f 1 | tr 'a-f' 'A-F')"
+          SOURCE_VALUE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/AnimeClick.Plugin.zip"
+          [[ -n "${CHECKSUM_VALUE}" ]]
+          [[ "${SOURCE_VALUE}" == https://github.com/*/releases/download/v*/AnimeClick.Plugin.zip ]]
+          echo "CHECKSUM=${CHECKSUM_VALUE}" >> "${GITHUB_ENV}"
+          echo "SOURCE_URL=${SOURCE_VALUE}" >> "${GITHUB_ENV}"
 
-      - name: Create Release
+      # A tag creates only a draft. The maintainer must update and validate the
+      # external Jellyfin manifest with this exact version/checksum/sourceUrl,
+      # complete the release-asset smoke test, then explicitly publish the draft.
+      - name: Create gated draft release
         uses: softprops/action-gh-release@v2
         with:
+          name: AnimeClick Metadata ${{ github.ref_name }}
           files: AnimeClick.Plugin.zip
           generate_release_notes: true
+          draft: true
+          prerelease: false
+          make_latest: false
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            **Checksum MD5:** `${{ env.CHECKSUM }}`
+            AnimeClick ora è l'autorità dei metadati italiani, con protezione lock-aware
+            post-merge, resolver stagioni v4 e copertura estesa a nazionalità, trailer/PV
+            e ruoli staff granulari.
 
-            > ⚠️ Ricorda di aggiornare il `manifest.json` con il nuovo checksum e sourceUrl prima di rilasciare!
+            Le sinossi episodi seguono la catena TVDB ita → TMDB it-IT → sorgente EN →
+            Ollama Cloud EN→IT. Ollama usa `gemma4:31b-cloud` come default, concorrenza
+            globale 1 e cache content-addressed separata per profilo credenziale.
+
+            **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
+            **Versione:** `${{ env.VERSION }}`
+            **Checksum MD5:** `${{ env.CHECKSUM }}`
+            **Source URL manifest:** `${{ env.SOURCE_URL }}`
+
+            > **Release gate:** questa release resta draft finché `manifest.json` non è
+            > aggiornato e verificato con gli esatti versione, checksum e source URL sopra,
+            > e l'asset non supera lo smoke test. Solo allora va pubblicata come latest.

@@ -10,11 +10,20 @@ namespace AnimeClick.Plugin.Services;
 
 public class AnimeClickCacheService
 {
-    private readonly string _cacheDirectory;
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = false };
-    private static readonly ConcurrentDictionary<string, SemaphoreSlim> Locks = new();
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false
+    };
 
-    private static SemaphoreSlim GetLock(string key) => Locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+    // Locks are keyed by the final path so read/write and administrative clear operations
+    // synchronize on the same resource even when two logical keys sanitize to one filename.
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> Locks = new(StringComparer.Ordinal);
+
+    // Serializes cache publication against administrative clear operations. Per-key locks
+    // alone are insufficient because a clear cannot enumerate a write that is still a .tmp.
+    private static readonly SemaphoreSlim MutationGate = new(1, 1);
+
+    private readonly string _cacheDirectory;
 
     public AnimeClickCacheService(IApplicationPaths applicationPaths)
     {
@@ -23,17 +32,15 @@ public class AnimeClickCacheService
     }
 
     /// <summary>
-    /// Retrieves a cached value if it exists and has not expired.
+    /// Retrieves a cached value if it exists, is valid JSON and has not expired.
+    /// Corrupt or truncated entries are removed and treated as cache misses.
     /// </summary>
-    /// <param name="key">Cache key.</param>
-    /// <param name="maxAgeHours">Maximum age in hours. If the cached file is older, it is treated as expired.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
     public async Task<T?> GetAsync<T>(string key, int maxAgeHours, CancellationToken cancellationToken)
     {
         var path = GetPath(key);
-        var asyncLock = GetLock(key);
-        await asyncLock.WaitAsync(cancellationToken);
-        
+        var asyncLock = GetLock(path);
+        await asyncLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+
         try
         {
             if (!File.Exists(path))
@@ -42,15 +49,39 @@ public class AnimeClickCacheService
             }
 
             var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(path);
-            if (fileAge.TotalHours > maxAgeHours)
+            if (maxAgeHours <= 0 || fileAge.TotalHours > maxAgeHours)
             {
-                // Cache expired — delete stale file and return null.
-                try { File.Delete(path); } catch { /* best effort */ }
+                DeleteFileBestEffort(path);
                 return default;
             }
 
-            await using var stream = File.OpenRead(path);
-            return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
+            try
+            {
+                await using var stream = new FileStream(
+                    path,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    bufferSize: 16 * 1024,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
+                return await JsonSerializer
+                    .DeserializeAsync<T>(stream, JsonOptions, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (JsonException)
+            {
+                DeleteFileBestEffort(path);
+                return default;
+            }
+            catch (IOException)
+            {
+                DeleteFileBestEffort(path);
+                return default;
+            }
         }
         finally
         {
@@ -64,16 +95,145 @@ public class AnimeClickCacheService
     public Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken)
         => GetAsync<T>(key, int.MaxValue, cancellationToken);
 
+    /// <summary>
+    /// Serializes to a temporary file and atomically replaces the final entry. A cancelled
+    /// write can therefore never leave a partially-written JSON file visible to readers.
+    /// </summary>
     public async Task SetAsync<T>(string key, T payload, CancellationToken cancellationToken)
     {
         var path = GetPath(key);
-        var asyncLock = GetLock(key);
-        await asyncLock.WaitAsync(cancellationToken);
-        
+        var tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var asyncLock = GetLock(path);
+
+        await MutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await using var stream = File.Create(path);
-            await JsonSerializer.SerializeAsync(stream, payload, JsonOptions, cancellationToken);
+            await asyncLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await using (var stream = new FileStream(
+                    tempPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    bufferSize: 16 * 1024,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan))
+                {
+                    await JsonSerializer
+                        .SerializeAsync(stream, payload, JsonOptions, cancellationToken)
+                        .ConfigureAwait(false);
+                    await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Move(tempPath, path, overwrite: true);
+            }
+            finally
+            {
+                DeleteFileBestEffort(tempPath);
+                asyncLock.Release();
+            }
+        }
+        finally
+        {
+            MutationGate.Release();
+        }
+    }
+
+    public int ClearByPrefix(string prefix)
+    {
+        MutationGate.Wait();
+        try
+        {
+            var safePrefix = SanitizeFileKey(prefix);
+            var removed = 0;
+
+            // Do not pass user-controlled prefixes as a glob: '*' and '?' are valid filename
+            // characters on Linux and could otherwise broaden a targeted clear unexpectedly.
+            foreach (var path in Directory.EnumerateFiles(_cacheDirectory, "*.json"))
+            {
+                var fileKey = Path.GetFileNameWithoutExtension(path);
+                if (fileKey.StartsWith(safePrefix, StringComparison.Ordinal)
+                    && DeletePathSynchronized(path))
+                {
+                    removed++;
+                }
+            }
+
+            return removed;
+        }
+        finally
+        {
+            MutationGate.Release();
+        }
+    }
+
+    public int ClearKey(string key)
+    {
+        MutationGate.Wait();
+        try
+        {
+            return DeletePathSynchronized(GetPath(key)) ? 1 : 0;
+        }
+        finally
+        {
+            MutationGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Removes every JSON entry in the metadata cache. Individual locked/unavailable files
+    /// are skipped so an administrative cleanup does not fail as a whole.
+    /// </summary>
+    public int ClearAll()
+    {
+        MutationGate.Wait();
+        try
+        {
+            var removed = 0;
+            foreach (var path in Directory.EnumerateFiles(_cacheDirectory, "*.json"))
+            {
+                if (DeletePathSynchronized(path))
+                {
+                    removed++;
+                }
+            }
+
+            return removed;
+        }
+        finally
+        {
+            MutationGate.Release();
+        }
+    }
+
+    private static SemaphoreSlim GetLock(string path)
+        => Locks.GetOrAdd(path, static _ => new SemaphoreSlim(1, 1));
+
+    private bool DeletePathSynchronized(string path)
+    {
+        var asyncLock = GetLock(path);
+        asyncLock.Wait();
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return false;
+            }
+
+            try
+            {
+                File.Delete(path);
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
         }
         finally
         {
@@ -81,70 +241,28 @@ public class AnimeClickCacheService
         }
     }
 
-    public int ClearByPrefix(string prefix)
-    {
-        var safePrefix = SanitizeFileKey(prefix);
-        var removed = 0;
-
-        foreach (var path in Directory.EnumerateFiles(_cacheDirectory, safePrefix + "*.json"))
-        {
-            try
-            {
-                File.Delete(path);
-                removed++;
-            }
-            catch
-            {
-                // Best effort: cache cleanup should not fail diagnostics.
-            }
-        }
-
-        return removed;
-    }
-
-    public int ClearKey(string key)
-    {
-        var path = GetPath(key);
-        if (!File.Exists(path))
-        {
-            return 0;
-        }
-
-        File.Delete(path);
-        return 1;
-    }
-
-    /// <summary>
-    /// Rimuove tutti i file di cache (ogni <c>.json</c> nella directory di cache). Best-effort:
-    /// i file bloccati vengono saltati senza far fallire l'operazione. Usato dal pulsante
-    /// "Svuota cache metadati" della config page (corpo vuoto del ClearCache).
-    /// </summary>
-    /// <returns>Numero di file effettivamente rimossi.</returns>
-    public int ClearAll()
-    {
-        var removed = 0;
-
-        foreach (var path in Directory.EnumerateFiles(_cacheDirectory, "*.json"))
-        {
-            try
-            {
-                File.Delete(path);
-                removed++;
-            }
-            catch
-            {
-                // Best effort: la pulizia cache non deve fallire sui singoli file.
-            }
-        }
-
-        return removed;
-    }
-
     private string GetPath(string key)
         => Path.Combine(_cacheDirectory, SanitizeFileKey(key) + ".json");
 
+    private static void DeleteFileBestEffort(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (IOException)
+        {
+            // A cache miss is preferable to failing the metadata pipeline.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // A cache miss is preferable to failing the metadata pipeline.
+        }
+    }
+
     private static string SanitizeFileKey(string key)
     {
+        ArgumentNullException.ThrowIfNull(key);
         foreach (var c in Path.GetInvalidFileNameChars())
         {
             key = key.Replace(c, '_');

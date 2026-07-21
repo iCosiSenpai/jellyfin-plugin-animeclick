@@ -44,16 +44,16 @@ public class AnimeClickSeriesSearchProvider
         // ── Direct ID lookup ──
         // If the query looks like an AnimeClick ID (e.g. "72", "72/naruto"),
         // skip text search and fetch the anime page directly.
-        if (Regex.IsMatch(trimmed, @"^\d+(/\S+)?$"))
+        if (AnimeClickClient.TryNormalizeAnimeClickId(trimmed, out var normalizedId))
         {
-            return await DirectLookupAsync(trimmed, configuration, cancellationToken);
+            return await DirectLookupAsync(normalizedId, configuration, cancellationToken);
         }
 
         // ── Text search ──
         var cleanedQuery = CleanSearchQuery(useForSearch);
 
-        var cacheKey = $"search:v2::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "any")}";
-        var negativeCacheKey = $"search-empty:v1::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "any")}";
+        var cacheKey = $"search:v3::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "movie")}";
+        var negativeCacheKey = $"search-empty:v2::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "movie")}";
         var cached = await _cache.GetAsync<List<RemoteSearchResult>>(cacheKey, configuration.CacheHours, cancellationToken);
         if (cached is not null)
         {
@@ -93,6 +93,22 @@ public class AnimeClickSeriesSearchProvider
             {
                 _logger.LogInformation("AnimeClick: Retrying with simplified '{Simplified}'", simplified);
                 attempt = await ExecuteSearchAsync(simplified, configuration, cancellationToken, productionYear, seriesRequest);
+                attemptsHadErrors |= attempt.HadError;
+                results = attempt.Results;
+            }
+        }
+
+        // If the full Japanese/romaji title only matched an OVA or another
+        // incompatible format, retry with the distinctive suffix (for example
+        // "Toaru Kagaku no Railgun S" → "Railgun S").
+        if (results.Count == 0)
+        {
+            var suffixQuery = GetSuffixQuery(useForSearch);
+            if (suffixQuery is not null
+                && !string.Equals(suffixQuery, cleanedQuery, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("AnimeClick: Retrying with distinctive suffix '{Suffix}'", suffixQuery);
+                attempt = await ExecuteSearchAsync(suffixQuery, configuration, cancellationToken, productionYear, seriesRequest);
                 attemptsHadErrors |= attempt.HadError;
                 results = attempt.Results;
             }
@@ -156,6 +172,10 @@ public class AnimeClickSeriesSearchProvider
                 }
             ];
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "AnimeClick: Direct lookup failed for ID '{Id}'", idOrSlug);
@@ -177,10 +197,21 @@ public class AnimeClickSeriesSearchProvider
         try
         {
             var html = await _client.GetStringAsync(url, configuration, cancellationToken);
-            var searchResults = _parser.ParseSearchResults(html, configuration.BaseUrl);
-            _logger.LogInformation("AnimeClick: Parsed {Count} search candidates for '{Query}'", searchResults.Count, query);
+            var parsedResults = _parser.ParseSearchResults(html, configuration.BaseUrl);
+            var searchResults = parsedResults
+                .Where(result => AnimeClickSearchScorer.IsFormatCompatible(result, seriesRequest))
+                .ToList();
+            _logger.LogInformation(
+                "AnimeClick: Parsed {Count} search candidates for '{Query}', {Compatible} compatible with {Kind}",
+                parsedResults.Count,
+                query,
+                searchResults.Count,
+                seriesRequest ? "series" : "movie");
 
-            var maxResults = configuration.MaxSearchResults > 0 ? configuration.MaxSearchResults : 10;
+            var configuredMaxResults = configuration.MaxSearchResults > 0
+                ? configuration.MaxSearchResults
+                : 10;
+            var maxResults = Math.Min(configuredMaxResults, 25);
 
             var ranked = searchResults
                 .Select(r => new { Result = r, Score = AnimeClickSearchScorer.Score(r, query, productionYear, seriesRequest) })
@@ -215,6 +246,10 @@ public class AnimeClickSeriesSearchProvider
                     }
                 })
                 .ToList());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -269,6 +304,30 @@ public class AnimeClickSeriesSearchProvider
         // Collapse multiple spaces
         simplified = Regex.Replace(simplified, @"\s{2,}", " ");
         return simplified.Trim();
+    }
+
+    /// <summary>
+    /// Extracts the last two significant terms. AnimeClick search often indexes
+    /// localized titles better than long romaji prefixes, while keeping sequel
+    /// markers such as S, II or 3 useful for disambiguation.
+    /// </summary>
+    internal static string? GetSuffixQuery(string query)
+    {
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "a", "an", "the", "of", "no", "to", "and"
+        };
+        var words = Regex.Split(query, @"[^\p{L}\p{Nd}]+")
+            .Where(word => word.Length > 0 && !stopWords.Contains(word))
+            .ToArray();
+
+        if (words.Length < 2)
+        {
+            return null;
+        }
+
+        var suffix = string.Join(' ', words.TakeLast(2));
+        return string.Equals(suffix, query, StringComparison.OrdinalIgnoreCase) ? null : suffix;
     }
 
     /// <summary>

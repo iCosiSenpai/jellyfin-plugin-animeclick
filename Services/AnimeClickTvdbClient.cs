@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -14,11 +16,11 @@ using Microsoft.Extensions.Logging;
 namespace AnimeClick.Plugin.Services;
 
 /// <summary>
-/// Minimal TheTVDB v4 client used to fetch episode overviews directly in Italian
-/// (or another configured language). TheTVDB exposes per-episode translations via
-/// <c>GET /series/{id}/episodes/default/{lang}</c>, so when a translation exists we
-/// can fill the Italian synopsis <b>without</b> any Ollama translation (zero compute
-/// on the NAS). When TVDB has no translation for an episode, the caller falls back
+/// Minimal TheTVDB v4 client used to fetch episode overviews in an explicit
+/// language. Production deliberately requests <c>ita</c> first and <c>eng</c>
+/// only as an English fallback. TheTVDB exposes per-episode translations via
+/// <c>GET /series/{id}/episodes/default/{lang}</c>, so when an Italian translation
+/// exists we can fill the synopsis <b>without</b> Ollama (zero compute on the NAS). When TVDB has no translation for an episode, the caller falls back
 /// to the TMDB EN + Ollama IT pipeline.
 ///
 /// All metadata-path methods are best-effort: they return null on any failure
@@ -35,6 +37,8 @@ public class AnimeClickTvdbClient
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickTvdbClient> _logger;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _singleFlight =
+        new(StringComparer.Ordinal);
 
     public AnimeClickTvdbClient(
         IHttpClientFactory httpClientFactory,
@@ -57,15 +61,29 @@ public class AnimeClickTvdbClient
             return null;
         }
 
-        const string tokenCacheKey = "tvdbToken::";
-        var cached = await _cache.GetAsync<string?>(tokenCacheKey, 24, cancellationToken).ConfigureAwait(false);
+        var apiKeyHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(configuration.TvdbApiKey)))[..16];
+        var tokenCacheKey = $"tvdbToken::{apiKeyHash}";
+        var cached = await _cache
+            .GetAsync<string?>(tokenCacheKey, 24, cancellationToken)
+            .ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(cached))
         {
             return cached;
         }
 
+        var gate = GetSingleFlight("login::" + apiKeyHash);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            cached = await _cache
+                .GetAsync<string?>(tokenCacheKey, 24, cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(cached))
+            {
+                return cached;
+            }
+
             var client = BuildClient(configuration);
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/login")
             {
@@ -86,13 +104,21 @@ public class AnimeClickTvdbClient
                 return null;
             }
 
-            await _cache.SetAsync(tokenCacheKey, token!, cancellationToken).ConfigureAwait(false);
+            await _cache.SetAsync(tokenCacheKey, token, cancellationToken).ConfigureAwait(false);
             return token;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogDebug("TvdbClient: login failed: {Message}", ex.Message);
             return null;
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 
@@ -114,44 +140,108 @@ public class AnimeClickTvdbClient
             return null;
         }
 
-        var cached = await _cache.GetAsync<int?>(cacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
-        if (cached.HasValue)
+        var missCacheKey = cacheKey + "::miss";
+        var cached = await _cache
+            .GetAsync<int?>(cacheKey, configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (cached is > 0)
         {
-            return cached.Value > 0 ? cached : null;
+            return cached;
         }
 
-        var token = await LoginAsync(configuration, cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(token))
+        var cachedMiss = await _cache
+            .GetAsync<string>(missCacheKey, configuration.NegativeCacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.Equals(cachedMiss, "miss", StringComparison.Ordinal))
         {
             return null;
         }
 
-        int? resolved = null;
-        if (!string.IsNullOrWhiteSpace(originalTitle))
+        var gate = GetSingleFlight("resolve::" + cacheKey);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            resolved = await SearchSeriesAsync(originalTitle, year, token!, configuration, cancellationToken).ConfigureAwait(false);
-        }
+            cached = await _cache
+                .GetAsync<int?>(cacheKey, configuration.CacheHours, cancellationToken)
+                .ConfigureAwait(false);
+            if (cached is > 0)
+            {
+                return cached;
+            }
 
-        if (!resolved.HasValue
-            && !string.IsNullOrWhiteSpace(fallbackTitle)
-            && !string.Equals(originalTitle, fallbackTitle, StringComparison.OrdinalIgnoreCase))
+            cachedMiss = await _cache
+                .GetAsync<string>(missCacheKey, configuration.NegativeCacheHours, cancellationToken)
+                .ConfigureAwait(false);
+            if (string.Equals(cachedMiss, "miss", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var token = await LoginAsync(configuration, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return null;
+            }
+
+            var titles = new[] { originalTitle, fallbackTitle }
+                .Where(title => !string.IsNullOrWhiteSpace(title))
+                .Select(title => title!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var allSearchesCompleted = titles.Length > 0;
+            foreach (var title in titles)
+            {
+                var lookup = await SearchSeriesAsync(
+                        title,
+                        year,
+                        token,
+                        configuration,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                allSearchesCompleted &= lookup.Completed;
+                if (!lookup.Id.HasValue)
+                {
+                    continue;
+                }
+
+                await _cache.SetAsync(cacheKey, lookup.Id.Value, cancellationToken).ConfigureAwait(false);
+                return lookup.Id.Value;
+            }
+
+            if (allSearchesCompleted)
+            {
+                await _cache.SetAsync(missCacheKey, "miss", cancellationToken).ConfigureAwait(false);
+            }
+
+            return null;
+        }
+        finally
         {
-            resolved = await SearchSeriesAsync(fallbackTitle, year, token!, configuration, cancellationToken).ConfigureAwait(false);
+            gate.Release();
         }
-
-        await _cache.SetAsync(cacheKey, resolved ?? 0, cancellationToken).ConfigureAwait(false);
-        return resolved;
     }
 
     /// <summary>
-    /// Fetches the configured-language overview of a single episode. Pulls the whole
-    /// paginated episode list for the series (cached) and matches by season/episode
-    /// number. Returns null when no match or the overview is empty (caller falls back).
+    /// Compatibility wrapper for the direct Italian source.
     /// </summary>
-    public async Task<string?> GetEpisodeItalianOverviewAsync(
+    public Task<string?> GetEpisodeItalianOverviewAsync(
         int tvdbId,
         int season,
         int episode,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+        => GetEpisodeOverviewAsync(tvdbId, season, episode, "ita", configuration, cancellationToken);
+
+    /// <summary>
+    /// Fetches an episode overview in an explicit TVDB language. The language is
+    /// part of the cache key, preventing an English fallback from being mistaken
+    /// for native Italian metadata.
+    /// </summary>
+    public async Task<string?> GetEpisodeOverviewAsync(
+        int tvdbId,
+        int season,
+        int episode,
+        string language,
         PluginConfiguration configuration,
         CancellationToken cancellationToken)
     {
@@ -160,30 +250,82 @@ public class AnimeClickTvdbClient
             return null;
         }
 
-        var rawLang = string.IsNullOrWhiteSpace(configuration.TvdbLanguage) ? "ita" : configuration.TvdbLanguage!;
-        var lang = SanitizeTvdbLanguage(rawLang);
-        var listCacheKey = $"tvdbEpisodes::{tvdbId}::{lang}";
+        var lang = SanitizeTvdbLanguage(language);
+        var listCacheKey = $"tvdbEpisodes:v3::{tvdbId}::{lang}";
+        var emptyCacheKey = listCacheKey + "::empty";
+        var episodes = await _cache
+            .GetAsync<List<TvdbEpisodeRecord>>(listCacheKey, configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
 
-        var episodes = await _cache.GetAsync<List<TvdbEpisodeRecord>>(listCacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
-
-        if (episodes is null || episodes.Count == 0)
+        if (episodes is null)
         {
-            var token = await LoginAsync(configuration, cancellationToken).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(token))
+            var emptyCached = await _cache
+                .GetAsync<string>(emptyCacheKey, configuration.NegativeCacheHours, cancellationToken)
+                .ConfigureAwait(false);
+            if (emptyCached == "empty")
             {
                 return null;
             }
 
-            episodes = await FetchAllEpisodesAsync(tvdbId, lang, token!, configuration, cancellationToken).ConfigureAwait(false);
-            if (episodes.Count == 0)
+            var gate = GetSingleFlight("episodes::" + listCacheKey);
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                return null;
-            }
+                episodes = await _cache
+                    .GetAsync<List<TvdbEpisodeRecord>>(
+                        listCacheKey,
+                        configuration.CacheHours,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (episodes is null)
+                {
+                    emptyCached = await _cache
+                        .GetAsync<string>(
+                            emptyCacheKey,
+                            configuration.NegativeCacheHours,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    if (emptyCached == "empty")
+                    {
+                        return null;
+                    }
 
-            await _cache.SetAsync(listCacheKey, episodes, cancellationToken).ConfigureAwait(false);
+                    var token = await LoginAsync(configuration, cancellationToken).ConfigureAwait(false);
+                    if (string.IsNullOrWhiteSpace(token))
+                    {
+                        return null;
+                    }
+
+                    var fetched = await FetchAllEpisodesAsync(
+                            tvdbId,
+                            lang,
+                            token,
+                            configuration,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    if (!fetched.Completed)
+                    {
+                        return null;
+                    }
+
+                    episodes = fetched.Episodes;
+                    if (episodes.Count == 0)
+                    {
+                        await _cache.SetAsync(emptyCacheKey, "empty", cancellationToken).ConfigureAwait(false);
+                        return null;
+                    }
+
+                    await _cache.SetAsync(listCacheKey, episodes, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                gate.Release();
+            }
         }
 
-        return episodes.FirstOrDefault(r => r.SeasonNumber == season && r.Number == episode)?.Overview;
+        return episodes.FirstOrDefault(record =>
+            record.SeasonNumber == season && record.Number == episode)?.Overview;
     }
 
     /// <summary>
@@ -195,7 +337,10 @@ public class AnimeClickTvdbClient
         string language,
         CancellationToken cancellationToken)
     {
-        var result = new TvdbTestResult { Endpoint = BaseUrl };
+        var result = new TvdbTestResult
+        {
+            EffectiveLanguage = SanitizeTvdbLanguage(language)
+        };
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
@@ -219,14 +364,12 @@ public class AnimeClickTvdbClient
 
             if (!loginResponse.IsSuccessStatusCode)
             {
-                result.ResponseBody = loginBody;
                 result.ErrorMessage = $"Login failed: HTTP {(int)loginResponse.StatusCode} {loginResponse.ReasonPhrase}";
                 return result;
             }
 
             var token = ParseLoginToken(loginBody);
             result.TokenObtained = !string.IsNullOrWhiteSpace(token);
-            result.ResponseBody = loginBody;
 
             if (!result.TokenObtained)
             {
@@ -244,31 +387,55 @@ public class AnimeClickTvdbClient
 
             if (!searchResponse.IsSuccessStatusCode)
             {
-                result.ResponseBody = searchBody;
                 result.ErrorMessage = $"Search failed: HTTP {(int)searchResponse.StatusCode} {searchResponse.ReasonPhrase}";
                 return result;
             }
 
-            result.ResponseBody = searchBody;
             result.SampleSeriesId = ParseFirstSeriesId(searchBody, null);
-            result.Success = result.SampleSeriesId.HasValue;
-            if (!result.Success)
+            if (!result.SampleSeriesId.HasValue)
             {
                 result.ErrorMessage = "Login OK but search returned no series (unexpected).";
+                return result;
             }
 
+            // 3) Verify the translated-episodes endpoint used by the caller,
+            // not just authentication/search.
+            using var episodesRequest = new HttpRequestMessage(
+                HttpMethod.Get,
+                BuildEpisodesUrl(result.SampleSeriesId.Value, result.EffectiveLanguage, page: 0));
+            episodesRequest.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
+            using var episodesResponse = await client
+                .SendAsync(episodesRequest, cancellationToken)
+                .ConfigureAwait(false);
+            result.StatusCode = (int)episodesResponse.StatusCode;
+
+            if (!episodesResponse.IsSuccessStatusCode)
+            {
+                result.ErrorMessage =
+                    $"Episodes ({result.EffectiveLanguage}) failed: HTTP {(int)episodesResponse.StatusCode} {episodesResponse.ReasonPhrase}";
+                return result;
+            }
+
+            result.Success = true;
             return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            result.ErrorMessage = ex.Message;
+            result.ErrorMessage = $"Connection test failed ({ex.GetType().Name}).";
             return result;
         }
     }
 
-    private async Task<int?> SearchSeriesAsync(
-        string title, int? year, string token,
-        PluginConfiguration configuration, CancellationToken cancellationToken)
+    private async Task<ExternalIdLookupResult> SearchSeriesAsync(
+        string title,
+        int? year,
+        string token,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -279,21 +446,27 @@ public class AnimeClickTvdbClient
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                return null;
+                return ExternalIdLookupResult.ConfirmedMiss;
             }
 
             response.EnsureSuccessStatusCode();
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            return ParseFirstSeriesId(json, year);
+            return TryParseFirstSeriesId(json, year, out var id)
+                ? new ExternalIdLookupResult(id, true)
+                : ExternalIdLookupResult.Incomplete;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogDebug("TvdbClient: search failed for \"{Title}\": {Message}", title, ex.Message);
-            return null;
+            return ExternalIdLookupResult.Incomplete;
         }
     }
 
-    private async Task<List<TvdbEpisodeRecord>> FetchAllEpisodesAsync(
+    private async Task<TvdbEpisodeFetchResult> FetchAllEpisodesAsync(
         int tvdbId, string lang, string token,
         PluginConfiguration configuration, CancellationToken cancellationToken)
     {
@@ -309,41 +482,72 @@ public class AnimeClickTvdbClient
                 using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
-                    break;
+                    return new TvdbEpisodeFetchResult(all, true);
                 }
 
                 response.EnsureSuccessStatusCode();
                 var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                if (!TryParseEpisodesFromPage(json, out var pageRecords))
+                {
+                    _logger.LogDebug(
+                        "TvdbClient: invalid episode page for tvdb={Tvdb} lang={Lang} page={Page}",
+                        tvdbId,
+                        lang,
+                        page);
+                    return new TvdbEpisodeFetchResult(all, false);
+                }
 
-                var pageRecords = ParseEpisodesFromPage(json);
                 if (pageRecords.Count == 0)
                 {
-                    break;
+                    return new TvdbEpisodeFetchResult(all, true);
                 }
 
                 all.AddRange(pageRecords);
-
-                var nextLink = ParseNextLink(json);
-                if (string.IsNullOrWhiteSpace(nextLink))
+                if (string.IsNullOrWhiteSpace(ParseNextLink(json)))
                 {
-                    break;
+                    return new TvdbEpisodeFetchResult(all, true);
                 }
             }
+
+            // A next link after the safety limit means the list is partial and must
+            // neither be used nor cached as a confirmed result.
+            _logger.LogDebug(
+                "TvdbClient: episode pagination exceeded safety limit for tvdb={Tvdb} lang={Lang}",
+                tvdbId,
+                lang);
+            return new TvdbEpisodeFetchResult(all, false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogDebug("TvdbClient: episode list fetch failed for tvdb={Tvdb} lang={Lang}: {Message}",
                 tvdbId, lang, ex.Message);
+            return new TvdbEpisodeFetchResult(all, false);
         }
+    }
 
-        return all;
+    private sealed record TvdbEpisodeFetchResult(List<TvdbEpisodeRecord> Episodes, bool Completed);
+
+    private SemaphoreSlim GetSingleFlight(string key)
+        => _singleFlight.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
+
+    private sealed record ExternalIdLookupResult(int? Id, bool Completed)
+    {
+        public static ExternalIdLookupResult ConfirmedMiss { get; } = new(null, true);
+        public static ExternalIdLookupResult Incomplete { get; } = new(null, false);
     }
 
     private HttpClient BuildClient(PluginConfiguration configuration)
     {
         var client = _httpClientFactory.CreateClient();
-        client.Timeout = TimeSpan.FromSeconds(Math.Max(5, configuration.EpisodeTranslationTimeoutSec));
-        client.DefaultRequestHeaders.UserAgent.ParseAdd(configuration.UserAgent);
+        client.Timeout = TimeSpan.FromSeconds(
+            Math.Clamp(configuration.EpisodeTranslationTimeoutSec, 5, 120));
+        client.DefaultRequestHeaders.TryAddWithoutValidation(
+            "User-Agent",
+            AnimeClickClient.GetEffectiveUserAgent(configuration));
         return client;
     }
 
@@ -399,51 +603,57 @@ public class AnimeClickTvdbClient
 
     /// <summary>Parses the first TVDB series id from a /search response, preferring a year match (testable).</summary>
     internal static int? ParseFirstSeriesId(string json, int? preferredYear)
+        => TryParseFirstSeriesId(json, preferredYear, out var id) ? id : null;
+
+    private static bool TryParseFirstSeriesId(string json, int? preferredYear, out int? id)
     {
+        id = null;
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+            if (!doc.RootElement.TryGetProperty("data", out var data)
+                || data.ValueKind != JsonValueKind.Array)
             {
-                return null;
+                return false;
             }
 
-        int? fallback = null;
-        foreach (var item in data.EnumerateArray())
-        {
-            if (!item.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String
-                || !string.Equals(typeEl.GetString(), "series", StringComparison.OrdinalIgnoreCase))
+            int? fallback = null;
+            foreach (var item in data.EnumerateArray())
             {
-                continue;
-            }
-
-            if (!TryReadIntField(item, "tvdb_id", out var id))
-            {
-                if (!TryReadIntField(item, "id", out id))
+                if (!item.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String
+                    || !string.Equals(typeEl.GetString(), "series", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
-            }
+
+                if (!TryReadIntField(item, "tvdb_id", out var parsedId)
+                    && !TryReadIntField(item, "id", out parsedId))
+                {
+                    continue;
+                }
 
                 if (!preferredYear.HasValue)
                 {
-                    return id;
+                    id = parsedId;
+                    return true;
                 }
 
                 var itemYear = ExtractYear(item);
                 if (itemYear.HasValue && itemYear.Value == preferredYear.Value)
                 {
-                    return id;
+                    id = parsedId;
+                    return true;
                 }
 
-                fallback ??= id;
+                fallback ??= parsedId;
             }
 
-            return fallback;
+            id = fallback;
+            return true;
         }
-        catch
+        catch (JsonException)
         {
-            return null;
+            return false;
         }
     }
 
@@ -466,14 +676,18 @@ public class AnimeClickTvdbClient
 
     /// <summary>Parses the episodes from a single /series/{id}/episodes page (testable, no network).</summary>
     internal static List<TvdbEpisodeRecord> ParseEpisodesFromPage(string json)
+        => TryParseEpisodesFromPage(json, out var records) ? records : [];
+
+    private static bool TryParseEpisodesFromPage(string json, out List<TvdbEpisodeRecord> records)
     {
-        var list = new List<TvdbEpisodeRecord>();
+        records = [];
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+            if (!doc.RootElement.TryGetProperty("data", out var data)
+                || data.ValueKind != JsonValueKind.Array)
             {
-                return list;
+                return false;
             }
 
             foreach (var item in data.EnumerateArray())
@@ -485,15 +699,16 @@ public class AnimeClickTvdbClient
                 var overview = item.TryGetProperty("overview", out var oEl) && oEl.ValueKind == JsonValueKind.String
                     ? oEl.GetString() : null;
 
-                list.Add(new TvdbEpisodeRecord { SeasonNumber = season, Number = number, Overview = overview });
+                records.Add(new TvdbEpisodeRecord { SeasonNumber = season, Number = number, Overview = overview });
             }
-        }
-        catch
-        {
-            // best effort
-        }
 
-        return list;
+            return true;
+        }
+        catch (JsonException)
+        {
+            records = [];
+            return false;
+        }
     }
 
     /// <summary>Extracts the overview of a specific episode from a single page JSON (testable, no network).</summary>
@@ -560,10 +775,9 @@ internal sealed class TvdbEpisodeRecord
 public sealed class TvdbTestResult
 {
     public bool Success { get; set; }
-    public string Endpoint { get; set; } = string.Empty;
     public int StatusCode { get; set; }
-    public string? ResponseBody { get; set; }
     public string? ErrorMessage { get; set; }
     public bool TokenObtained { get; set; }
     public int? SampleSeriesId { get; set; }
+    public string EffectiveLanguage { get; set; } = "ita";
 }

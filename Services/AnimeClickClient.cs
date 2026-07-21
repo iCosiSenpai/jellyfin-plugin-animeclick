@@ -12,14 +12,53 @@ namespace AnimeClick.Plugin.Services;
 
 public partial class AnimeClickClient
 {
+    private const int MinimumRequestDelayMilliseconds = 500;
+    private const int MaximumRequestDelayMilliseconds = 60_000;
+    private const int MaxAttempts = 2;
+
+    // AnimeClickClient is registered as a typed HttpClient and can therefore have multiple
+    // instances (one per singleton provider). The gate must be process-wide or those
+    // instances would bypass the configured delay when Jellyfin refreshes items in parallel.
+    private static readonly SemaphoreSlim RequestGate = new(1, 1);
+    private static DateTime _nextRequestUtc = DateTime.MinValue;
+
     private readonly HttpClient _httpClient;
     private readonly ILogger<AnimeClickClient> _logger;
-    private readonly SemaphoreSlim _gate = new(1, 1);
 
     public AnimeClickClient(HttpClient httpClient, ILogger<AnimeClickClient> logger)
     {
         _httpClient = httpClient;
         _logger = logger;
+    }
+
+    [GeneratedRegex(@"^\d+(?:/[\p{L}\p{Nd}_~-]+)?$", RegexOptions.CultureInvariant)]
+    private static partial Regex AnimeClickIdRegex();
+
+    [GeneratedRegex(@"^(\d+)-([\p{L}\p{Nd}_~-]+)$", RegexOptions.CultureInvariant)]
+    private static partial Regex LegacyAnimeClickIdRegex();
+
+    [GeneratedRegex(@"AnimeClick-Jellyfin-Plugin/[^\s();]+", RegexOptions.CultureInvariant)]
+    private static partial Regex PluginUserAgentRegex();
+
+    /// <summary>Validates and normalizes a provider ID without performing network I/O.</summary>
+    public static bool TryNormalizeAnimeClickId(string? value, out string normalized)
+    {
+        normalized = value?.Trim().Trim('/') ?? string.Empty;
+        if (AnimeClickIdRegex().IsMatch(normalized))
+        {
+            return true;
+        }
+
+        // v0.2.x briefly documented IDs as "2966-naruto". Accept and migrate that
+        // persisted form even though AnimeClick's canonical provider ID is "2966/naruto".
+        var legacyMatch = LegacyAnimeClickIdRegex().Match(normalized);
+        if (!legacyMatch.Success)
+        {
+            return false;
+        }
+
+        normalized = legacyMatch.Groups[1].Value + "/" + legacyMatch.Groups[2].Value;
+        return true;
     }
 
     /// <summary>
@@ -30,110 +69,233 @@ public partial class AnimeClickClient
     /// </summary>
     public static string BuildAnimeUrl(string baseUrl, string animeClickId)
     {
-        // If the ID already contains a slash (e.g. "72/naruto"), use as-is
-        var id = animeClickId.Trim('/');
-        if (!id.Contains('/'))
+        if (TryBuildAnimeUrl(baseUrl, animeClickId, out var url))
         {
-            // Numeric-only ID: append placeholder slug
-            id = id + "/x";
+            return url;
         }
 
-        return $"{baseUrl}/anime/{id}";
+        throw new ArgumentException(
+            "AnimeClick BaseUrl or provider ID is invalid; expected an absolute HTTP(S) URL and 'number/slug' ID.");
+    }
+
+    /// <summary>Attempts to build a canonical anime URL without throwing on stale local IDs.</summary>
+    public static bool TryBuildAnimeUrl(string? baseUrl, string? animeClickId, out string url)
+    {
+        url = string.Empty;
+        if (string.IsNullOrWhiteSpace(baseUrl)
+            || !Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var baseUri)
+            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)
+            || !TryNormalizeAnimeClickId(animeClickId, out var id))
+        {
+            return false;
+        }
+
+        if (!id.Contains('/', StringComparison.Ordinal))
+        {
+            id += "/x";
+        }
+
+        url = new Uri(baseUri, "anime/" + id).AbsoluteUri;
+        return true;
     }
 
     /// <summary>
-    /// Returns a UA string with correct plugin version (prefers assembly version over the
-    /// possibly stale value stored in configuration).
+    /// Returns a UA string with the assembly version, replacing only the plugin token
+    /// instead of relying on the configured version having a fixed string length.
     /// </summary>
     internal static string GetEffectiveUserAgent(PluginConfiguration configuration)
     {
-        var configured = configuration?.UserAgent ?? string.Empty;
-        var asmVer = Assembly.GetExecutingAssembly().GetName().Version?.ToString(4) ?? "0.3.8.0";
+        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(4) ?? "0.4.0.0";
+        var defaultUserAgent =
+            $"AnimeClick-Jellyfin-Plugin/{assemblyVersion} (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+        var configured = configuration?.UserAgent?.Trim();
 
-        // If config contains an obvious stale version placeholder, or no version, rebuild.
-        if (string.IsNullOrWhiteSpace(configured) ||
-            configured.Contains("0.3.5.0") ||
-            configured.Contains("0.3.0.0") ||
-            !configured.Contains("AnimeClick"))
+        if (string.IsNullOrWhiteSpace(configured) || !PluginUserAgentRegex().IsMatch(configured))
         {
-            return $"AnimeClick-Jellyfin-Plugin/{asmVer} (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+            return defaultUserAgent;
         }
 
-        // If it has a version but it's not matching current asm, prefer asm (keeps +url)
-        if (configured.Contains("AnimeClick-Jellyfin-Plugin/") && !configured.Contains(asmVer))
-        {
-            return configured.Replace(
-                configured.Substring(configured.IndexOf("AnimeClick-Jellyfin-Plugin/"), "AnimeClick-Jellyfin-Plugin/0.3.x.0".Length),
-                $"AnimeClick-Jellyfin-Plugin/{asmVer}");
-        }
-
-        return configured;
+        return PluginUserAgentRegex().Replace(
+            configured,
+            _ => $"AnimeClick-Jellyfin-Plugin/{assemblyVersion}",
+            count: 1);
     }
 
-    public async Task<string> GetStringAsync(string url, PluginConfiguration configuration, CancellationToken cancellationToken)
+    public async Task<string> GetStringAsync(
+        string url,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
     {
-        // Bounded retry for transient server / network errors only. 4xx and auth problems are not retried.
-        const int maxAttempts = 2;
-        Exception? lastEx = null;
+        ArgumentNullException.ThrowIfNull(configuration);
 
-        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var requestUri)
+            || (requestUri.Scheme != Uri.UriSchemeHttp && requestUri.Scheme != Uri.UriSchemeHttps))
         {
-            await _gate.WaitAsync(cancellationToken);
+            throw new ArgumentException("Request URL must be an absolute HTTP(S) URL.", nameof(url));
+        }
+
+        var configuredDelay = Math.Clamp(
+            configuration.RequestDelayMilliseconds,
+            MinimumRequestDelayMilliseconds,
+            MaximumRequestDelayMilliseconds);
+        Exception? lastException = null;
+
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
+        {
+            var requestStarted = false;
+            var suppressRetry = false;
+            DateTime? serverBackoffUntilUtc = null;
+            await RequestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.UserAgent.ParseAdd(GetEffectiveUserAgent(configuration));
-                request.Headers.Referrer = new Uri(configuration.BaseUrl);
+                if (_nextRequestUtc > DateTime.UtcNow)
+                {
+                    await WaitUntilUtcAsync(_nextRequestUtc, cancellationToken).ConfigureAwait(false);
+                }
+
+                using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+                request.Headers.TryAddWithoutValidation("User-Agent", GetEffectiveUserAgent(configuration));
+                if (Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var referrer))
+                {
+                    request.Headers.Referrer = referrer;
+                }
 
                 // AnimeClick serves an interstitial video-intro ad page on first visit.
                 // Setting the ac_campaign cookie bypasses it and returns the real content.
-                request.Headers.Add("Cookie", "ac_campaign=show");
+                request.Headers.TryAddWithoutValidation("Cookie", "ac_campaign=show");
 
+                requestStarted = true;
                 _logger.LogDebug("AnimeClick HTTP fetch: {Url} (attempt {Attempt})", url, attempt + 1);
-                using var response = await _httpClient.SendAsync(request, cancellationToken);
+                using var response = await _httpClient
+                    .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+                    .ConfigureAwait(false);
 
-                if ((int)response.StatusCode >= 500 && attempt < maxAttempts - 1)
+                if (IsTransient(response.StatusCode))
                 {
-                    // Transient server error — release gate, wait a bit, retry
-                    _logger.LogWarning("AnimeClick transient {Status} for {Url}, will retry", response.StatusCode, url);
-                    await Task.Delay(300 + (attempt * 400), cancellationToken);
-                    continue;
+                    var retryDelay = GetRetryDelay(response, attempt);
+                    serverBackoffUntilUtc = AddUtcDelaySafely(DateTime.UtcNow, retryDelay);
+
+                    if (attempt < MaxAttempts - 1)
+                    {
+                        if (retryDelay > TimeSpan.FromSeconds(30))
+                        {
+                            // Never retry before the server's Retry-After deadline. A very
+                            // long deadline is persisted in the global gate and surfaced now.
+                            suppressRetry = true;
+                            _logger.LogWarning(
+                                "AnimeClick {Status} for {Url} requested Retry-After={Delay}; not retrying",
+                                response.StatusCode,
+                                url,
+                                retryDelay);
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "AnimeClick transient {Status} for {Url}; retrying in {DelayMs} ms",
+                                response.StatusCode,
+                                url,
+                                retryDelay.TotalMilliseconds);
+                            await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
+                    }
                 }
 
                 response.EnsureSuccessStatusCode();
-                var content = await response.Content.ReadAsStringAsync(cancellationToken);
-
-                // Respect ethical scraping: wait between requests as requested by AnimeClick staff.
-                await Task.Delay(configuration.RequestDelayMilliseconds, cancellationToken);
-                return content;
+                return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                _logger.LogInformation("Fetch cancellato o andato in timeout per l'URL: {Url}", url);
+                _logger.LogDebug("AnimeClick fetch cancelled for {Url}", url);
                 throw;
             }
-            catch (HttpRequestException ex) when (attempt < maxAttempts - 1)
+            catch (OperationCanceledException ex) when (attempt < MaxAttempts - 1)
             {
-                // Network / connect / DNS transient — retry
-                lastEx = ex;
-                _logger.LogDebug(ex, "AnimeClick network transient for {Url}, retrying", url);
-                await Task.Delay(250 + (attempt * 300), cancellationToken);
-                continue;
+                lastException = ex;
+                var retryDelay = TimeSpan.FromMilliseconds(250 + (attempt * 300));
+                _logger.LogDebug(ex, "AnimeClick request timed out for {Url}; retrying", url);
+                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException ex)
+            {
+                throw new HttpRequestException($"AnimeClick request timed out: {url}", ex);
+            }
+            catch (HttpRequestException ex) when (!suppressRetry && attempt < MaxAttempts - 1)
+            {
+                lastException = ex;
+                var retryDelay = TimeSpan.FromMilliseconds(250 + (attempt * 300));
+                _logger.LogDebug(ex, "AnimeClick network transient for {Url}; retrying", url);
+                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                lastEx = ex;
                 _logger.LogError(ex, "Errore HTTP verso AnimeClick: {Url}", url);
                 throw;
             }
             finally
             {
-                _gate.Release();
+                if (requestStarted)
+                {
+                    var configuredNextRequest = DateTime.UtcNow.AddMilliseconds(configuredDelay);
+                    var nextRequest = serverBackoffUntilUtc > configuredNextRequest
+                        ? serverBackoffUntilUtc.Value
+                        : configuredNextRequest;
+                    if (nextRequest > _nextRequestUtc)
+                    {
+                        _nextRequestUtc = nextRequest;
+                    }
+                }
+
+                RequestGate.Release();
             }
         }
 
-        // If we exhausted retries, rethrow last
-        if (lastEx != null) throw lastEx;
-        throw new HttpRequestException($"AnimeClick request failed after {maxAttempts} attempts: {url}");
+        throw lastException ?? new HttpRequestException(
+            $"AnimeClick request failed after {MaxAttempts} attempts: {url}");
+    }
+
+    private static bool IsTransient(HttpStatusCode statusCode)
+        => statusCode == HttpStatusCode.RequestTimeout
+           || statusCode == HttpStatusCode.TooManyRequests
+           || (int)statusCode >= 500;
+
+    private static async Task WaitUntilUtcAsync(DateTime deadlineUtc, CancellationToken cancellationToken)
+    {
+        var maximumDelayChunk = TimeSpan.FromHours(12);
+        while (true)
+        {
+            var remaining = deadlineUtc - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                return;
+            }
+
+            await Task.Delay(
+                    remaining > maximumDelayChunk ? maximumDelayChunk : remaining,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static DateTime AddUtcDelaySafely(DateTime utcNow, TimeSpan delay)
+        => delay >= DateTime.MaxValue - utcNow
+            ? DateTime.MaxValue
+            : utcNow.Add(delay);
+
+    private static TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt)
+    {
+        var retryAfter = response.Headers.RetryAfter;
+        var delay = retryAfter?.Delta;
+        if (!delay.HasValue && retryAfter?.Date is { } retryDate)
+        {
+            delay = retryDate - DateTimeOffset.UtcNow;
+        }
+
+        if (!delay.HasValue || delay.Value <= TimeSpan.Zero)
+        {
+            delay = TimeSpan.FromMilliseconds(300 + (attempt * 400));
+        }
+
+        return delay.Value;
     }
 }

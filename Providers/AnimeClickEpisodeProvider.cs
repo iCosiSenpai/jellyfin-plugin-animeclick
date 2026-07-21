@@ -16,53 +16,51 @@ using Microsoft.Extensions.Logging;
 namespace AnimeClick.Plugin.Providers;
 
 /// <summary>
-/// Provides episode-level metadata (Italian titles) for anime from AnimeClick.
-/// Fetches the episode list from /episodi and matches by episode number.
-/// Resolves season-specific AnimeClick pages via relations for multi-season shows.
+/// Provides episode-level Italian titles from AnimeClick and optional Italian
+/// overview fallback. The two paths are independent: failure or disablement of
+/// /episodi never suppresses the language-aware overview chain.
 /// </summary>
 public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, EpisodeInfo>, IHasOrder
 {
-    private readonly AnimeClickClient _client;
     private readonly AnimeClickCacheService _cache;
-    private readonly AnimeClickHtmlParser _parser;
+    private readonly AnimeClickEpisodeListLoader _episodeListLoader;
+    private readonly AnimeClickSeasonResolver _seasonResolver;
     private readonly ILogger<AnimeClickEpisodeProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly AnimeClickTmdbClient _tmdbClient;
-    private readonly AnimeClickOllamaTranslator _translator;
-    private readonly AnimeClickTvdbClient _tvdbClient;
+    private readonly AnimeClickMetadataFallbackService _fallbackService;
 
     public AnimeClickEpisodeProvider(
-        AnimeClickClient client,
         AnimeClickCacheService cache,
-        AnimeClickHtmlParser parser,
+        AnimeClickEpisodeListLoader episodeListLoader,
+        AnimeClickSeasonResolver seasonResolver,
         ILogger<AnimeClickEpisodeProvider> logger,
         IHttpClientFactory httpClientFactory,
-        AnimeClickTmdbClient tmdbClient,
-        AnimeClickOllamaTranslator translator,
-        AnimeClickTvdbClient tvdbClient)
+        AnimeClickMetadataFallbackService fallbackService)
     {
-        _client = client;
         _cache = cache;
-        _parser = parser;
+        _episodeListLoader = episodeListLoader;
+        _seasonResolver = seasonResolver;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
-        _tmdbClient = tmdbClient;
-        _translator = translator;
-        _tvdbClient = tvdbClient;
+        _fallbackService = fallbackService;
     }
 
     public string Name => "AnimeClick";
+
     /// <summary>
-    /// Run AFTER the other metadata providers so that fields we don't populate
-    /// are filled in first by AniList / TheMovieDb / OMDb, and only then we
-    /// overlay the Italian episode title.
+    /// AnimeClick runs first so Italian episode fields win Jellyfin's first-value merge.
+    /// A post-merge authority provider protects values produced during this refresh.
     /// </summary>
-    public int Order => 100;
+    public int Order => 0;
 
     public async Task<MetadataResult<Episode>> GetMetadata(EpisodeInfo info, CancellationToken cancellationToken)
     {
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var result = new MetadataResult<Episode> { Item = new Episode() };
+        var existingEpisodeId = info.GetProviderId("AnimeClick");
+        using var authorityLease = AnimeClickMetadataAuthorityStore.Begin<Episode>(
+            info.Path,
+            existingEpisodeId);
 
         _logger.LogInformation(
             "AnimeClick EpisodeProvider.GetMetadata called: name=\"{Name}\" S{Season}E{Episode} seriesProviderId={SeriesProviderId} path={Path}",
@@ -72,22 +70,10 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             info.SeriesProviderIds?.GetValueOrDefault("AnimeClick") ?? "<none>",
             info.Path ?? "<none>");
 
-        if (!configuration.EnableEpisodeTitles)
-        {
-            var id = info.GetProviderId("AnimeClick");
-            if (!string.IsNullOrWhiteSpace(id))
-            {
-                result.Item.SetProviderId("AnimeClick", id);
-                result.HasMetadata = true;
-            }
-            return result;
-        }
-
-        // Get AnimeClick ID from parent series
         var mainAnimeClickId = info.SeriesProviderIds?.GetValueOrDefault("AnimeClick")
                                ?? info.GetProviderId("AnimeClick");
-
-        if (string.IsNullOrWhiteSpace(mainAnimeClickId))
+        if (string.IsNullOrWhiteSpace(mainAnimeClickId)
+            || !AnimeClickClient.TryNormalizeAnimeClickId(mainAnimeClickId, out var normalizedMainId))
         {
             return result;
         }
@@ -98,318 +84,96 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             return result;
         }
 
+        mainAnimeClickId = normalizedMainId;
         var seasonNumber = info.ParentIndexNumber;
 
-        // Resolve season-specific AnimeClick page for multi-season shows
-        var animeClickId = await ResolveSeasonAnimeClickIdAsync(
-            mainAnimeClickId, seasonNumber, configuration, cancellationToken)
-            ?? mainAnimeClickId;
-
-        try
+        if (!configuration.EnableEpisodeTitles)
         {
-            // Try to get cached episode list
-            var cacheKey = $"episodes:v2::{animeClickId}";
-            var cachedEpisodes = await _cache.GetAsync<List<AnimeClickEpisode>>(cacheKey, configuration.CacheHours, cancellationToken);
-            _logger.LogDebug("AnimeClick episodes cache {State}: {Key}", cachedEpisodes is null ? "miss" : "hit", cacheKey);
-
-            List<AnimeClickEpisode>? episodes = cachedEpisodes;
-
-            if (episodes is null || episodes.Count == 0)
+            // Preserve only an existing episode identity. The parent series ID is
+            // never a valid substitute for an episode provider ID.
+            if (!string.IsNullOrWhiteSpace(existingEpisodeId))
             {
-                // Fetch episodes page
-                var animeUrl = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
-                var episodesUrl = animeUrl + "/episodi";
-
-                _logger.LogInformation("AnimeClick: Fetching episodes from {Url}", episodesUrl);
-                var html = await _client.GetStringAsync(episodesUrl, configuration, cancellationToken);
-
-                // Read the cached AnimeClickAnime to pass SeasonsCount to the episode parser,
-                // so episodes listed by AnimeClick as a continuous "Ep. 01"..<c>Ep. NN</c> block
-                // (no explicit <c>S1/S2 Ep.</c> row prefixes) can be split into seasons when the
-                // detail page declares multiple seasons (e.g. The Asterisk War, 24 eps / 2 cour).
-                int? seasonsCount = null;
-                var seriesUrl = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
-                var seriesCacheKey = $"anime::{seriesUrl}";
-                var series = await _cache.GetAsync<AnimeClickAnime>(seriesCacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
-                if (series is not null && series.SeasonsCount > 0)
-                {
-                    seasonsCount = series.SeasonsCount;
-                    _logger.LogDebug("AnimeClick: using SeasonsCount={SeasonsCount} for episode season-split on {Id}", seasonsCount, animeClickId);
-                }
-
-                episodes = _parser.ParseEpisodesPage(html, configuration.BaseUrl, seasonsCount);
-                _logger.LogInformation("AnimeClick: Parsed {Count} episodes from {Url}", episodes.Count, episodesUrl);
-
-                // If there are more pages, fetch them too (pagination)
-                for (var page = 2; page <= 30; page++)
-                {
-                    var nextUrl = episodesUrl + $"?page={page}";
-                    try
-                    {
-                        var nextHtml = await _client.GetStringAsync(nextUrl, configuration, cancellationToken);
-                        var nextEpisodes = _parser.ParseEpisodesPage(nextHtml, configuration.BaseUrl, seasonsCount);
-                        if (nextEpisodes.Count == 0) break;
-
-                        if (episodes.Any(e => e.Number == nextEpisodes[0].Number
-                            && e.SeasonNumber == nextEpisodes[0].SeasonNumber)) break;
-
-                        episodes.AddRange(nextEpisodes);
-                        _logger.LogInformation("AnimeClick: Parsed {Count} more episodes from {Url}", nextEpisodes.Count, nextUrl);
-                    }
-                    catch
-                    {
-                        break;
-                    }
-                }
-
-                await _cache.SetAsync(cacheKey, episodes, cancellationToken);
-                _logger.LogInformation("AnimeClick: Cached {Count} episodes for {Id}", episodes.Count, animeClickId);
+                result.Item.SetProviderId("AnimeClick", existingEpisodeId);
             }
-
-            var episodeMatch = AnimeClickEpisodeMatcher.Match(episodes, seasonNumber, episodeNumber.Value);
-            var match = episodeMatch.Episode;
-            _logger.LogInformation(
-                "AnimeClick: Episode match strategy={Strategy} animeClickId={Id} S{Season}E{Episode}",
-                episodeMatch.Strategy,
-                animeClickId,
-                seasonNumber,
-                episodeNumber.Value);
-
-            if (match is not null && !string.IsNullOrWhiteSpace(match.Title))
+        }
+        else
+        {
+            try
             {
-                var isGeneric = System.Text.RegularExpressions.Regex.IsMatch(
-                    match.Title, @"^Episodio\s+\d+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                await PopulateTitleAsync(
+                        result,
+                        mainAnimeClickId,
+                        seasonNumber,
+                        episodeNumber.Value,
+                        configuration,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "AnimeClick: title lookup failed for episode {Num} of {Id}; synopsis fallback will still run",
+                    episodeNumber.Value,
+                    mainAnimeClickId);
+            }
+        }
 
-                if (!isGeneric)
+        if (configuration.EnableEpisodeSynopsisTranslation && seasonNumber.HasValue)
+        {
+            try
+            {
+                var fallback = await _fallbackService.ResolveEpisodeOverviewAsync(
+                        mainAnimeClickId,
+                        seasonNumber.Value,
+                        episodeNumber.Value,
+                        configuration,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (fallback is not null && !string.IsNullOrWhiteSpace(fallback.Value))
                 {
-                    result.Item.Name = match.Title;
-                    result.Item.SetProviderId("AnimeClick", match.ProviderId ?? animeClickId);
-
-                    if (match.DurationMinutes.HasValue)
+                    result.Item.Overview = fallback.Value;
+                    if (string.IsNullOrWhiteSpace(result.Item.GetProviderId("AnimeClick"))
+                        && !string.IsNullOrWhiteSpace(existingEpisodeId))
                     {
-                        result.Item.RunTimeTicks = TimeSpan.FromMinutes(match.DurationMinutes.Value).Ticks;
+                        result.Item.SetProviderId("AnimeClick", existingEpisodeId);
                     }
 
                     result.HasMetadata = true;
-                    _logger.LogDebug(
-                        "AnimeClick: Episode S{Season} AC#{Absolute} ordinal={Ordinal} providerId={ProviderId} = \"{Title}\"",
-                        match.SeasonNumber,
-                        match.AbsoluteNumber,
-                        match.SeasonOrdinalNumber,
-                        match.ProviderId,
-                        match.Title);
-                }
-                else
-                {
-                    _logger.LogDebug("AnimeClick: Episode {Num} has generic title \"{Title}\", skipping Italian title",
-                        match.Number, match.Title);
+                    _logger.LogInformation(
+                        "AnimeClick: episode overview source={Source} sourceLanguage={Language} ollama={UsedOllama} S{Season}E{Episode}",
+                        fallback.Source,
+                        fallback.SourceLanguage,
+                        fallback.UsedOllama,
+                        seasonNumber.Value,
+                        episodeNumber.Value);
                 }
             }
-
-            // Optional: translate English episode synopsis (TMDB) to Italian (Ollama Cloud).
-            // AnimeClick publishes no per-episode synopsis, so we source the EN overview
-            // from TMDB and translate it. Runs even when the Italian title is generic/missing
-            // (the Italian synopsis has value on its own). Best-effort + cached; on any
-            // failure the Overview is left to other providers (AniList/TMDB) in EN (fill-gaps).
-            await TrySetTranslatedSynopsisAsync(result, info, mainAnimeClickId, seasonNumber, episodeNumber.Value, configuration, cancellationToken);
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "AnimeClick: synopsis fallback failed for episode {Num} of {Id}; field left unchanged",
+                    episodeNumber.Value,
+                    mainAnimeClickId);
+            }
         }
-        catch (Exception ex)
+
+        if (result.HasMetadata)
         {
-            _logger.LogWarning(ex, "AnimeClick: Error fetching episode {Num} for {Id}", episodeNumber, animeClickId);
+            // Consumed once after all remote providers have filled their gaps.
+            authorityLease.Capture(result.Item);
         }
 
         return result;
-    }
-
-    /// <summary>
-    /// Fills the Italian episode synopsis. Source order (gated by
-    /// <see cref="PluginConfiguration.EnableEpisodeSynopsisTranslation"/>):
-    /// 1) <b>TVDB</b> — direct Italian overview from TheTVDB translations (zero Ollama
-    ///    compute) when <see cref="PluginConfiguration.EnableTvdbSynopsis"/> is on and a
-    ///    TVDB API key is set. Preferred.
-    /// 2) <b>TMDB EN + Ollama IT</b> — fallback: English overview from TMDB translated to
-    ///    Italian via Ollama Cloud, when TMDB + Ollama keys are set.
-    /// Sets <see cref="MetadataResult{T}.Item"/>'s Overview (and HasMetadata) only on
-    /// success. Empty-guard: never overwrites with an empty string. Never throws.
-    /// </summary>
-    private async Task TrySetTranslatedSynopsisAsync(
-        MetadataResult<Episode> result,
-        EpisodeInfo info,
-        string animeClickId,
-        int? seasonNumber,
-        int episodeNumber,
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken)
-    {
-        if (!configuration.EnableEpisodeSynopsisTranslation)
-        {
-            return;
-        }
-
-        if (!seasonNumber.HasValue || seasonNumber.Value < 0)
-        {
-            return;
-        }
-
-        var tvdbConfigured = configuration.EnableTvdbSynopsis
-            && !string.IsNullOrWhiteSpace(configuration.TvdbApiKey);
-        var tmdbOllamaConfigured = !string.IsNullOrWhiteSpace(configuration.TmdbApiKey)
-            && !string.IsNullOrWhiteSpace(configuration.OllamaCloudApiKey);
-
-        if (!tvdbConfigured && !tmdbOllamaConfigured)
-        {
-            return;
-        }
-
-        try
-        {
-            // The series title + year come from the cached AnimeClickAnime that the
-            // SeriesProvider populated (key anime::{url}). OriginalTitle (romaji) is the
-            // best search key for both TVDB and TMDB; Italian Title is the fallback. If the
-            // cache misses (e.g. episodes scanned before the series), skip — later scan.
-            var seriesUrl = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
-            var seriesCacheKey = $"anime::{seriesUrl}";
-            var series = await _cache.GetAsync<AnimeClickAnime>(seriesCacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
-            if (series is null)
-            {
-                _logger.LogDebug("AnimeClick: series anime not cached for {Id}, skipping synopsis", animeClickId);
-                return;
-            }
-
-            // 1) TVDB direct Italian overview (preferred — no translation, no compute).
-            if (tvdbConfigured)
-            {
-                var tvdbId = await _tvdbClient.ResolveTvdbSeriesIdAsync(
-                    series.OriginalTitle,
-                    series.Title,
-                    series.ProductionYear,
-                    configuration,
-                    $"tvdbSeriesId::{animeClickId}",
-                    cancellationToken).ConfigureAwait(false);
-
-                if (tvdbId.HasValue)
-                {
-                    var itOverview = await _tvdbClient.GetEpisodeItalianOverviewAsync(
-                        tvdbId.Value, seasonNumber.Value, episodeNumber, configuration, cancellationToken)
-                        .ConfigureAwait(false);
-
-                    if (!string.IsNullOrWhiteSpace(itOverview))
-                    {
-                        result.Item.Overview = itOverview;
-                        result.HasMetadata = true;
-                        _logger.LogDebug(
-                            "AnimeClick: synopsis IT (TVDB direct) for tvdb={Tvdb} S{S}E{E} ({Chars} chars)",
-                            tvdbId.Value, seasonNumber.Value, episodeNumber, itOverview.Length);
-                        return;
-                    }
-
-                    _logger.LogDebug(
-                        "AnimeClick: TVDB has no {Lang} overview for tvdb={Tvdb} S{S}E{E}, falling back to TMDB+Ollama",
-                        configuration.TvdbLanguage, tvdbId.Value, seasonNumber.Value, episodeNumber);
-                }
-            }
-
-            // 2) Fallback: TMDB English overview + Ollama Italian translation.
-            if (!tmdbOllamaConfigured)
-            {
-                return;
-            }
-
-            var tmdbId = await _tmdbClient.ResolveTmdbTvIdAsync(
-                series.OriginalTitle,
-                series.Title,
-                series.ProductionYear,
-                configuration,
-                $"tmdbId::{animeClickId}",
-                cancellationToken).ConfigureAwait(false);
-
-            if (!tmdbId.HasValue)
-            {
-                _logger.LogDebug("AnimeClick: no TMDB tv id for series \"{Series}\", skipping synopsis",
-                    series.OriginalTitle ?? series.Title ?? "<unknown>");
-                return;
-            }
-
-            var englishOverview = await _tmdbClient.GetEpisodeOverviewAsync(
-                tmdbId.Value, seasonNumber.Value, episodeNumber, configuration, cancellationToken).ConfigureAwait(false);
-
-            if (string.IsNullOrWhiteSpace(englishOverview))
-            {
-                return;
-            }
-
-            var italianOverview = await _translator.TranslateSynopsisAsync(
-                englishOverview, tmdbId.Value, seasonNumber.Value, episodeNumber, configuration, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (!string.IsNullOrWhiteSpace(italianOverview))
-            {
-                result.Item.Overview = italianOverview;
-                result.HasMetadata = true;
-                _logger.LogDebug(
-                    "AnimeClick: synopsis IT (TMDB+Ollama) for tmdb={Tmdb} S{S}E{E} ({Chars} chars)",
-                    tmdbId.Value, seasonNumber.Value, episodeNumber, italianOverview.Length);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "AnimeClick: synopsis fill failed for S{S}E{E}", seasonNumber, episodeNumber);
-        }
-    }
-
-    /// <summary>
-    /// Resolves the AnimeClick ID for a specific season by searching relations
-    /// on the main anime page. Returns null if the main page should be used.
-    /// </summary>
-    private async Task<string?> ResolveSeasonAnimeClickIdAsync(
-        string mainId, int? seasonNumber,
-        PluginConfiguration config, CancellationToken ct)
-    {
-        if (!seasonNumber.HasValue || seasonNumber.Value <= 1) return null;
-
-        var cacheKey = $"seasonMap:v2::{mainId}::{seasonNumber.Value}";
-        var cached = await _cache.GetAsync<string>(cacheKey, config.CacheHours, ct);
-        _logger.LogDebug("AnimeClick season map cache {State}: {Key}", cached is null ? "miss" : "hit", cacheKey);
-        if (cached is not null) return cached == "__same__" ? null : cached;
-
-        string? resolvedId = null;
-
-        try
-        {
-            var mainUrl = AnimeClickClient.BuildAnimeUrl(config.BaseUrl, mainId);
-            var relHtml = await _client.GetStringAsync(mainUrl + "/relazioni", config, ct);
-            var relations = _parser.ParseRelationsPage(relHtml, config.BaseUrl);
-
-            var tvRelations = relations
-                .Where(r => r.Format is not null &&
-                    (r.Format.Contains("Serie TV", StringComparison.OrdinalIgnoreCase) ||
-                     r.Format.Contains("TV", StringComparison.OrdinalIgnoreCase)) &&
-                    !IsSpinoffTitle(r.Title))
-                .OrderBy(r => r.Year ?? 9999)
-                .ToList();
-
-            if (tvRelations.Count > 0)
-            {
-                var relIndex = seasonNumber.Value - 2;
-                if (relIndex >= 0 && relIndex < tvRelations.Count)
-                {
-                    var candidateId = tvRelations[relIndex].AnimeClickId;
-                    if (!string.IsNullOrWhiteSpace(candidateId) && candidateId != mainId)
-                    {
-                        resolvedId = candidateId;
-                        _logger.LogInformation("AnimeClick: Season {S} resolved via relations → {Id}",
-                            seasonNumber.Value, resolvedId);
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "AnimeClick: Relations-based season resolution failed for {Id} S{S}", mainId, seasonNumber.Value);
-        }
-
-        await _cache.SetAsync(cacheKey, resolvedId ?? "__same__", ct);
-        return resolvedId;
     }
 
     public Task<IEnumerable<RemoteSearchResult>> GetSearchResults(EpisodeInfo searchInfo, CancellationToken cancellationToken)
@@ -423,9 +187,139 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         return client.GetAsync(new Uri(url), cancellationToken);
     }
 
-    private static bool IsSpinoffTitle(string? title) =>
-        !string.IsNullOrWhiteSpace(title) &&
-        System.Text.RegularExpressions.Regex.IsMatch(title,
-            @"\b(Alternative|Gaiden|Spin[\s-]?[Oo]ff|Bangai[\s-]?[Hh]en)\b",
+    private async Task PopulateTitleAsync(
+        MetadataResult<Episode> result,
+        string mainAnimeClickId,
+        int? seasonNumber,
+        int episodeNumber,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (!AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, mainAnimeClickId, out var mainAnimeUrl))
+        {
+            _logger.LogWarning(
+                "AnimeClick EpisodeProvider ignored invalid series provider ID '{ProviderId}'",
+                mainAnimeClickId);
+            return;
+        }
+
+        var resolvedAnimeClickId = await _seasonResolver
+            .ResolveAsync(mainAnimeClickId, seasonNumber, configuration, cancellationToken)
+            .ConfigureAwait(false);
+        var animeClickId = resolvedAnimeClickId ?? mainAnimeClickId;
+        var animeUrl = mainAnimeUrl;
+        if (resolvedAnimeClickId is not null
+            && !AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, resolvedAnimeClickId, out animeUrl))
+        {
+            _logger.LogWarning(
+                "AnimeClick: invalid related provider ID '{ProviderId}', falling back to main series",
+                resolvedAnimeClickId);
+            animeClickId = mainAnimeClickId;
+            animeUrl = mainAnimeUrl;
+        }
+
+        // v4 records whether season groups were inferred. Older entries cannot
+        // safely distinguish synthetic boundaries from explicit AnimeClick seasons.
+        var cacheKey = $"episodes:v4::{animeClickId}";
+        var episodes = await _cache
+            .GetAsync<List<AnimeClickEpisode>>(cacheKey, configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        _logger.LogDebug("AnimeClick episodes cache {State}: {Key}", episodes is null ? "miss" : "hit", cacheKey);
+
+        if (episodes is null || episodes.Count == 0)
+        {
+            var episodesUrl = animeUrl + "/episodi";
+
+            // SeasonsCount comes from the complete anime detail page. It is applied by
+            // the shared loader only after every paginated table has been merged.
+            int? seasonsCount = null;
+            var seriesCacheKey = $"anime::{animeUrl}";
+            var series = await _cache
+                .GetAsync<AnimeClickAnime>(seriesCacheKey, configuration.CacheHours, cancellationToken)
+                .ConfigureAwait(false);
+            if (series is not null && series.SeasonsCount > 0)
+            {
+                seasonsCount = series.SeasonsCount;
+                _logger.LogDebug(
+                    "AnimeClick: using SeasonsCount={SeasonsCount} after episode pagination for {Id}",
+                    seasonsCount,
+                    animeClickId);
+            }
+
+            var loaded = await _episodeListLoader.LoadAsync(
+                    episodesUrl,
+                    configuration.BaseUrl,
+                    seasonsCount,
+                    configuration,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            episodes = loaded.Episodes;
+
+            if (loaded.PaginationComplete)
+            {
+                await _cache.SetAsync(cacheKey, episodes, cancellationToken).ConfigureAwait(false);
+                _logger.LogInformation("AnimeClick: Cached {Count} episodes for {Id}", episodes.Count, animeClickId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "AnimeClick: episode pagination for {Id} was incomplete; using {Count} entries without caching",
+                    animeClickId,
+                    episodes.Count);
+            }
+        }
+
+        // A season-specific AnimeClick entry numbers its own episodes as S1,
+        // even when Jellyfin stores it as S2/S3 of a grouped series.
+        var animeClickPageSeason = resolvedAnimeClickId is null ? seasonNumber : 1;
+        var episodeMatch = AnimeClickEpisodeMatcher.Match(
+            episodes,
+            animeClickPageSeason,
+            episodeNumber);
+        var match = episodeMatch.Episode;
+        _logger.LogInformation(
+            "AnimeClick: Episode match strategy={Strategy} animeClickId={Id} S{Season}E{Episode}",
+            episodeMatch.Strategy,
+            animeClickId,
+            seasonNumber,
+            episodeNumber);
+
+        if (match is null || string.IsNullOrWhiteSpace(match.Title))
+        {
+            return;
+        }
+
+        var isGeneric = System.Text.RegularExpressions.Regex.IsMatch(
+            match.Title,
+            @"^Episodio\s+\d+$",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (isGeneric)
+        {
+            _logger.LogDebug(
+                "AnimeClick: Episode {Num} has generic title \"{Title}\", skipping Italian title",
+                match.Number,
+                match.Title);
+            return;
+        }
+
+        result.Item.Name = match.Title;
+        if (!string.IsNullOrWhiteSpace(match.ProviderId))
+        {
+            result.Item.SetProviderId("AnimeClick", match.ProviderId);
+        }
+
+        if (match.DurationMinutes.HasValue)
+        {
+            result.Item.RunTimeTicks = TimeSpan.FromMinutes(match.DurationMinutes.Value).Ticks;
+        }
+
+        result.HasMetadata = true;
+        _logger.LogDebug(
+            "AnimeClick: Episode S{Season} AC#{Absolute} ordinal={Ordinal} providerId={ProviderId} = \"{Title}\"",
+            match.SeasonNumber,
+            match.AbsoluteNumber,
+            match.SeasonOrdinalNumber,
+            match.ProviderId,
+            match.Title);
+    }
 }

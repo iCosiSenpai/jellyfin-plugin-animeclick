@@ -46,8 +46,14 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Importa cast e staff (doppiatori, registi, autori).</summary>
     public bool EnableCast { get; set; } = true;
 
-    /// <summary>Importa tag (Shounen, Seinen, etc.).</summary>
+    /// <summary>Importa tag (target, tag generici e opera d'origine).</summary>
     public bool EnableTags { get; set; } = true;
+
+    /// <summary>Importa la nazionalità come località di produzione.</summary>
+    public bool EnableProductionLocations { get; set; } = true;
+
+    /// <summary>Importa trailer, teaser e PV YouTube esplicitamente etichettati.</summary>
+    public bool EnableTrailers { get; set; } = true;
 
     /// <summary>Importa titoli italiani degli episodi dalla pagina /episodi.</summary>
     public bool EnableEpisodeTitles { get; set; } = true;
@@ -60,11 +66,9 @@ public class PluginConfiguration : BasePluginConfiguration
 
     // ── Sinossi episodi IT (TMDB + Ollama Cloud) ──
     /// <summary>
-    /// Traduce le sinossi degli episodi in italiano. AnimeClick non pubblica sinossi
-    /// per-episodio: il plugin recupera l'overview inglese da TMDB e la traduce in IT
-    /// via Ollama Cloud. Disattivato di default (opt-in). Richiede TmdbApiKey e
-    /// OllamaCloudApiKey. Senza traduzione, le sinossi restano in EN dai provider
-    /// nativi Jellyfin (fill-gaps).
+    /// Abilita la catena per le sinossi episodi: TheTVDB ita → TMDB it-IT →
+    /// TMDB en-US → TheTVDB eng → Ollama Cloud EN→IT. Disattivato di default.
+    /// In caso di errore il campo resta invariato per consentire il fill-gaps.
     /// </summary>
     public bool EnableEpisodeSynopsisTranslation { get; set; } = false;
 
@@ -77,8 +81,14 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Endpoint chat Ollama Cloud.</summary>
     public string OllamaCloudEndpoint { get; set; } = "https://ollama.com/api/chat";
 
-    /// <summary>Modello cloud Ollama per la traduzione EN→IT.</summary>
-    public string OllamaCloudModel { get; set; } = "gemma4:cloud";
+    /// <summary>Modello cloud Ollama predefinito per traduzioni brevi EN→IT.</summary>
+    public string OllamaCloudModel { get; set; } = "gemma4:31b-cloud";
+
+    /// <summary>
+    /// Durata cache traduzioni in ore. Default 10 anni: una traduzione viene invalidata
+    /// comunque se cambiano testo, fonte, lingua, modello, endpoint o prompt.
+    /// </summary>
+    public int TranslationCacheHours { get; set; } = 87600;
 
     /// <summary>Timeout in secondi per una singola chiamata di traduzione Ollama.</summary>
     public int EpisodeTranslationTimeoutSec { get; set; } = 30;
@@ -95,9 +105,6 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>API key TheTVDB v4 (thetvdb.com dashboard). Lascia vuoto per disabilitare la fonte TVDB.</summary>
     public string TvdbApiKey { get; set; } = string.Empty;
-
-    /// <summary>Codice lingua TVDB (3-char) per le sinossi episodi. Default "ita".</summary>
-    public string TvdbLanguage { get; set; } = "ita";
 
     // ── Ricerca ──
     /// <summary>Numero massimo di risultati per ricerca.</summary>
@@ -122,5 +129,20 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.3.8.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.4.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+
+    /// <summary>
+    /// Applies narrow, idempotent upgrades to persisted settings. User-provided
+    /// credentials and custom model names are deliberately left untouched.
+    /// </summary>
+    internal bool ApplyMigrations()
+    {
+        if (!string.Equals(OllamaCloudModel, "gemma4:cloud", System.StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        OllamaCloudModel = "gemma4:31b-cloud";
+        return true;
+    }
 }
