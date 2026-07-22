@@ -44,7 +44,9 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             },
             // Shared assets (served via /web/configurationpage?name=...)
             new PluginPageInfo { Name = "AnimeClickCss", EmbeddedResourcePath = ns + ".Web.assets.animeclick.css" },
-            new PluginPageInfo { Name = "AnimeClickConfigJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-config.js" }
+            new PluginPageInfo { Name = "AnimeClickConfigJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-config.js" },
+            new PluginPageInfo { Name = "AnimeClickBanner", EmbeddedResourcePath = ns + ".assets.banner.png" },
+            new PluginPageInfo { Name = "AnimeClickLogo", EmbeddedResourcePath = ns + ".assets.logo.png" }
         ];
     }
 }

@@ -12,9 +12,8 @@ using Microsoft.Extensions.Logging;
 namespace AnimeClick.Plugin.Services;
 
 /// <summary>
-/// Loads and merges the complete paginated AnimeClick episode table. Both the metadata
-/// provider and diagnostics use this service so page deduplication and season inference
-/// cannot diverge.
+/// Loads the complete paginated AnimeClick table and stores only canonical raw rows.
+/// Jellyfin-specific season mapping is intentionally evaluated later by the matcher.
 /// </summary>
 public sealed class AnimeClickEpisodeListLoader
 {
@@ -34,10 +33,25 @@ public sealed class AnimeClickEpisodeListLoader
         _logger = logger;
     }
 
+    public Task<AnimeClickEpisodeListLoadResult> LoadAsync(
+        string episodesUrl,
+        string baseUrl,
+        int? seasonsCount,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+        => LoadAsync(
+            episodesUrl,
+            baseUrl,
+            seasonsCount,
+            declaredEpisodeCount: null,
+            configuration,
+            cancellationToken);
+
     public async Task<AnimeClickEpisodeListLoadResult> LoadAsync(
         string episodesUrl,
         string baseUrl,
         int? seasonsCount,
+        int? declaredEpisodeCount,
         PluginConfiguration configuration,
         CancellationToken cancellationToken)
     {
@@ -63,7 +77,7 @@ public sealed class AnimeClickEpisodeListLoader
                 var added = MergeUniqueEpisodes(episodes, nextEpisodes);
                 if (added == 0)
                 {
-                    // AnimeClick may redirect an out-of-range page to the first/last page.
+                    // Out-of-range requests may redirect to the first or last page.
                     paginationComplete = true;
                     break;
                 }
@@ -89,36 +103,43 @@ public sealed class AnimeClickEpisodeListLoader
             }
         }
 
-        // Synthetic seasons are valid only for the complete table. A divisible
-        // partial page count can otherwise fabricate boundaries and match a
-        // different episode during this refresh.
-        AnimeClickHtmlParser.FinalizeEpisodeList(
+        // Never persist inferred season boundaries. Canonical coordinates are cheap to
+        // recompute and remain valid when Jellyfin changes from 1x24 to 13+11 or 12+12.
+        AnimeClickHtmlParser.FinalizeEpisodeList(episodes, seasonsCount: null);
+        var catalog = AnimeClickEpisodeCatalog.Create(
             episodes,
-            paginationComplete ? seasonsCount : null);
-        return new AnimeClickEpisodeListLoadResult(episodes, paginationComplete);
+            declaredEpisodeCount,
+            seasonsCount.GetValueOrDefault());
+        return new AnimeClickEpisodeListLoadResult(catalog, paginationComplete);
     }
 
-    private static int MergeUniqueEpisodes(
+    internal static int MergeUniqueEpisodes(
         List<AnimeClickEpisode> target,
         IEnumerable<AnimeClickEpisode> candidates)
     {
         var added = 0;
-        foreach (var candidate in candidates)
+        foreach (var candidate in candidates.OrderBy(episode => episode.SourceOrder))
         {
             var sameProviderId = !string.IsNullOrWhiteSpace(candidate.ProviderId)
                 && target.Any(existing => string.Equals(
                     existing.ProviderId,
                     candidate.ProviderId,
                     StringComparison.OrdinalIgnoreCase));
-            var samePosition = target.Any(existing =>
-                existing.SeasonNumber == candidate.SeasonNumber
-                && existing.AbsoluteNumber == candidate.AbsoluteNumber);
+            var sameRawRow = string.IsNullOrWhiteSpace(candidate.ProviderId)
+                && target.Any(existing =>
+                    existing.RawSeasonNumber == candidate.RawSeasonNumber
+                    && string.Equals(
+                        existing.RawNumberLabel,
+                        candidate.RawNumberLabel,
+                        StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(existing.Title, candidate.Title, StringComparison.OrdinalIgnoreCase));
 
-            if (sameProviderId || samePosition)
+            if (sameProviderId || sameRawRow)
             {
                 continue;
             }
 
+            candidate.SourceOrder = target.Count + 1;
             target.Add(candidate);
             added++;
         }
@@ -128,5 +149,8 @@ public sealed class AnimeClickEpisodeListLoader
 }
 
 public sealed record AnimeClickEpisodeListLoadResult(
-    List<AnimeClickEpisode> Episodes,
-    bool PaginationComplete);
+    AnimeClickEpisodeCatalog Catalog,
+    bool PaginationComplete)
+{
+    public List<AnimeClickEpisode> Episodes => Catalog.Episodes;
+}

@@ -1,4 +1,5 @@
 using System.Linq;
+using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
 
@@ -364,25 +365,43 @@ static void TestAsteriskContinuousBlockSeasonSplit()
     Assert(episodes.First(e => e.AbsoluteNumber == 13).SeasonNumber == 2, "Ep 13 must be season 2 after split.");
     Assert(episodes.First(e => e.AbsoluteNumber == 24).SeasonNumber == 2, "Ep 24 must be season 2 after split.");
 
-    // Match S2E1 — must hit episode AbsoluteNumber=13 (Banyuu Tenra) with strategy=seasonOrdinal.
-    var s2e1 = AnimeClickEpisodeMatcher.Match(episodes, 2, 1);
-    Assert(s2e1.Success, "S02E01 must match after season-split inference.");
+    // A declared equal split is only a hint: without title or real Jellyfin topology it
+    // must miss safely because the same 24 rows could represent a 13+11 layout.
+    var uncorroboratedS2E1 = AnimeClickEpisodeMatcher.Match(episodes, 2, 1);
+    Assert(!uncorroboratedS2E1.Success && uncorroboratedS2E1.Strategy == "lowConfidence",
+        "A synthetic 12+12 split must not match without corroboration.");
+    var outOfRangeSynthetic = AnimeClickEpisodeMatcher.Match(episodes, 2, 13);
+    Assert(!outOfRangeSynthetic.Success,
+        "Raw absolute E13 must not leak into a synthetic S02E13 coordinate.");
+
+    var s2e1 = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(2, 1)
+        {
+            JellyfinTitle = "Banyuu Tenra - Rivelazioni divine"
+        });
+    Assert(s2e1.Success, "S02E01 must match when the synthetic split is title-corroborated.");
     Assert(s2e1.Episode?.AbsoluteNumber == 13, "S02E01 must map to absolute episode 13.");
     Assert(s2e1.Episode?.Title == "Banyuu Tenra - Rivelazioni divine", "S02E01 title mismatch.");
-    Assert(s2e1.Strategy == "seasonOrdinal", "S02E01 should use seasonOrdinal strategy after split.");
+    Assert(s2e1.Strategy == "declaredEqualSplit", "S02E01 should report its low-confidence split origin.");
 
-    var s2e12 = AnimeClickEpisodeMatcher.Match(episodes, 2, 12);
-    Assert(s2e12.Success, "S02E12 must match.");
+    var s2e12 = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(2, 12)
+        {
+            JellyfinTitle = "Riunione"
+        });
+    Assert(s2e12.Success, "S02E12 must match when title-corroborated.");
     Assert(s2e12.Episode?.AbsoluteNumber == 24, "S02E12 must map to absolute episode 24.");
     Assert(s2e12.Episode?.Title == "Riunione", "S02E12 title mismatch.");
-    Assert(s2e12.Strategy == "seasonOrdinal", "S02E12 should use seasonOrdinal strategy.");
+    Assert(s2e12.Strategy == "declaredEqualSplit", "S02E12 should report declaredEqualSplit strategy.");
 
-    // S1E1 must continue to map via absolute (since now both S1 and S2 have episodes)
+    // S1 keeps a safe absolute interpretation regardless of where a later cour boundary falls.
     var s1e1 = AnimeClickEpisodeMatcher.Match(episodes, 1, 1);
-    Assert(s1e1.Success, "S01E01 must still match after split.");
+    Assert(s1e1.Success, "S01E01 must still match after split inference.");
     Assert(s1e1.Episode?.AbsoluteNumber == 1, "S01E01 must map to absolute episode 1.");
     Assert(s1e1.Episode?.Title == "La strega della fiamma splendente", "S01E01 title mismatch.");
-    Assert(s1e1.Strategy == "seasonOrdinal", "S01E01 should use seasonOrdinal strategy since episodes have explicit SeasonNumber.");
+    Assert(s1e1.Strategy == "syntheticAbsolute", "S01E01 must use the boundary-independent global strategy.");
 
     // Without seasonsCount (the legacy overload), the same page must NOT synthesize — back to the bug
     // (no S2 match), proving the new behaviour is opt-in via seasonsCount.
@@ -490,9 +509,17 @@ static void TestSyntheticSeasonAbsoluteFallback()
         "Jellyfin S01E26 must cross a synthetic cour boundary to AnimeClick absolute episode 26.");
     Assert(s1e26.Strategy == "syntheticAbsolute", "S01E26 must report syntheticAbsolute strategy.");
 
-    var s2e1 = AnimeClickEpisodeMatcher.Match(episodes, 2, 1);
-    Assert(s2e1.Episode?.AbsoluteNumber == 14 && s2e1.Strategy == "seasonOrdinal",
-        "A library that really uses S02E01 must retain seasonOrdinal matching.");
+    var uncorroboratedS2E1 = AnimeClickEpisodeMatcher.Match(episodes, 2, 1);
+    Assert(!uncorroboratedS2E1.Success,
+        "A synthetic S02E01 boundary must not be trusted without title or topology evidence.");
+    var s2e1 = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(2, 1)
+        {
+            JellyfinTitle = "Nagi episodio 14"
+        });
+    Assert(s2e1.Episode?.AbsoluteNumber == 14 && s2e1.Strategy == "declaredEqualSplit",
+        "A title-corroborated synthetic S02E01 may map to global episode 14.");
 
     var explicitEpisodes = parser.ParseEpisodesPage(
         TestFixtures.DangersEpisodesHtml,
@@ -509,6 +536,352 @@ static void TestSyntheticSeasonAbsoluteFallback()
     var missingExplicitS1 = AnimeClickEpisodeMatcher.Match(explicitS2Only, 1, 1);
     Assert(!missingExplicitS1.Success && missingExplicitS1.Strategy == "none",
         "A missing explicit S1 group must not fall through to an explicit S2 absolute match.");
+
+    var orphanAbsoluteS2 = parser.ParseEpisodesPage(
+        "<table><tr><td>S2 Ep. 13</td><td><a href=\"/episodio/60013/orphan\">Orphan 13</a></td></tr>" +
+        "<tr><td>S2 Ep. 14</td><td><a href=\"/episodio/60014/orphan\">Orphan 14</a></td></tr></table>",
+        "https://www.animeclick.it");
+    var unsafeOrdinal = AnimeClickEpisodeMatcher.Match(orphanAbsoluteS2, 2, 1);
+    Assert(!unsafeOrdinal.Success,
+        "An absolute S2 group without a complete preceding timeline must not fabricate S02E01.");
+}
+
+static string BuildFlatEpisodeHtml(int count, bool descending = false)
+{
+    var numbers = descending
+        ? Enumerable.Range(1, count).Reverse()
+        : Enumerable.Range(1, count);
+    var rows = string.Join(
+        '\n',
+        numbers.Select(number =>
+            $"<tr><td>Ep. {number:00}</td><td><a href=\"/episodio/{70000 + number}/episode-{number}\">Titolo {number}</a></td><td>23'</td></tr>"));
+    return "<html><body><table class=\"table\"><tbody>" + rows + "</tbody></table></body></html>";
+}
+
+static void TestCanonicalTimelineExcludesInterleavedSpecials()
+{
+    var html = """
+        <table><tbody>
+        <tr><td>Ep. 01</td><td><a href="/episodio/1/uno">Uno</a></td><td>23'</td></tr>
+        <tr><td>OVA</td><td><a href="/episodio/90/ova">OVA della serie</a></td><td>24'</td></tr>
+        <tr><td>Ep. 02</td><td><a href="/episodio/2/due">Due</a></td><td>23'</td></tr>
+        <tr><td>Ep. 12.5</td><td><a href="/episodio/95/meta">Episodio intermedio</a></td><td>12'</td></tr>
+        <tr><td>S0 Ep. 0</td><td><a href="/episodio/96/prologo">Prologo</a></td><td>5'</td></tr>
+        </tbody></table>
+        """;
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(html, "https://www.animeclick.it");
+
+    Assert(episodes.Count == 5, "All regular and non-standard rows must be retained.");
+    Assert(episodes.Single(e => e.Title == "Uno").GlobalOrdinal == 1, "First regular episode must be global ordinal 1.");
+    Assert(episodes.Single(e => e.Title == "Due").GlobalOrdinal == 2, "Interleaved OVA must not shift the regular timeline.");
+    Assert(episodes.Single(e => e.Title == "OVA della serie").IsSpecial, "OVA row must be classified as special.");
+    Assert(episodes.Single(e => e.Title == "Episodio intermedio").HasNonStandardNumber,
+        "Decimal episode must be retained as non-standard.");
+
+    var regular = AnimeClickEpisodeMatcher.Match(episodes, 1, 2);
+    Assert(regular.Episode?.Title == "Due" && regular.Strategy == "globalOrdinal",
+        "S01E02 must ignore interleaved extras.");
+    var episodeZero = AnimeClickEpisodeMatcher.Match(episodes, 0, 0);
+    Assert(episodeZero.Episode?.Title == "Prologo", "S00E00 must match an explicit episode zero.");
+
+    var collidingNumbers = new AnimeClickHtmlParser().ParseEpisodesPage(
+        "<table><tbody>" +
+        "<tr><td>Ep. 12</td><td><a href=\"/episodio/12/twelve\">Dodici</a></td></tr>" +
+        "<tr><td>Ep. 12.5</td><td><a href=\"/episodio/125/half\">Intermezzo</a></td></tr>" +
+        "<tr><td>Ep. 13</td><td><a href=\"/episodio/13/thirteen\">Tredici</a></td></tr>" +
+        "</tbody></table>",
+        "https://www.animeclick.it");
+    Assert(!collidingNumbers.Single(item => item.Title == "Dodici").NumberIsAmbiguous,
+        "A decimal special sharing the E12 base must not make regular E12 ambiguous.");
+    Assert(collidingNumbers.Single(item => item.Title == "Tredici").GlobalOrdinal == 2,
+        "A decimal special sharing a base number must not disable the regular timeline.");
+
+    var duplicateSpecials = new AnimeClickHtmlParser().ParseEpisodesPage(
+        "<table><tbody>" +
+        "<tr><td>S0 Ep. 01</td><td><a href=\"/episodio/901/a\">Special A</a></td></tr>" +
+        "<tr><td>S0 Ep. 01</td><td><a href=\"/episodio/902/b\">Special B</a></td></tr>" +
+        "</tbody></table>",
+        "https://www.animeclick.it");
+    Assert(!AnimeClickEpisodeMatcher.Match(duplicateSpecials, 0, 1).Success,
+        "Duplicate special coordinates must miss safely without a provider ID or title.");
+}
+
+static void TestAlternateSeasonLabelsAndOutOfOrderRows()
+{
+    var labels = """
+        <table><tbody>
+        <tr><td>S01E01</td><td><a href="/episodio/101/a">A</a></td></tr>
+        <tr><td>2x03</td><td><a href="/episodio/203/b">B</a></td></tr>
+        <tr><td>Stagione 3 Episodio 02</td><td><a href="/episodio/302/c">C</a></td></tr>
+        </tbody></table>
+        """;
+    var parser = new AnimeClickHtmlParser();
+    var parsed = parser.ParseEpisodesPage(labels, "https://www.animeclick.it");
+    Assert(parsed.Single(e => e.Title == "A").RawSeasonNumber == 1, "S01E01 label must parse season 1.");
+    Assert(parsed.Single(e => e.Title == "B").RawSeasonNumber == 2
+           && parsed.Single(e => e.Title == "B").RawEpisodeNumber == 3,
+        "2x03 label must parse season 2 episode 3.");
+    Assert(parsed.Single(e => e.Title == "C").RawSeasonNumber == 3,
+        "Italian Stagione/Episodio label must parse.");
+
+    var reversed = parser.ParseEpisodesPage(BuildFlatEpisodeHtml(3, descending: true), "https://www.animeclick.it");
+    Assert(reversed.Single(e => e.Number == 1).GlobalOrdinal == 1
+           && reversed.Single(e => e.Number == 3).GlobalOrdinal == 3,
+        "Unambiguous reversed rows must be canonicalized by numeric order.");
+}
+
+static void TestLibraryTopologySupportsUnevenThirteenPlusEleven()
+{
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(
+        BuildFlatEpisodeHtml(24),
+        "https://www.animeclick.it");
+    var layout = new AnimeClickEpisodeLibraryLayout(
+        Guid.NewGuid(),
+        new Dictionary<int, AnimeClickEpisodeSeasonLayout>
+        {
+            [1] = new(1, 13, 13, true, true),
+            [2] = new(2, 11, 11, true, true)
+        });
+
+    var s2e1 = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(2, 1) { LibraryLayout = layout });
+    var s2e11 = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(2, 11) { LibraryLayout = layout });
+
+    Assert(s2e1.Episode?.GlobalOrdinal == 14 && s2e1.Strategy == "libraryBoundary",
+        "13+11 topology must map S02E01 to global episode 14.");
+    Assert(s2e11.Episode?.GlobalOrdinal == 24, "13+11 topology must map S02E11 to global episode 24.");
+}
+
+static void TestSingleJellyfinSeasonCanCrossExplicitAnimeClickGroups()
+{
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(
+        TestFixtures.DangersEpisodesHtml,
+        "https://www.animeclick.it");
+    var flatLibrary = new AnimeClickEpisodeLibraryLayout(
+        Guid.NewGuid(),
+        new Dictionary<int, AnimeClickEpisodeSeasonLayout>
+        {
+            [1] = new(1, 25, 25, true, true)
+        });
+    var match = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(1, 13) { LibraryLayout = flatLibrary });
+
+    Assert(match.Episode?.Title == "Noi stiamo cercando" && match.Strategy == "libraryBoundary",
+        "A verified flat Jellyfin season must cross explicit AnimeClick S1/S2 groups.");
+}
+
+static void TestProviderIdPinsNonStandardEpisode()
+{
+    var html = """
+        <table><tbody>
+        <tr><td>Ep. 12.5</td><td><a href="/episodio/125/half">La mezza puntata</a></td></tr>
+        <tr><td>Ep. 12A</td><td><a href="/episodio/126/part-a">Parte A</a></td></tr>
+        <tr><td>Ep. 12B</td><td><a href="/episodio/127/part-b">Parte B</a></td></tr>
+        </tbody></table>
+        """;
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(html, "https://www.animeclick.it");
+    var unsafeNumeric = AnimeClickEpisodeMatcher.Match(episodes, 1, 12);
+    Assert(!unsafeNumeric.Success, "Decimal and A/B rows must not be guessed from an integer coordinate.");
+
+    var anchored = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(1, 12)
+        {
+            ExistingProviderId = "125/half"
+        });
+    Assert(anchored.Episode?.Title == "La mezza puntata" && anchored.Strategy == "providerId",
+        "Existing episode provider ID must pin a non-standard row.");
+}
+
+static void TestDoubleEpisodeRequiresExplicitRange()
+{
+    var html = """
+        <table><tbody>
+        <tr><td>S1 Ep. 01-02</td><td><a href="/episodio/500/double">Doppio episodio</a></td></tr>
+        <tr><td>S1 Ep. 03</td><td><a href="/episodio/503/three">Tre</a></td></tr>
+        </tbody></table>
+        """;
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(html, "https://www.animeclick.it");
+    var withoutEnd = AnimeClickEpisodeMatcher.Match(episodes, 1, 1);
+    Assert(!withoutEnd.Success, "A range row must not be assigned to a single-episode file.");
+    var withoutEndAsSpecial = AnimeClickEpisodeMatcher.Match(episodes, 0, 1);
+    Assert(!withoutEndAsSpecial.Success,
+        "A range row must not escape into season zero as a single special.");
+
+    var withEnd = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(1, 1) { JellyfinEpisodeNumberEnd = 2 });
+    Assert(withEnd.Episode?.Title == "Doppio episodio" && withEnd.Strategy == "explicitRange",
+        "A Jellyfin 1-2 file must match the explicit AnimeClick 1-2 range.");
+
+    var staleAnchor = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(1, 1)
+        {
+            JellyfinEpisodeNumberEnd = 2,
+            ExistingProviderId = "503/three"
+        });
+    Assert(staleAnchor.Episode?.ProviderId == "500/double" && staleAnchor.Strategy == "explicitRange",
+        "A stale single-episode provider ID must not bypass the multi-episode range guard.");
+
+    var unseasoned = new AnimeClickHtmlParser().ParseEpisodesPage(
+        "<table><tr><td>Ep. 01-02</td><td><a href=\"/episodio/600/double-flat\">Doppio flat</a></td></tr></table>",
+        "https://www.animeclick.it");
+    Assert(unseasoned.Single().RawSeasonNumber is null,
+        "An unseasoned range must retain a null raw season.");
+    var unseasonedMatch = AnimeClickEpisodeMatcher.Match(
+        unseasoned,
+        new AnimeClickEpisodeMatchContext(1, 1) { JellyfinEpisodeNumberEnd = 2 });
+    Assert(unseasonedMatch.Episode?.Title == "Doppio flat",
+        "An unseasoned AnimeClick range must match a normal Jellyfin multi-episode file.");
+}
+
+static void TestManualLayoutOverrides()
+{
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(
+        BuildFlatEpisodeHtml(24),
+        "https://www.animeclick.it");
+    var boundaries = AnimeClickEpisodeLayoutOverrideParser.ParseFor(
+        "# custom\n123/show=13,24",
+        "123/show");
+    Assert(boundaries?.Mode == AnimeClickEpisodeLayoutMode.Boundaries,
+        "Cumulative boundary override must parse.");
+
+    var s2e1 = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(2, 1) { LayoutOverride = boundaries });
+    Assert(s2e1.Episode?.GlobalOrdinal == 14 && s2e1.Strategy == "overrideBoundaries",
+        "Manual 13,24 boundaries must map S02E01 to global 14.");
+
+    var flat = AnimeClickEpisodeLayoutOverrideParser.ParseFor("123/show=flat", "123/show");
+    var s1e24 = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(1, 24) { LayoutOverride = flat });
+    Assert(s1e24.Episode?.GlobalOrdinal == 24 && s1e24.Strategy == "overrideFlat",
+        "Flat override must preserve a 1x24 library.");
+
+    var numericForCanonical = AnimeClickEpisodeLayoutOverrideParser.ParseFor("123=flat", "123/show");
+    var canonicalForNumeric = AnimeClickEpisodeLayoutOverrideParser.ParseFor("123/old-slug=explicit", "123");
+    Assert(numericForCanonical?.Mode == AnimeClickEpisodeLayoutMode.Flat
+           && canonicalForNumeric?.Mode == AnimeClickEpisodeLayoutMode.Explicit,
+        "Numeric and canonical IDs with the same stable number must share overrides.");
+    Assert(flat?.TryGetGlobalOrdinal(0, 1, out _) == false,
+        "A flat override must never map season zero into the regular timeline.");
+
+    var specialEpisodes = new AnimeClickHtmlParser().ParseEpisodesPage(
+        "<table><tr><td>Ep. 01</td><td><a href=\"/episodio/1/regular\">Regolare</a></td></tr>" +
+        "<tr><td>S0 Ep. 01</td><td><a href=\"/episodio/2/ova\">OVA</a></td></tr></table>",
+        "https://www.animeclick.it");
+    var specialWithFlatOverride = AnimeClickEpisodeMatcher.Match(
+        specialEpisodes,
+        new AnimeClickEpisodeMatchContext(0, 1) { LayoutOverride = flat });
+    Assert(specialWithFlatOverride.Episode?.Title == "OVA"
+           && specialWithFlatOverride.Strategy == "specialOrdinal",
+        "Season-zero matching must run before a regular flat override.");
+}
+
+static void TestIncompleteTopologyNeedsCorroboration()
+{
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(
+        BuildFlatEpisodeHtml(24),
+        "https://www.animeclick.it");
+    var partial = new AnimeClickEpisodeLibraryLayout(
+        Guid.NewGuid(),
+        new Dictionary<int, AnimeClickEpisodeSeasonLayout>
+        {
+            [1] = new(1, 13, 12, true, false),
+            [2] = new(2, 11, 11, true, true)
+        });
+
+    var uncorroborated = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(2, 1) { LibraryLayout = partial });
+    Assert(!uncorroborated.Success && uncorroborated.Strategy == "none",
+        "A broken prior-season topology must not fabricate a boundary.");
+
+    var currentPartial = new AnimeClickEpisodeLibraryLayout(
+        Guid.NewGuid(),
+        new Dictionary<int, AnimeClickEpisodeSeasonLayout>
+        {
+            [1] = new(1, 13, 13, true, true),
+            [2] = new(2, 11, 10, true, false)
+        });
+    var titleCorroborated = AnimeClickEpisodeMatcher.Match(
+        episodes,
+        new AnimeClickEpisodeMatchContext(2, 1)
+        {
+            LibraryLayout = currentPartial,
+            JellyfinTitle = "Titolo 14"
+        });
+    Assert(titleCorroborated.Episode?.GlobalOrdinal == 14,
+        "Exact title evidence may corroborate a partial target-season topology.");
+}
+
+static void TestRawCatalogFingerprintAndPaginationDeduplication()
+{
+    var parser = new AnimeClickHtmlParser();
+    var episodes = parser.ParseEpisodesPage(BuildFlatEpisodeHtml(3), "https://www.animeclick.it");
+    var oneSeason = AnimeClickEpisodeCatalog.Create(episodes, 3, 1);
+    var twoSeasons = AnimeClickEpisodeCatalog.Create(episodes, 3, 2);
+    Assert(oneSeason.LayoutFingerprint != twoSeasons.LayoutFingerprint,
+        "Declared season changes must alter the raw catalog fingerprint.");
+
+    var target = parser.ParseEpisodesPage(
+        "<table><tr><td>Ep. 01</td><td><a href=\"/episodio/1/a\">A</a></td></tr></table>",
+        "https://www.animeclick.it");
+    var candidates = parser.ParseEpisodesPage(
+        "<table><tr><td>Ep. 01</td><td><a href=\"/episodio/1/a\">A duplicate</a></td></tr>" +
+        "<tr><td>Ep. 01</td><td><a href=\"/episodio/2/b\">B distinct</a></td></tr></table>",
+        "https://www.animeclick.it");
+    var added = AnimeClickEpisodeListLoader.MergeUniqueEpisodes(target, candidates);
+    Assert(added == 1 && target.Count == 2,
+        "Pagination merge must drop repeated provider IDs but retain distinct A/B rows.");
+    AnimeClickHtmlParser.CanonicalizeEpisodeTimeline(target);
+    Assert(target.All(episode => episode.NumberIsAmbiguous),
+        "Distinct rows sharing one numeric coordinate must be marked ambiguous.");
+    Assert(target.All(episode => episode.GlobalOrdinal == 0 && episode.SeasonOrdinalNumber == 0),
+        "Duplicate coordinates must disable derived global and season ordinals.");
+
+    var apparentlyReliableLayout = new AnimeClickEpisodeLibraryLayout(
+        Guid.NewGuid(),
+        new Dictionary<int, AnimeClickEpisodeSeasonLayout>
+        {
+            [1] = new(1, 1, 1, true, true)
+        });
+    var ambiguousMatch = AnimeClickEpisodeMatcher.Match(
+        target,
+        new AnimeClickEpisodeMatchContext(1, 1) { LibraryLayout = apparentlyReliableLayout });
+    Assert(!ambiguousMatch.Success,
+        "Reliable Jellyfin topology must not make duplicate AnimeClick coordinates matchable.");
+}
+
+static void TestRegularTitlesThatLookSpecialDoNotShiftTimeline()
+{
+    var html = """
+        <table><tbody>
+        <tr><td>Ep. 01</td><td><a href="/episodio/801/pilot">Pilot</a></td></tr>
+        <tr><td>Ep. 02</td><td><a href="/episodio/802/prologo">Prologo</a></td></tr>
+        <tr><td>OVA</td><td><a href="/episodio/899/extra">Contenuto extra</a></td></tr>
+        </tbody></table>
+        """;
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(html, "https://www.animeclick.it");
+    var pilot = episodes.Single(episode => episode.Title == "Pilot");
+    var prologue = episodes.Single(episode => episode.Title == "Prologo");
+
+    Assert(!pilot.IsSpecial && pilot.GlobalOrdinal == 1,
+        "A trustworthy Ep. 01 label must remain regular even when its title is Pilot.");
+    Assert(!prologue.IsSpecial && prologue.GlobalOrdinal == 2,
+        "A trustworthy Ep. 02 label must remain regular even when its title is Prologo.");
+    Assert(episodes.Single(episode => episode.RawNumberLabel == "OVA").IsSpecial,
+        "An explicit OVA label must still be classified as special.");
+
+    var match = AnimeClickEpisodeMatcher.Match(episodes, 1, 1);
+    Assert(match.Episode?.Title == "Pilot" && match.Strategy == "globalOrdinal",
+        "Title heuristics must not remove E01 and shift the regular timeline.");
 }
 
 static void Assert(bool condition, string message)
@@ -525,6 +898,16 @@ var tests = new (string Name, Action Run)[]
     ("Asterisk War 24ep block splits into 2 seasons via seasonsCount", TestAsteriskContinuousBlockSeasonSplit),
     ("Nagi S1E14-E26 crosses only synthetic season boundaries", TestSyntheticSeasonAbsoluteFallback),
     ("Parser refuses to split when episode count is uneven across seasons", TestSeasonsCountRefusedOnUnevenSplit),
+    ("Canonical timeline excludes interleaved specials and decimal rows", TestCanonicalTimelineExcludesInterleavedSpecials),
+    ("Regular Pilot/Prologo titles do not shift the timeline", TestRegularTitlesThatLookSpecialDoNotShiftTimeline),
+    ("Parser accepts alternate labels and repairs reversed numeric rows", TestAlternateSeasonLabelsAndOutOfOrderRows),
+    ("Jellyfin topology maps an uneven 13+11 split", TestLibraryTopologySupportsUnevenThirteenPlusEleven),
+    ("Single Jellyfin season crosses explicit AnimeClick groups safely", TestSingleJellyfinSeasonCanCrossExplicitAnimeClickGroups),
+    ("Existing provider ID pins decimal and A/B episodes", TestProviderIdPinsNonStandardEpisode),
+    ("Double-episode files require an explicit range", TestDoubleEpisodeRequiresExplicitRange),
+    ("Manual flat and cumulative-boundary overrides", TestManualLayoutOverrides),
+    ("Incomplete topology requires title corroboration", TestIncompleteTopologyNeedsCorroboration),
+    ("Raw catalog fingerprint and pagination deduplication", TestRawCatalogFingerprintAndPaginationDeduplication),
     ("Translation queue failure backoff policy", TestTranslationQueuePolicy),
     ("Search scorer prefers 2023 series over movie and special", TestSearchScoring),
     ("Search query cleaners (sequel, fullwidth, & etc)", TestSearchQueryCleaners),

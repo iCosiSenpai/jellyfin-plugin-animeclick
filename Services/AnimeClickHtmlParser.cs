@@ -25,11 +25,11 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"/episodio/(\d+(?:/[^/?#]+)?)")]
     private static partial Regex EpisodeUrlIdRegex();
 
-    [GeneratedRegex(@"(\d+)\s*$")]
-    private static partial Regex EpisodeNumberRegex();
-
-    [GeneratedRegex(@"S\s*(\d+)\s+Ep\.?\s*(\d+)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?:S(?:tagione)?\s*(\d+)\s*(?:E|Ep(?:isodio)?\.?)\s*(.+)|(\d+)\s*[xX]\s*(.+))", RegexOptions.IgnoreCase)]
     private static partial Regex SeasonEpisodeRegex();
+
+    [GeneratedRegex(@"(?<!\d)(\d+)(?:[\.,](\d+))?([A-Za-z])?(?:\s*[-–/]\s*(\d+))?")]
+    private static partial Regex EpisodeTokenRegex();
 
     [GeneratedRegex(@"(\d+)")]
     private static partial Regex DigitsRegex();
@@ -46,7 +46,7 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"anidb\.net/(?:a|anime/)(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex AniDbIdRegex();
 
-    [GeneratedRegex(@"\b(Special|OAV|OVA|OAD|ONA|PV|Recap|Episode\s*0|Bonus|Extra|Episodio\s+Speciale)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(Special|SP|OAV|OVA|OAD|ONA|PV|NCOP|NCED|Recap|Riassunto|Episode\s*0|Episodio\s*0|Prologo|Pilot|Bonus|Extra|Episodio\s+Speciale)\b", RegexOptions.IgnoreCase)]
     private static partial Regex SpecialTitleRegex();
 
     /// <summary>
@@ -732,8 +732,8 @@ public partial class AnimeClickHtmlParser
         doc.LoadHtml(html);
         var episodes = new List<AnimeClickEpisode>();
 
-        // Episodes are listed in a table: <table class="table ...">
-        // Each row: <td>S1 Ep. 01</td><td><a href="/episodio/...">Titolo</a></td><td>24'</td>
+        // AnimeClick has used several labels over time: "S1 Ep. 01", "S01E01",
+        // "1x01", plain absolute numbers, OVA/SP rows and decimal/range values.
         var rows = doc.DocumentNode.SelectNodes("//table[contains(@class, 'table')]//tbody//tr")
                    ?? doc.DocumentNode.SelectNodes("//table//tr[td]");
         if (rows is null) return episodes;
@@ -743,28 +743,18 @@ public partial class AnimeClickHtmlParser
             var cells = row.SelectNodes("td");
             if (cells is null || cells.Count < 2) continue;
 
-            // First cell: episode number (e.g. "S1 Ep. 01" or just "1")
-            var numText = NormalizeWhitespace(cells[0].InnerText);
-            if (string.IsNullOrWhiteSpace(numText)) continue;
+            var rawLabel = NormalizeWhitespace(cells[0].InnerText);
+            if (string.IsNullOrWhiteSpace(rawLabel)) continue;
 
-            int? seasonNumber = null;
-            int epNum;
-            var seasonMatch = SeasonEpisodeRegex().Match(numText);
-            if (seasonMatch.Success)
-            {
-                seasonNumber = int.TryParse(seasonMatch.Groups[1].Value, out var s) ? s : null;
-                epNum = int.TryParse(seasonMatch.Groups[2].Value, out var e) ? e : 0;
-            }
-            else
-            {
-                var numMatch = EpisodeNumberRegex().Match(numText);
-                if (!numMatch.Success || !int.TryParse(numMatch.Groups[1].Value, out epNum)) continue;
-            }
+            ParseEpisodeLabel(
+                rawLabel,
+                out var seasonNumber,
+                out var episodeNumber,
+                out var episodeNumberEnd,
+                out var hasNonStandardNumber);
 
-            // Second cell: title with link
             var titleLink = cells[1].SelectSingleNode(".//a");
             var title = NormalizeWhitespace(titleLink?.InnerText ?? cells[1].InnerText);
-
             var detailUrl = titleLink?.GetAttributeValue("href", null);
             var episodeProviderId = ExtractEpisodeId(detailUrl);
             if (detailUrl is not null && !detailUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
@@ -772,34 +762,57 @@ public partial class AnimeClickHtmlParser
                 detailUrl = baseUrl + detailUrl;
             }
 
-            // Third cell (optional): duration
             int? duration = null;
             if (cells.Count >= 3)
             {
                 var durText = NormalizeWhitespace(cells[2].InnerText);
-                var durMatch = DigitsRegex().Match(durText ?? "");
+                var durMatch = DigitsRegex().Match(durText ?? string.Empty);
                 if (durMatch.Success && int.TryParse(durMatch.Value, out var dur))
                 {
                     duration = dur;
                 }
             }
 
-            // Auto-detect special episodes (OVAs, Specials, Bonus) by title
-            // when AnimeClick page doesn't provide season grouping
-            if (!seasonNumber.HasValue && IsSpecialEpisodeTitle(title))
+            var hasTrustworthyRegularLabel = HasTrustworthyRegularLabel(
+                rawLabel,
+                seasonNumber,
+                episodeNumber,
+                hasNonStandardNumber);
+            var isSpecial = seasonNumber == 0
+                || episodeNumber <= 0
+                || hasNonStandardNumber
+                || IsSpecialEpisodeTitle(rawLabel)
+                || (!hasTrustworthyRegularLabel && IsSpecialEpisodeTitle(title));
+            // An unseasoned range such as "Ep. 01-02" is non-standard but still belongs
+            // to the regular season coordinate space so IndexNumberEnd can match it.
+            if (isSpecial && !seasonNumber.HasValue && !episodeNumberEnd.HasValue)
             {
                 seasonNumber = 0;
             }
 
-            // Avoid duplicates: use (Season, Number) pair when season info is available
-            if (episodes.Any(e => e.SeasonNumber == seasonNumber && e.Number == epNum)) continue;
+            var duplicate = !string.IsNullOrWhiteSpace(episodeProviderId)
+                ? episodes.Any(episode => string.Equals(
+                    episode.ProviderId,
+                    episodeProviderId,
+                    StringComparison.OrdinalIgnoreCase))
+                : episodes.Any(episode =>
+                    string.Equals(episode.RawNumberLabel, rawLabel, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(episode.Title, title, StringComparison.OrdinalIgnoreCase));
+            if (duplicate) continue;
 
             episodes.Add(new AnimeClickEpisode
             {
                 SeasonNumber = seasonNumber,
-                Number = epNum,
-                AbsoluteNumber = epNum,
-                SeasonOrdinalNumber = epNum,
+                RawSeasonNumber = seasonNumber,
+                RawNumberLabel = rawLabel,
+                Number = episodeNumber,
+                RawEpisodeNumber = episodeNumber > 0 || !hasNonStandardNumber
+                    ? episodeNumber
+                    : null,
+                NumberEnd = episodeNumberEnd,
+                HasNonStandardNumber = hasNonStandardNumber,
+                IsSpecial = isSpecial,
+                SourceOrder = episodes.Count + 1,
                 Title = title,
                 DetailUrl = detailUrl,
                 ProviderId = episodeProviderId,
@@ -812,88 +825,213 @@ public partial class AnimeClickHtmlParser
     }
 
     /// <summary>
-    /// Recomputes ordinals and optional synthetic seasons for a complete episode list.
-    /// Callers that merge paginated tables must invoke this only after all pages have
-    /// been collected; normalizing each page independently shifts season ordinals.
+    /// Recomputes canonical ordinals and optional legacy equal-split hints. Callers that
+    /// merge pages invoke this only after the complete table has been collected.
     /// </summary>
     internal static void FinalizeEpisodeList(List<AnimeClickEpisode> episodes, int? seasonsCount)
     {
-        NormalizeEpisodeOrdinals(episodes);
+        CanonicalizeEpisodeTimeline(episodes);
         TryInferSeasonsFromCount(episodes, seasonsCount);
     }
 
     internal static bool IsSpecialEpisodeTitle(string? title) =>
         !string.IsNullOrWhiteSpace(title) && SpecialTitleRegex().IsMatch(title);
 
-    private static void NormalizeEpisodeOrdinals(List<AnimeClickEpisode> episodes)
-    {
-        foreach (var group in episodes.GroupBy(e => e.SeasonNumber))
-        {
-            var ordered = group
-                .OrderBy(e => e.AbsoluteNumber > 0 ? e.AbsoluteNumber : e.Number)
-                .ThenBy(e => e.Title)
-                .ToList();
+    private static bool HasTrustworthyRegularLabel(
+        string? rawLabel,
+        int? seasonNumber,
+        int episodeNumber,
+        bool hasNonStandardNumber)
+        => seasonNumber != 0
+            && episodeNumber > 0
+            && !hasNonStandardNumber
+            && !IsSpecialEpisodeTitle(rawLabel);
 
-            if (ordered.Count == 0)
+    private static void ParseEpisodeLabel(
+        string rawLabel,
+        out int? seasonNumber,
+        out int episodeNumber,
+        out int? episodeNumberEnd,
+        out bool hasNonStandardNumber)
+    {
+        seasonNumber = null;
+        episodeNumber = 0;
+        episodeNumberEnd = null;
+        hasNonStandardNumber = false;
+        var numberText = rawLabel;
+
+        var seasonMatch = SeasonEpisodeRegex().Match(rawLabel);
+        if (seasonMatch.Success)
+        {
+            var seasonValue = seasonMatch.Groups[1].Success
+                ? seasonMatch.Groups[1].Value
+                : seasonMatch.Groups[3].Value;
+            if (int.TryParse(seasonValue, out var parsedSeason))
+            {
+                seasonNumber = parsedSeason;
+            }
+
+            numberText = seasonMatch.Groups[2].Success
+                ? seasonMatch.Groups[2].Value
+                : seasonMatch.Groups[4].Value;
+        }
+
+        var numberMatch = EpisodeTokenRegex().Match(numberText);
+        if (!numberMatch.Success || !int.TryParse(numberMatch.Groups[1].Value, out episodeNumber))
+        {
+            hasNonStandardNumber = true;
+            return;
+        }
+
+        var hasFraction = numberMatch.Groups[2].Success;
+        var hasSuffix = numberMatch.Groups[3].Success;
+        if (numberMatch.Groups[4].Success
+            && int.TryParse(numberMatch.Groups[4].Value, out var parsedEnd))
+        {
+            episodeNumberEnd = parsedEnd;
+        }
+
+        hasNonStandardNumber = hasFraction || hasSuffix || episodeNumberEnd.HasValue;
+    }
+
+    /// <summary>
+    /// Builds canonical coordinates. When every regular row has an unambiguous numeric
+    /// coordinate, numeric order repairs reversed/out-of-order tables; otherwise source
+    /// order remains the only safe evidence. Specials never shift regular ordinals.
+    /// </summary>
+    internal static void CanonicalizeEpisodeTimeline(List<AnimeClickEpisode> episodes)
+    {
+        for (var index = 0; index < episodes.Count; index++)
+        {
+            var episode = episodes[index];
+            episode.SourceOrder = index + 1;
+            episode.RawSeasonNumber ??= episode.SeasonNumber;
+            episode.RawEpisodeNumber ??= episode.Number > 0 ? episode.Number : null;
+            episode.SeasonNumber = episode.RawSeasonNumber;
+            episode.SeasonNumberIsSynthetic = false;
+            episode.AbsoluteNumber = episode.Number;
+            episode.GlobalOrdinal = 0;
+            episode.SeasonOrdinalNumber = 0;
+            episode.SpecialOrdinalNumber = 0;
+            episode.NumberIsAmbiguous = false;
+            episode.IsSpecial = episode.RawSeasonNumber == 0
+                || episode.Number <= 0
+                || episode.HasNonStandardNumber
+                || IsSpecialEpisodeTitle(episode.RawNumberLabel)
+                || (!HasTrustworthyRegularLabel(
+                        episode.RawNumberLabel,
+                        episode.RawSeasonNumber,
+                        episode.Number,
+                        episode.HasNonStandardNumber)
+                    && IsSpecialEpisodeTitle(episode.Title));
+        }
+
+        foreach (var duplicateGroup in episodes
+                     .Where(episode => episode.RawEpisodeNumber.HasValue)
+                     .GroupBy(episode => (
+                         episode.IsSpecial,
+                         episode.RawSeasonNumber,
+                         episode.RawEpisodeNumber))
+                     .Where(group => group.Count() > 1))
+        {
+            foreach (var duplicate in duplicateGroup)
+            {
+                duplicate.NumberIsAmbiguous = true;
+            }
+        }
+
+        var regular = episodes
+            .Where(episode => !episode.IsSpecial && episode.RawEpisodeNumber is > 0)
+            .ToList();
+        var globalTimelineReliable = regular.All(episode => !episode.NumberIsAmbiguous);
+        IEnumerable<AnimeClickEpisode> canonicalOrder = regular.OrderBy(episode => episode.SourceOrder);
+        if (globalTimelineReliable
+            && regular.Count > 0
+            && regular.All(episode => episode.RawSeasonNumber is > 0))
+        {
+            canonicalOrder = regular
+                .OrderBy(episode => episode.RawSeasonNumber)
+                .ThenBy(episode => episode.RawEpisodeNumber)
+                .ThenBy(episode => episode.SourceOrder);
+        }
+        else if (globalTimelineReliable
+                 && regular.Count > 0
+                 && regular.All(episode => !episode.RawSeasonNumber.HasValue))
+        {
+            canonicalOrder = regular
+                .OrderBy(episode => episode.RawEpisodeNumber)
+                .ThenBy(episode => episode.SourceOrder);
+        }
+
+        regular = canonicalOrder.ToList();
+        if (globalTimelineReliable)
+        {
+            for (var index = 0; index < regular.Count; index++)
+            {
+                regular[index].GlobalOrdinal = index + 1;
+                regular[index].AbsoluteNumber = index + 1;
+            }
+        }
+
+        foreach (var group in regular.GroupBy(episode => episode.RawSeasonNumber))
+        {
+            if (group.Any(episode => episode.NumberIsAmbiguous))
             {
                 continue;
             }
 
-            var firstNumber = ordered[0].AbsoluteNumber > 0 ? ordered[0].AbsoluteNumber : ordered[0].Number;
-            for (var i = 0; i < ordered.Count; i++)
+            var ordered = group
+                .OrderBy(episode => episode.RawEpisodeNumber)
+                .ThenBy(episode => episode.SourceOrder)
+                .ToList();
+            for (var index = 0; index < ordered.Count; index++)
             {
-                var episode = ordered[i];
-                episode.AbsoluteNumber = episode.AbsoluteNumber > 0 ? episode.AbsoluteNumber : episode.Number;
-
-                if (episode.SeasonNumber.HasValue)
-                {
-                    var relative = episode.AbsoluteNumber - firstNumber + 1;
-                    episode.SeasonOrdinalNumber = relative > 0 ? relative : i + 1;
-                }
-                else
-                {
-                    episode.SeasonOrdinalNumber = episode.Number;
-                }
+                ordered[index].SeasonOrdinalNumber = index + 1;
             }
+        }
+
+        var specials = episodes
+            .Where(episode => episode.IsSpecial)
+            .OrderBy(episode => episode.SourceOrder)
+            .ToList();
+        for (var index = 0; index < specials.Count; index++)
+        {
+            specials[index].SpecialOrdinalNumber = index + 1;
+            specials[index].AbsoluteNumber = specials[index].Number;
         }
     }
 
     /// <summary>
-    /// When <paramref name="seasonsCount"/> is greater than 1 and every parsed episode
-    /// carries a null <see cref="AnimeClickEpisode.SeasonNumber"/> (i.e. AnimeClick lists
-    /// episodes as a continuous "Ep. 01"..<c>Ep. NN</c> block without per-row "S1/S2 Ep." prefixes),
-    /// splits the episodes evenly across N seasons and assigns both the synthetic
-    /// <see cref="AnimeClickEpisode.SeasonNumber"/> and the within-group ordinal
-    /// (<see cref="AnimeClickEpisode.SeasonOrdinalNumber"/>) so the matcher's
-    /// <c>seasonOrdinal</c> branch can resolve multi-season Jellyfin libraries.
+    /// Retains the v4 equal-split hint for callers without Jellyfin topology. Only regular
+    /// rows participate: an OVA or recap no longer disables or shifts the split.
     /// </summary>
     private static void TryInferSeasonsFromCount(List<AnimeClickEpisode> episodes, int? seasonsCount)
     {
-        if (episodes.Count == 0
-            || !seasonsCount.HasValue
-            || seasonsCount.Value <= 1
-            || episodes.Any(e => e.SeasonNumber.HasValue))
+        if (!seasonsCount.HasValue || seasonsCount.Value <= 1)
         {
             return;
         }
 
-        var count = episodes.Count;
-        var perSeason = count / seasonsCount.Value;
-        if (perSeason <= 0 || count % seasonsCount.Value != 0)
+        var regular = episodes
+            .Where(episode => !episode.IsSpecial && episode.GlobalOrdinal > 0)
+            .OrderBy(episode => episode.GlobalOrdinal)
+            .ToList();
+        if (regular.Count == 0 || regular.Any(episode => episode.RawSeasonNumber.HasValue))
         {
-            // Refuse to synthesise when the table does not divide evenly across declared seasons,
-            // because that would shift ordinals and corrupt matching.
             return;
         }
 
-        var ordered = episodes.OrderBy(e => e.AbsoluteNumber).ToList();
-        for (var i = 0; i < ordered.Count; i++)
+        var perSeason = regular.Count / seasonsCount.Value;
+        if (perSeason <= 0 || regular.Count % seasonsCount.Value != 0)
         {
-            var season = (i / perSeason) + 1;
-            var ordinalInSeason = (i % perSeason) + 1;
-            ordered[i].SeasonNumber = season;
-            ordered[i].SeasonNumberIsSynthetic = true;
-            ordered[i].SeasonOrdinalNumber = ordinalInSeason;
+            return;
+        }
+
+        for (var index = 0; index < regular.Count; index++)
+        {
+            regular[index].SeasonNumber = (index / perSeason) + 1;
+            regular[index].SeasonNumberIsSynthetic = true;
+            regular[index].SeasonOrdinalNumber = (index % perSeason) + 1;
         }
     }
 
