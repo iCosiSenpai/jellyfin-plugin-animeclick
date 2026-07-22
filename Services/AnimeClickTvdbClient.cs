@@ -748,14 +748,15 @@ public class AnimeClickTvdbClient
 
         if (item.TryGetProperty("year", out var yEl))
         {
-            if (yEl.ValueKind == JsonValueKind.String && int.TryParse(yEl.GetString(), out var y))
+            if (yEl.ValueKind == JsonValueKind.String
+                && int.TryParse(yEl.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var y))
             {
                 return y;
             }
 
-            if (yEl.ValueKind == JsonValueKind.Number)
+            if (yEl.ValueKind == JsonValueKind.Number && yEl.TryGetInt32(out var numericYear))
             {
-                return yEl.GetInt32();
+                return numericYear;
             }
         }
 

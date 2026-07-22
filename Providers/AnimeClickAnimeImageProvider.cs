@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
@@ -115,11 +116,14 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
             return results;
         }
 
-        var imageUrl = anime.ImageUrl;
-        if (!imageUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        // Resolve against the configured base and enforce HTTPS + allowed host so a scraped
+        // og:image cannot turn the metadata scan into an arbitrary outbound request (SSRF).
+        if (!AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, anime.ImageUrl, out var imageUri))
         {
-            imageUrl = configuration.BaseUrl + imageUrl;
+            return results;
         }
+
+        var imageUrl = imageUri.AbsoluteUri;
 
         // Skip generic placeholders
         if (imageUrl.Contains("not_found", StringComparison.OrdinalIgnoreCase))
@@ -236,11 +240,18 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
     {
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+
+        // Defense in depth: only ever fetch an allowed HTTPS host, mirroring GetImages.
+        if (!AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, url, out var imageUri))
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+        }
+
         var client = _httpClientFactory.CreateClient();
 
         // AnimeClick's CDN rejects requests without a browser-like User-Agent (HTTP 403),
         // so mirror the headers used by AnimeClickClient for HTML fetches.
-        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(url));
+        var request = new HttpRequestMessage(HttpMethod.Get, imageUri);
         request.Headers.TryAddWithoutValidation(
             "User-Agent",
             AnimeClickClient.GetEffectiveUserAgent(configuration));

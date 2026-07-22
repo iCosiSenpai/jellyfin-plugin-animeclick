@@ -123,6 +123,43 @@ public partial class AnimeClickClient
     }
 
     /// <summary>
+    /// Resolves an image URL (absolute or relative to the configured base) and confirms it
+    /// targets an allowed host over HTTPS. This prevents a scraped or persisted URL from
+    /// turning the metadata scanner into an arbitrary outbound request (SSRF) or from
+    /// downgrading to plain HTTP. Allowed = the exact configured host:port, or any
+    /// *.animeclick.it host on 443 when the plugin is configured against AnimeClick.
+    /// </summary>
+    public static bool TryResolveAllowedImageUri(string? baseUrl, string? imageUrl, out Uri imageUri)
+    {
+        imageUri = null!;
+        if (string.IsNullOrWhiteSpace(imageUrl)
+            || !Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri)
+            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)
+            || !Uri.TryCreate(baseUri, imageUrl, out var resolved)
+            || resolved.Scheme != Uri.UriSchemeHttps)
+        {
+            return false;
+        }
+
+        var baseHost = baseUri.IdnHost.TrimEnd('.');
+        var imageHost = resolved.IdnHost.TrimEnd('.');
+        var exactConfiguredHost = string.Equals(baseHost, imageHost, StringComparison.OrdinalIgnoreCase)
+            && baseUri.Port == resolved.Port;
+        var configuredForAnimeClick = string.Equals(baseHost, "animeclick.it", StringComparison.OrdinalIgnoreCase)
+            || baseHost.EndsWith(".animeclick.it", StringComparison.OrdinalIgnoreCase);
+        var officialAnimeClickHost = string.Equals(imageHost, "animeclick.it", StringComparison.OrdinalIgnoreCase)
+            || imageHost.EndsWith(".animeclick.it", StringComparison.OrdinalIgnoreCase);
+        if (!exactConfiguredHost
+            && !(configuredForAnimeClick && officialAnimeClickHost && resolved.Port == 443))
+        {
+            return false;
+        }
+
+        imageUri = resolved;
+        return true;
+    }
+
+    /// <summary>
     /// Returns a UA string with the assembly version, replacing only the plugin token
     /// instead of relying on the configured version having a fixed string length.
     /// </summary>
