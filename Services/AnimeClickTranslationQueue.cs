@@ -407,16 +407,39 @@ public sealed class AnimeClickTranslationQueue : IDisposable
 
         _channel.Writer.TryComplete();
         _shutdown.Cancel();
+
+        bool workerCompleted;
         try
         {
-            _worker.Wait(TimeSpan.FromSeconds(2));
+            workerCompleted = _worker.Wait(TimeSpan.FromSeconds(2));
         }
         catch (AggregateException)
         {
-            // Cancellation during plugin shutdown is expected.
+            // Cancellation/fault during plugin shutdown is expected; the task is finished.
+            workerCompleted = _worker.IsCompleted;
         }
 
-        _shutdown.Dispose();
+        if (workerCompleted)
+        {
+            // The worker has stopped touching _shutdown/_publicationGate: dispose them now.
+            _shutdown.Dispose();
+            _publicationGate.Dispose();
+        }
+        else
+        {
+            // A translation is still in flight and may keep using the CTS token and the gate.
+            // Defer disposal until it actually completes so we never trigger an
+            // ObjectDisposedException on the worker thread during a slow shutdown.
+            _worker.ContinueWith(
+                _ =>
+                {
+                    _shutdown.Dispose();
+                    _publicationGate.Dispose();
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        }
     }
 
     private sealed class TranslationInvalidationLease : IDisposable

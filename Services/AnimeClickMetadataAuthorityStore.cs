@@ -32,6 +32,12 @@ public static class AnimeClickMetadataAuthorityStore
     private static readonly TimeSpan SnapshotLifetime = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan MaximumFutureClockSkew = TimeSpan.FromSeconds(5);
 
+    // The full expiry scan runs at most once per interval. Begin() is invoked for every item
+    // in a library refresh, so running an unconditional O(n) scan there would make a refresh
+    // O(n^2). Per-item snapshots are still removed eagerly by Begin/Apply regardless.
+    private static readonly long PruneIntervalTicks = TimeSpan.FromSeconds(5).Ticks;
+    private static long _lastPruneUtcTicks;
+
     /// <summary>
     /// Starts one authority attempt and removes a snapshot left by an earlier
     /// refresh of the same item. Dispose without Capture represents an early
@@ -350,6 +356,17 @@ public static class AnimeClickMetadataAuthorityStore
 
     private static void PruneExpiredState(DateTimeOffset now)
     {
+        // Throttle: only one thread runs the O(n) scan per interval; others return immediately.
+        // This reclaims entries for items that are never refreshed again; entries for items
+        // that are refreshed are already removed eagerly by Begin/Apply.
+        var nowTicks = now.UtcTicks;
+        var last = Interlocked.Read(ref _lastPruneUtcTicks);
+        if (nowTicks - last < PruneIntervalTicks
+            || Interlocked.CompareExchange(ref _lastPruneUtcTicks, nowTicks, last) != last)
+        {
+            return;
+        }
+
         var threshold = now - SnapshotLifetime;
         foreach (var pair in Snapshots)
         {
