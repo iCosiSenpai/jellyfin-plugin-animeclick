@@ -3,7 +3,7 @@
 (function () {
     'use strict';
 
-    var V = '0.4.1.0';
+    var V = '0.4.2.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -361,7 +361,7 @@
         var priorityGrid = el('div', 'ac-priority-grid');
         addPriorityTile(priorityGrid, 'Testo', 'Ordine 0', 'Titoli, trama, generi, tag e cast restano autorevoli.', 'good');
         addPriorityTile(priorityGrid, 'Immagini', 'Fallback 100', 'I provider ad alta risoluzione mantengono la precedenza.', 'neutral');
-        addPriorityTile(priorityGrid, 'Sinossi episodi', 'IT → EN → AI', 'Ollama viene chiamato soltanto quando manca una fonte italiana.', 'warn');
+        addPriorityTile(priorityGrid, 'Sinossi episodi', 'AnimeClick → IT → EN', 'Prima AnimeClick; Ollama traduce soltanto l’ultima fonte inglese.', 'warn');
         authority.body.appendChild(priorityGrid);
         panel.appendChild(authority.card);
 
@@ -375,7 +375,7 @@
             var roles = {
                 tmdb: 'Italiano nativo e fonte inglese',
                 ollama: 'Ultimo fallback EN→IT, cloud-only',
-                tvdb: 'Italiano nativo preferito'
+                tvdb: 'Prima fonte esterna italiana'
             };
             var row = el('div', 'ac-provider-row');
             var identity = el('div', 'ac-provider-identity');
@@ -516,28 +516,28 @@
         clear(panel);
 
         var onboarding = makeCard(
-            'Cloud-only',
-            'Sinossi episodi italiane, senza GPU sul NAS',
-            'Il plugin cerca prima una traduzione umana già disponibile. Ollama Cloud viene usato soltanto come ultimo fallback e le traduzioni sono memorizzate a lungo.'
+            'Sinossi episodi',
+            'Prima AnimeClick, poi le fonti di riserva',
+            'Titoli e sinossi restano indipendenti. Per la sinossi il plugin controlla prima la pagina dell’episodio AnimeClick e ignora descrizioni vuote o segnaposto come “Episodio 12”.'
         );
         onboarding.body.appendChild(makeCheck(
             'acEnableEpisodeSynopsisTranslation',
-            'Abilita il fallback sinossi episodi',
-            'AnimeClick non pubblica trame per episodio; il campo resta invariato se tutta la catena fallisce.'
+            'Abilita le sinossi degli episodi',
+            'Funziona anche con il solo AnimeClick. Le API esterne e Ollama servono esclusivamente ad aumentare la copertura.'
         ));
         var chain = el('div', 'ac-chain');
-        appendChainStep(chain, 1, 'Italiano nativo', 'TheTVDB ita, poi TMDB it-IT.', 'nessuna AI');
-        appendChainStep(chain, 2, 'Fonte inglese', 'TMDB en-US, poi TheTVDB eng.', 'solo se serve');
-        appendChainStep(chain, 3, 'Ollama Cloud', 'Traduzione EN→IT serializzata e content-addressed.', 'ultimo fallback');
+        appendChainStep(chain, 1, 'AnimeClick', 'Sinossi italiana presente nella pagina dell’episodio.', 'prima scelta');
+        appendChainStep(chain, 2, 'Italiano di riserva', 'TheTVDB ita, poi TMDB it-IT.', 'senza AI');
+        appendChainStep(chain, 3, 'Inglese + Ollama', 'TMDB en-US, poi TheTVDB eng; Ollama traduce il testo EN→IT.', 'ultima scelta');
         onboarding.body.appendChild(chain);
         panel.appendChild(onboarding.card);
 
-        var sources = makeCard('Sorgenti', 'Credenziali dei provider', 'TheTVDB è opzionale; TMDB amplia la copertura italiana e fornisce la fonte inglese per Ollama.');
+        var sources = makeCard('Sorgenti opzionali', 'Aumenta la copertura', 'Non servono chiavi per usare le sinossi AnimeClick. TheTVDB e TMDB cercano le puntate mancanti; Ollama traduce soltanto una sinossi inglese trovata da uno di questi servizi.');
         var sourceGrid = el('div', 'ac-grid-2');
         var tvdbBlock = el('div', 'ac-credential-block');
         var tvdbHead = el('div', 'ac-row ac-credential-head');
         tvdbHead.appendChild(el('strong', null, 'TheTVDB'));
-        tvdbHead.appendChild(el('span', 'ac-badge neutral', 'preferito'));
+        tvdbHead.appendChild(el('span', 'ac-badge neutral', 'prima fonte esterna'));
         tvdbBlock.appendChild(tvdbHead);
         tvdbBlock.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa fonte italiana TVDB', 'Salta Ollama quando esiste una overview ita.'));
         tvdbBlock.appendChild(makeSecretField(
@@ -562,7 +562,7 @@
         cloudBlock.appendChild(makeSecretField(
             'acTmdbApiKey',
             'API key TMDB',
-            'Creala nelle <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">impostazioni API TMDB</a>.'
+            'Creala nelle <a href="https://developer.themoviedb.org/docs/getting-started" target="_blank" rel="noopener noreferrer">impostazioni API TMDB</a>.'
         ));
         cloudBlock.appendChild(makeSecretField(
             'acOllamaCloudApiKey',
@@ -650,9 +650,9 @@
         preview.body.appendChild(previewResult);
         panel.appendChild(preview.card);
 
-        var fallback = makeCard('Pipeline reale', 'Anteprima fallback episodio', 'Esegue la catena salvata per un episodio e indica la fonte vincente senza mostrare chiavi.');
+        var fallback = makeCard('Pipeline reale', 'Prova la sinossi di un episodio', 'Inserisci la serie e il numero della puntata: il plugin trova da solo la pagina episodio AnimeClick e mostra quale fonte ha vinto. Usa soltanto la configurazione già salvata.');
         var fallbackGrid = el('div', 'ac-grid-3');
-        fallbackGrid.appendChild(makeField('acFallbackAnimeId', 'ID AnimeClick', 'text', 'Esempio: 72/naruto.', {}, false));
+        fallbackGrid.appendChild(makeField('acFallbackAnimeId', 'ID AnimeClick della serie', 'text', 'Esempio: 72/naruto.', {}, false));
         fallbackGrid.appendChild(makeField('acFallbackSeason', 'Stagione', 'number', '0 per gli special.', { min: '0', value: '1' }, false));
         fallbackGrid.appendChild(makeField('acFallbackEpisode', 'Episodio', 'number', 'Numero episodio; per gli special usa stagione 0.', { min: '1', value: '1' }, false));
         fallback.body.appendChild(fallbackGrid);
@@ -898,12 +898,6 @@
             return 'Il profilo cloud-only richiede un modello con tag cloud.';
         }
 
-        if (!val('acEnableEpisodeSynopsisTranslation').checked) return null;
-        var tvdbReady = val('acEnableTvdbSynopsis').checked && !!val('acTvdbApiKey').value.trim();
-        var tmdbReady = !!val('acTmdbApiKey').value.trim();
-        if (!tvdbReady && !tmdbReady) {
-            return 'Abilita almeno una fonte italiana: TheTVDB oppure TMDB.';
-        }
         return null;
     }
 
@@ -1204,11 +1198,19 @@
             host.appendChild(makeCallout('Nessuna fonte disponibile', valueOf(result, 'errorMessage') || 'La catena non ha prodotto una sinossi.', 'warn'));
         } else {
             var meta = el('div', 'ac-row');
-            meta.appendChild(el('span', 'ac-badge success', valueOf(result, 'source') || 'Fonte esterna'));
+            meta.appendChild(el('span', 'ac-badge success', valueOf(result, 'source') || 'Fonte'));
             meta.appendChild(el('span', 'ac-badge neutral', valueOf(result, 'sourceLanguage') || 'it'));
             if (valueOf(result, 'usedOllama')) meta.appendChild(el('span', 'ac-badge warn', valueOf(result, 'model') || 'Ollama Cloud'));
             host.appendChild(meta);
             host.appendChild(el('p', 'ac-preview-copy', valueOf(result, 'overview')));
+        }
+
+        if (!valueOf(result, 'animeClickMatchConclusive')) {
+            host.appendChild(makeCallout(
+                'Verifica AnimeClick non conclusiva',
+                'Questa prova usa soltanto serie, stagione e numero. L’esito è indicativo: il refresh reale usa anche titolo, file e struttura della libreria e può quindi scegliere un abbinamento diverso.',
+                'warn'
+            ));
         }
 
         var chain = asArray(valueOf(result, 'chain'));

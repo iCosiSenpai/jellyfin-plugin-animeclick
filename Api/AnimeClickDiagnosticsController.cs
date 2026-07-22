@@ -10,6 +10,7 @@ using AnimeClick.Plugin.Services;
 using MediaBrowser.Common.Api;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace AnimeClick.Plugin.Api;
 
@@ -20,31 +21,37 @@ public class AnimeClickDiagnosticsController : ControllerBase
 {
     private readonly AnimeClickSeriesSearchProvider _searchProvider;
     private readonly AnimeClickEpisodeListLoader _episodeListLoader;
+    private readonly AnimeClickSeasonResolver _seasonResolver;
     private readonly AnimeClickCacheService _cache;
     private readonly AnimeClickTmdbClient _tmdbClient;
     private readonly AnimeClickOllamaTranslator _translator;
     private readonly AnimeClickTvdbClient _tvdbClient;
     private readonly AnimeClickMetadataFallbackService _fallbackService;
     private readonly AnimeClickTranslationQueue _translationQueue;
+    private readonly ILogger<AnimeClickDiagnosticsController> _logger;
 
     public AnimeClickDiagnosticsController(
         AnimeClickSeriesSearchProvider searchProvider,
         AnimeClickEpisodeListLoader episodeListLoader,
+        AnimeClickSeasonResolver seasonResolver,
         AnimeClickCacheService cache,
         AnimeClickTmdbClient tmdbClient,
         AnimeClickOllamaTranslator translator,
         AnimeClickTvdbClient tvdbClient,
         AnimeClickMetadataFallbackService fallbackService,
-        AnimeClickTranslationQueue translationQueue)
+        AnimeClickTranslationQueue translationQueue,
+        ILogger<AnimeClickDiagnosticsController> logger)
     {
         _searchProvider = searchProvider;
         _episodeListLoader = episodeListLoader;
+        _seasonResolver = seasonResolver;
         _cache = cache;
         _tmdbClient = tmdbClient;
         _translator = translator;
         _tvdbClient = tvdbClient;
         _fallbackService = fallbackService;
         _translationQueue = translationQueue;
+        _logger = logger;
     }
 
     [HttpGet("TestLookup")]
@@ -196,6 +203,12 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
         if (normalizedId is not null && canonicalAnimeUrl is not null)
         {
+            // Episode synopsis entries are keyed by the stable /episodio ID, which
+            // cannot be derived from a series ID. A targeted series reset therefore
+            // invalidates this small cache family as a whole.
+            removed += _cache.ClearByPrefix("episodeOverview:v2::");
+            removed += _cache.ClearByPrefix("episodeOverview:v1::");
+
             // Raw v5 keys include declared-count suffixes, so targeted invalidation
             // removes the complete key family for the selected AnimeClick entry.
             removed += _cache.ClearByPrefix("episodes:raw:v5::" + normalizedId + "::");
@@ -412,7 +425,8 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
     /// <summary>
     /// Runs the production episode overview chain and reports the winning source.
-    /// The response includes only configuration presence flags, never API keys.
+    /// The episode detail identity is resolved internally from series, season and
+    /// episode so the diagnostics UI never asks users for a technical /episodio ID.
     /// </summary>
     [HttpPost("PreviewEpisodeFallback")]
     public async Task<ActionResult<EpisodeFallbackPreviewResponse>> PreviewEpisodeFallback(
@@ -430,6 +444,42 @@ public class AnimeClickDiagnosticsController : ControllerBase
         }
 
         var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (!AnimeClickClient.TryNormalizeAnimeClickId(request.AnimeClickId, out var normalizedId)
+            || !AnimeClickClient.TryBuildAnimeUrl(config.BaseUrl, normalizedId, out _))
+        {
+            return BadRequest(new { error = "animeClickId or configured BaseUrl is invalid" });
+        }
+
+        AnimeClickEpisodeMatch? animeClickMatch = null;
+        var episodeMatchLookupFailed = false;
+        try
+        {
+            animeClickMatch = await ResolveEpisodeMatchForPreviewAsync(
+                    normalizedId,
+                    request.Season,
+                    request.Episode,
+                    config,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            episodeMatchLookupFailed = true;
+            // Match/list failures must not hide a valid TVDB/TMDB fallback preview.
+            _logger.LogDebug(
+                ex,
+                "AnimeClick diagnostics could not resolve the detail ID for {Id} S{Season}E{Episode}",
+                normalizedId,
+                request.Season,
+                request.Episode);
+        }
+
+        var episodeAnimeClickId = animeClickMatch?.Episode?.ProviderId;
+
         var tvdbConfigured = config.EnableTvdbSynopsis
             && !string.IsNullOrWhiteSpace(config.TvdbApiKey);
         var tmdbConfigured = !string.IsNullOrWhiteSpace(config.TmdbApiKey);
@@ -438,9 +488,10 @@ public class AnimeClickDiagnosticsController : ControllerBase
             && !string.IsNullOrWhiteSpace(config.OllamaCloudModel);
 
         var fallback = await _fallbackService.ResolveEpisodeOverviewAsync(
-                request.AnimeClickId,
+                normalizedId,
                 request.Season,
                 request.Episode,
+                episodeAnimeClickId,
                 config,
                 cancellationToken,
                 allowSynchronousTranslation: true)
@@ -454,8 +505,17 @@ public class AnimeClickDiagnosticsController : ControllerBase
             SourceLanguage = fallback?.SourceLanguage,
             UsedOllama = fallback?.UsedOllama ?? false,
             Model = fallback?.Model,
+            // This endpoint has no Jellyfin item title, file range or complete library
+            // topology, so its episode match is always advisory even when it resolves an ID.
+            AnimeClickMatchConclusive = false,
+            AnimeClickMatchStrategy = animeClickMatch?.Strategy,
+            AnimeClickMatchConfidence = animeClickMatch?.Confidence,
+            AnimeClickMatchReason = episodeMatchLookupFailed
+                ? "episode-list-unavailable"
+                : animeClickMatch?.Reason,
             Chain =
             [
+                new FallbackChainStep("AnimeClick", "it", false, episodeAnimeClickId is not null),
                 new FallbackChainStep("TheTVDB", "ita", false, tvdbConfigured),
                 new FallbackChainStep("TMDB", "it-IT", false, tmdbConfigured),
                 new FallbackChainStep("TMDB", "en-US", true, tmdbConfigured && ollamaConfigured),
@@ -463,9 +523,81 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 new FallbackChainStep("Ollama Cloud", "en→it", true, ollamaConfigured)
             ],
             ErrorMessage = fallback is null
-                ? "No configured source produced an Italian episode overview."
+                ? "Né AnimeClick né le fonti esterne configurate hanno prodotto una sinossi italiana."
                 : null
         });
+    }
+
+    private async Task<AnimeClickEpisodeMatch?> ResolveEpisodeMatchForPreviewAsync(
+        string animeClickId,
+        int season,
+        int episode,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        var pageAnimeClickId = animeClickId;
+        var resolvedSeasonId = await _seasonResolver
+            .ResolveAsync(animeClickId, season, configuration, cancellationToken)
+            .ConfigureAwait(false);
+        var isSeasonSpecificPage = !string.IsNullOrWhiteSpace(resolvedSeasonId);
+        if (isSeasonSpecificPage)
+        {
+            pageAnimeClickId = resolvedSeasonId!;
+        }
+
+        if (!AnimeClickClient.TryBuildAnimeUrl(
+                configuration.BaseUrl,
+                pageAnimeClickId,
+                out var animeUrl))
+        {
+            return null;
+        }
+
+        var seriesCacheKey = $"anime::{animeUrl}";
+        var series = await _cache
+            .GetAsync<AnimeClickAnime>(seriesCacheKey, configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (series is null)
+        {
+            // Direct-ID lookup uses the same client/parser and fills the production cache.
+            await _searchProvider.SearchAsync(
+                    pageAnimeClickId,
+                    configuration,
+                    cancellationToken,
+                    productionYear: null,
+                    seriesRequest: true)
+                .ConfigureAwait(false);
+            series = await _cache
+                .GetAsync<AnimeClickAnime>(seriesCacheKey, configuration.CacheHours, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        var loaded = await _episodeListLoader.LoadAsync(
+                animeUrl + "/episodi",
+                configuration.BaseUrl,
+                series?.SeasonsCount is > 0 ? series.SeasonsCount : null,
+                series?.EpisodeCount,
+                configuration,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var pageSeason = isSeasonSpecificPage ? 1 : season;
+        var layoutOverride = AnimeClickEpisodeLayoutOverrideParser.ParseFor(
+                                 configuration.EpisodeLayoutOverrides,
+                                 pageAnimeClickId)
+                             ?? AnimeClickEpisodeLayoutOverrideParser.ParseFor(
+                                 configuration.EpisodeLayoutOverrides,
+                                 animeClickId);
+        var match = AnimeClickEpisodeMatcher.Match(
+            loaded.Episodes,
+            new AnimeClickEpisodeMatchContext(pageSeason, episode)
+            {
+                LayoutOverride = layoutOverride,
+                DeclaredSeasonsCount = loaded.Catalog.DeclaredSeasonsCount > 0
+                    ? loaded.Catalog.DeclaredSeasonsCount
+                    : null,
+                IsSeasonSpecificPage = isSeasonSpecificPage
+            });
+        return match;
     }
 
     /// <summary>
@@ -699,6 +831,10 @@ public sealed class EpisodeFallbackPreviewResponse
     public string? SourceLanguage { get; set; }
     public bool UsedOllama { get; set; }
     public string? Model { get; set; }
+    public bool AnimeClickMatchConclusive { get; set; }
+    public string? AnimeClickMatchStrategy { get; set; }
+    public double? AnimeClickMatchConfidence { get; set; }
+    public string? AnimeClickMatchReason { get; set; }
     public List<FallbackChainStep> Chain { get; set; } = [];
     public string? ErrorMessage { get; set; }
 }

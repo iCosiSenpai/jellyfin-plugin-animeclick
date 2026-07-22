@@ -103,18 +103,24 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         }
 
         mainAnimeClickId = normalizedMainId;
-        if (!configuration.EnableEpisodeTitles)
+        if (!configuration.EnableEpisodeTitles
+            && !configuration.EnableEpisodeSynopsisTranslation
+            && !string.IsNullOrWhiteSpace(existingEpisodeId))
         {
-            if (!string.IsNullOrWhiteSpace(existingEpisodeId))
-            {
-                result.Item.SetProviderId("AnimeClick", existingEpisodeId);
-            }
+            result.Item.SetProviderId("AnimeClick", existingEpisodeId);
         }
-        else
+
+        AnimeClickEpisode? matchedEpisode = null;
+        var episodeMatchCompleted = false;
+        var needsEpisodeMatch = configuration.EnableEpisodeTitles
+            || (configuration.EnableEpisodeSynopsisTranslation
+                && seasonNumber.HasValue
+                && episodeNumber.Value > 0);
+        if (needsEpisodeMatch)
         {
             try
             {
-                await PopulateTitleAsync(
+                matchedEpisode = await ResolveEpisodeAsync(
                         result,
                         mainAnimeClickId,
                         identityIsSeasonSpecific,
@@ -124,9 +130,19 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                         existingEpisodeId,
                         info.Name,
                         info.Path,
+                        populateMetadata: configuration.EnableEpisodeTitles,
                         configuration,
                         cancellationToken)
                     .ConfigureAwait(false);
+                episodeMatchCompleted = true;
+                if (!configuration.EnableEpisodeTitles
+                    && !string.IsNullOrWhiteSpace(matchedEpisode?.ProviderId))
+                {
+                    // Persist a newly verified identity even when every synopsis source
+                    // misses, replacing any stale provider ID from an earlier layout.
+                    result.Item.SetProviderId("AnimeClick", matchedEpisode.ProviderId);
+                    result.HasMetadata = true;
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -136,7 +152,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             {
                 _logger.LogWarning(
                     ex,
-                    "AnimeClick: title lookup failed for episode {Num} of {Id}; synopsis fallback will still run",
+                    "AnimeClick: episode lookup failed for episode {Num} of {Id}; synopsis fallback will continue when possible",
                     episodeNumber.Value,
                     mainAnimeClickId);
             }
@@ -149,20 +165,32 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             try
             {
                 var fallbackSeasonNumber = identityIsSeasonSpecific ? 1 : seasonNumber.Value;
+                var episodeAnimeClickId = matchedEpisode?.ProviderId;
+                if (!episodeMatchCompleted && string.IsNullOrWhiteSpace(episodeAnimeClickId))
+                {
+                    // A previously persisted detail ID remains useful when the list page is
+                    // temporarily unavailable. A completed safe miss does not reuse it.
+                    episodeAnimeClickId = existingEpisodeId;
+                }
+
                 var fallback = await _fallbackService.ResolveEpisodeOverviewAsync(
                         mainAnimeClickId,
                         fallbackSeasonNumber,
                         episodeNumber.Value,
+                        episodeAnimeClickId,
                         configuration,
                         cancellationToken)
                     .ConfigureAwait(false);
                 if (fallback is not null && !string.IsNullOrWhiteSpace(fallback.Value))
                 {
                     result.Item.Overview = fallback.Value;
-                    if (string.IsNullOrWhiteSpace(result.Item.GetProviderId("AnimeClick"))
-                        && !string.IsNullOrWhiteSpace(existingEpisodeId))
+                    var providerIdToPersist = matchedEpisode?.ProviderId
+                        ?? (!episodeMatchCompleted ? existingEpisodeId : null);
+                    if (!string.IsNullOrWhiteSpace(providerIdToPersist))
                     {
-                        result.Item.SetProviderId("AnimeClick", existingEpisodeId);
+                        // A newly matched detail ID replaces a stale persisted identity.
+                        // The old ID is retained only when the list lookup itself failed.
+                        result.Item.SetProviderId("AnimeClick", providerIdToPersist);
                     }
 
                     result.HasMetadata = true;
@@ -208,7 +236,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         return client.GetAsync(new Uri(url), cancellationToken);
     }
 
-    private async Task PopulateTitleAsync(
+    private async Task<AnimeClickEpisode?> ResolveEpisodeAsync(
         MetadataResult<Episode> result,
         string mainAnimeClickId,
         bool identityIsSeasonSpecific,
@@ -218,6 +246,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         string? existingEpisodeId,
         string? jellyfinTitle,
         string? episodePath,
+        bool populateMetadata,
         PluginConfiguration configuration,
         CancellationToken cancellationToken)
     {
@@ -226,7 +255,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             _logger.LogWarning(
                 "AnimeClick EpisodeProvider ignored invalid series provider ID '{ProviderId}'",
                 mainAnimeClickId);
-            return;
+            return null;
         }
 
         string? resolvedAnimeClickId = null;
@@ -355,42 +384,46 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
         if (match is null)
         {
-            return;
+            return null;
         }
 
-        var wroteMetadata = false;
-        if (!string.IsNullOrWhiteSpace(match.Title))
+        if (populateMetadata)
         {
-            var isGeneric = System.Text.RegularExpressions.Regex.IsMatch(
-                match.Title,
-                @"^(?:Episodio|Episode|Ep\.?)\s+\d+$",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-            if (!isGeneric)
+            var wroteMetadata = false;
+            if (!string.IsNullOrWhiteSpace(match.Title))
             {
-                result.Item.Name = match.Title;
+                var isGeneric = System.Text.RegularExpressions.Regex.IsMatch(
+                    match.Title,
+                    @"^(?:Episodio|Episode|Ep\.?)\s+\d+$",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (!isGeneric)
+                {
+                    result.Item.Name = match.Title;
+                    wroteMetadata = true;
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "AnimeClick: episode row has generic title \"{Title}\"; identity and duration are still retained",
+                        match.Title);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(match.ProviderId))
+            {
+                result.Item.SetProviderId("AnimeClick", match.ProviderId);
                 wroteMetadata = true;
             }
-            else
+
+            if (match.DurationMinutes.HasValue)
             {
-                _logger.LogDebug(
-                    "AnimeClick: episode row has generic title \"{Title}\"; identity and duration are still retained",
-                    match.Title);
+                result.Item.RunTimeTicks = TimeSpan.FromMinutes(match.DurationMinutes.Value).Ticks;
+                wroteMetadata = true;
             }
+
+            result.HasMetadata |= wroteMetadata;
         }
 
-        if (!string.IsNullOrWhiteSpace(match.ProviderId))
-        {
-            result.Item.SetProviderId("AnimeClick", match.ProviderId);
-            wroteMetadata = true;
-        }
-
-        if (match.DurationMinutes.HasValue)
-        {
-            result.Item.RunTimeTicks = TimeSpan.FromMinutes(match.DurationMinutes.Value).Ticks;
-            wroteMetadata = true;
-        }
-
-        result.HasMetadata |= wroteMetadata;
         _logger.LogDebug(
             "AnimeClick: episode raw=\"{Raw}\" global={Global} seasonOrdinal={Ordinal} providerId={ProviderId} title=\"{Title}\"",
             match.RawNumberLabel,
@@ -398,6 +431,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             match.SeasonOrdinalNumber,
             match.ProviderId,
             match.Title);
+        return match;
     }
 
     private async Task<AnimeClickAnime?> GetAnimeSummaryBestEffortAsync(

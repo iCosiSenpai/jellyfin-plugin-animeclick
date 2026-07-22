@@ -9,9 +9,9 @@ using Microsoft.Extensions.Logging;
 namespace AnimeClick.Plugin.Services;
 
 /// <summary>
-/// Resolves fields AnimeClick does not publish using a strict language-aware
-/// chain. Native Italian sources stay in the request path; uncached Ollama work
-/// is queued so a library refresh never waits for cloud model inference.
+/// Resolves episode overviews through a strict language-aware chain. AnimeClick's
+/// native Italian description is tried first; uncached Ollama work is queued so a
+/// library refresh never waits for cloud model inference.
 /// </summary>
 public sealed class AnimeClickMetadataFallbackService
 {
@@ -54,14 +54,48 @@ public sealed class AnimeClickMetadataFallbackService
             animeClickId,
             season,
             episode,
+            animeClickEpisodeId: null,
             configuration,
             cancellationToken,
             allowSynchronousTranslation: false);
+
+    public Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
+        string animeClickId,
+        int season,
+        int episode,
+        string? animeClickEpisodeId,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+        => ResolveEpisodeOverviewAsync(
+            animeClickId,
+            season,
+            episode,
+            animeClickEpisodeId,
+            configuration,
+            cancellationToken,
+            allowSynchronousTranslation: false);
+
+    public Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
+        string animeClickId,
+        int season,
+        int episode,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken,
+        bool allowSynchronousTranslation)
+        => ResolveEpisodeOverviewAsync(
+            animeClickId,
+            season,
+            episode,
+            animeClickEpisodeId: null,
+            configuration,
+            cancellationToken,
+            allowSynchronousTranslation);
 
     public async Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
         string animeClickId,
         int season,
         int episode,
+        string? animeClickEpisodeId,
         PluginConfiguration configuration,
         CancellationToken cancellationToken,
         bool allowSynchronousTranslation)
@@ -75,6 +109,7 @@ public sealed class AnimeClickMetadataFallbackService
         }
 
         var total = Stopwatch.StartNew();
+        long animeClickEpisodeMs = 0;
         long animeMs = 0;
         long tvdbMs = 0;
         long tmdbMs = 0;
@@ -88,13 +123,15 @@ public sealed class AnimeClickMetadataFallbackService
         {
             total.Stop();
             _logger.LogInformation(
-                "AnimeClick episode fallback: id={Id} S{Season}E{Episode} outcome={Outcome} queue={QueueState} elapsedMs={ElapsedMs} animeMs={AnimeMs} tvdbMs={TvdbMs} tmdbMs={TmdbMs} englishMs={EnglishMs} translationMs={TranslationMs}",
+                "AnimeClick episode fallback: id={Id} episodeId={EpisodeId} S{Season}E{Episode} outcome={Outcome} queue={QueueState} elapsedMs={ElapsedMs} animeClickEpisodeMs={AnimeClickEpisodeMs} animeMs={AnimeMs} tvdbMs={TvdbMs} tmdbMs={TmdbMs} englishMs={EnglishMs} translationMs={TranslationMs}",
                 normalizedId,
+                animeClickEpisodeId ?? "<none>",
                 season,
                 episode,
                 outcome,
                 queueState?.ToString() ?? "none",
                 total.ElapsedMilliseconds,
+                animeClickEpisodeMs,
                 animeMs,
                 tvdbMs,
                 tmdbMs,
@@ -106,6 +143,52 @@ public sealed class AnimeClickMetadataFallbackService
         try
         {
             var stage = Stopwatch.StartNew();
+            if (!string.IsNullOrWhiteSpace(animeClickEpisodeId))
+            {
+                try
+                {
+                    var animeClickOverview = await GetAnimeClickEpisodeOverviewAsync(
+                            animeClickEpisodeId,
+                            configuration,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    stage.Stop();
+                    animeClickEpisodeMs = stage.ElapsedMilliseconds;
+                    if (!string.IsNullOrWhiteSpace(animeClickOverview))
+                    {
+                        return Finish(
+                            AnimeClickFallbackResult.NativeItalian(animeClickOverview, "AnimeClick"),
+                            "native-animeclick");
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    stage.Stop();
+                    animeClickEpisodeMs = stage.ElapsedMilliseconds;
+                    _logger.LogDebug(
+                        ex,
+                        "AnimeClick episode detail unavailable for {EpisodeId}; trying configured fallback sources",
+                        animeClickEpisodeId);
+                }
+            }
+            else
+            {
+                stage.Stop();
+            }
+
+            var tvdbConfigured = configuration.EnableTvdbSynopsis
+                && !string.IsNullOrWhiteSpace(configuration.TvdbApiKey);
+            var tmdbConfigured = !string.IsNullOrWhiteSpace(configuration.TmdbApiKey);
+            if (!tvdbConfigured && !tmdbConfigured)
+            {
+                return Finish(null, "no-external-source");
+            }
+
+            stage.Restart();
             var anime = await GetAnimeAsync(normalizedId, configuration, cancellationToken)
                 .ConfigureAwait(false);
             stage.Stop();
@@ -115,14 +198,10 @@ public sealed class AnimeClickMetadataFallbackService
                 return Finish(null, "anime-unavailable");
             }
 
-            var tvdbConfigured = configuration.EnableTvdbSynopsis
-                && !string.IsNullOrWhiteSpace(configuration.TvdbApiKey);
-            var tmdbConfigured = !string.IsNullOrWhiteSpace(configuration.TmdbApiKey);
-
             int? tvdbId = null;
             int? tmdbId = null;
 
-            // 1) Native Italian: TVDB translations, then TMDB it-IT.
+            // 2) Native Italian: TVDB translations, then TMDB it-IT.
             if (tvdbConfigured)
             {
                 stage.Restart();
@@ -197,7 +276,7 @@ public sealed class AnimeClickMetadataFallbackService
                 }
             }
 
-            // 2) English source. Prefer TMDB, then TVDB when enabled.
+            // 3) English source. Prefer TMDB, then TVDB when enabled.
             string? english = null;
             string? sourceIdentity = null;
             string? sourceName = null;
@@ -246,7 +325,7 @@ public sealed class AnimeClickMetadataFallbackService
                 return Finish(null, "no-english-source");
             }
 
-            // 3) A cached cloud translation is safe in the request path.
+            // 4) A cached cloud translation is safe in the request path.
             stage.Restart();
             var translated = await _translationQueue.GetCachedTranslationAsync(
                     english,
@@ -352,6 +431,64 @@ public sealed class AnimeClickMetadataFallbackService
                 episode);
             return Finish(null, "error");
         }
+    }
+
+    private async Task<string?> GetAnimeClickEpisodeOverviewAsync(
+        string episodeProviderId,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (!AnimeClickClient.TryNormalizeAnimeClickId(episodeProviderId, out var normalizedEpisodeId)
+            || !AnimeClickClient.TryBuildEpisodeUrl(
+                configuration.BaseUrl,
+                normalizedEpisodeId,
+                out var episodeUrl))
+        {
+            return null;
+        }
+
+        // Numeric episode IDs are stable when AnimeClick changes a slug. The base
+        // URL remains part of the identity so alternate hosts cannot share content.
+        var stableEpisodeId = normalizedEpisodeId.Split('/', 2)[0];
+        var baseUrlIdentity = configuration.BaseUrl.Trim().TrimEnd('/').ToLowerInvariant();
+        var cacheKey = $"episodeOverview:v2::{baseUrlIdentity}::{stableEpisodeId}";
+        var missCacheKey = cacheKey + "::miss";
+        var cached = await _cache
+            .GetAsync<string>(cacheKey, configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(cached))
+        {
+            return cached;
+        }
+
+        var cachedMiss = await _cache
+            .GetAsync<string>(missCacheKey, configuration.NegativeCacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.Equals(cachedMiss, "empty", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var html = await _client.GetStringAsync(episodeUrl, configuration, cancellationToken)
+            .ConfigureAwait(false);
+        if (!_parser.TryParseEpisodeOverviewPage(html, out var overview))
+        {
+            _logger.LogDebug(
+                "AnimeClick episode page {EpisodeUrl} did not expose the expected description node; miss not cached",
+                episodeUrl);
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(overview))
+        {
+            // Cache only a recognized empty/placeholder response. Network failures,
+            // interstitials and changed markup remain immediately retryable.
+            await _cache.SetAsync(missCacheKey, "empty", cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+
+        await _cache.SetAsync(cacheKey, overview, cancellationToken).ConfigureAwait(false);
+        return overview;
     }
 
     private async Task<AnimeClickAnime?> GetAnimeAsync(

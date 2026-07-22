@@ -71,15 +71,16 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Importa nomi delle sigle (Opening/Ending) nei tag.</summary>
     public bool EnableThemeSongs { get; set; } = true;
 
-    // ── Sinossi episodi IT (TMDB + Ollama Cloud) ──
+    // ── Sinossi episodi IT (AnimeClick + TVDB/TMDB + Ollama Cloud) ──
     /// <summary>
-    /// Abilita la catena per le sinossi episodi: TheTVDB ita → TMDB it-IT →
-    /// TMDB en-US → TheTVDB eng → Ollama Cloud EN→IT. Disattivato di default.
-    /// In caso di errore il campo resta invariato per consentire il fill-gaps.
+    /// Abilita la catena per le sinossi episodi: AnimeClick → TheTVDB ita →
+    /// TMDB it-IT → TMDB en-US → TheTVDB eng → Ollama Cloud EN→IT.
+    /// AnimeClick non richiede API key; Ollama traduce soltanto una sinossi inglese
+    /// ottenuta da TMDB o TheTVDB. In caso di errore il campo resta invariato.
     /// </summary>
     public bool EnableEpisodeSynopsisTranslation { get; set; } = false;
 
-    /// <summary>API key TMDB (themoviedb.org/settings/api). Lascia vuoto per disabilitare la fonte EN.</summary>
+    /// <summary>API key TMDB (themoviedb.org/settings/api). Lascia vuoto per disabilitare TMDB.</summary>
     public string TmdbApiKey { get; set; } = string.Empty;
 
     /// <summary>API key Ollama Cloud (ollama.com/settings/keys). Lascia vuoto per disabilitare la traduzione.</summary>
@@ -136,7 +137,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.4.1.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.4.2.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Applies narrow, idempotent upgrades to persisted settings. User-provided

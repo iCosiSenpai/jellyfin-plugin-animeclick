@@ -49,6 +49,46 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"\b(Special|SP|OAV|OVA|OAD|ONA|PV|NCOP|NCED|Recap|Riassunto|Episode\s*0|Episodio\s*0|Prologo|Pilot|Bonus|Extra|Episodio\s+Speciale)\b", RegexOptions.IgnoreCase)]
     private static partial Regex SpecialTitleRegex();
 
+    [GeneratedRegex(@"^(?:Episodio|Episode|Ep\.?)\s*#?\s*\d+(?:[\.,]\d+)?(?:\s*[-–/]\s*\d+)?[\.!]?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex EpisodeOverviewPlaceholderRegex();
+
+    /// <summary>
+    /// Parses an AnimeClick episode detail page. Only the schema.org description is
+    /// trusted: surrounding page text may contain user comments and must not become
+    /// Jellyfin metadata.
+    /// </summary>
+    public string? ParseEpisodeOverviewPage(string html)
+    {
+        TryParseEpisodeOverviewPage(html, out var overview);
+        return overview;
+    }
+
+    /// <summary>
+    /// Returns true only when the expected description node exists. An empty or
+    /// placeholder description is therefore a recognized miss, while an interstitial
+    /// or changed page shape remains retryable and must not enter negative cache.
+    /// </summary>
+    internal bool TryParseEpisodeOverviewPage(string html, out string? overview)
+    {
+        var doc = new HtmlDocument();
+        doc.LoadHtml(html);
+
+        var descriptionNode = doc.DocumentNode.SelectSingleNode("//*[@itemprop='description']");
+        if (descriptionNode is null)
+        {
+            overview = null;
+            return false;
+        }
+
+        overview = NormalizeWhitespace(descriptionNode.InnerText);
+        if (string.IsNullOrWhiteSpace(overview) || EpisodeOverviewPlaceholderRegex().IsMatch(overview))
+        {
+            overview = null;
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Parses a full anime detail page from AnimeClick.
     /// Uses schema.org microdata and the well-defined dl/dt/dd structure.
