@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -23,7 +22,7 @@ namespace AnimeClick.Plugin.Providers;
 /// </summary>
 public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, EpisodeInfo>, IHasOrder
 {
-    private static readonly ConcurrentDictionary<string, SemaphoreSlim> CacheFillLocks = new(StringComparer.Ordinal);
+    private static readonly SemaphoreStripe CacheFillLocks = new();
 
     private readonly AnimeClickClient _client;
     private readonly AnimeClickCacheService _cache;
@@ -300,9 +299,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
         if (catalog is null || catalog.Episodes.Count == 0)
         {
-            var fillLock = CacheFillLocks.GetOrAdd(
-                "catalog::" + cacheKey,
-                static _ => new SemaphoreSlim(1, 1));
+            var fillLock = CacheFillLocks.Get("catalog::" + cacheKey);
             await fillLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -448,9 +445,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             return cached;
         }
 
-        var fillLock = CacheFillLocks.GetOrAdd(
-            "summary::" + cacheKey,
-            static _ => new SemaphoreSlim(1, 1));
+        var fillLock = CacheFillLocks.Get("summary::" + cacheKey);
         await fillLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {

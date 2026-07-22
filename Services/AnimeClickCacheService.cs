@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
@@ -15,9 +14,11 @@ public class AnimeClickCacheService
         WriteIndented = false
     };
 
-    // Locks are keyed by the final path so read/write and administrative clear operations
-    // synchronize on the same resource even when two logical keys sanitize to one filename.
-    private static readonly ConcurrentDictionary<string, SemaphoreSlim> Locks = new(StringComparer.Ordinal);
+    // Fixed pool of gates keyed by the final path. Read/write and administrative clear
+    // operations synchronize on the same gate even when two logical keys sanitize to one
+    // filename. A per-path dictionary of semaphores is intentionally avoided: it would grow
+    // without limit on a long-running server (one entry per distinct cache key ever touched).
+    private static readonly SemaphoreStripe Locks = new();
 
     // Serializes cache publication against administrative clear operations. Per-key locks
     // alone are insufficient because a clear cannot enumerate a write that is still a .tmp.
@@ -207,8 +208,7 @@ public class AnimeClickCacheService
         }
     }
 
-    private static SemaphoreSlim GetLock(string path)
-        => Locks.GetOrAdd(path, static _ => new SemaphoreSlim(1, 1));
+    private static SemaphoreSlim GetLock(string path) => Locks.Get(path);
 
     private bool DeletePathSynchronized(string path)
     {
