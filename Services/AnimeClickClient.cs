@@ -165,7 +165,7 @@ public partial class AnimeClickClient
     /// </summary>
     internal static string GetEffectiveUserAgent(PluginConfiguration configuration)
     {
-        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(4) ?? "0.4.2.0";
+        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(4) ?? "0.4.3.0";
         var defaultUserAgent =
             $"AnimeClick-Jellyfin-Plugin/{assemblyVersion} (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
         var configured = configuration?.UserAgent?.Trim();

@@ -3,7 +3,7 @@
 (function () {
     'use strict';
 
-    var V = '0.4.2.0';
+    var V = '0.4.3.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
