@@ -7,6 +7,7 @@ obj/
 ## IDE
 .vs/
 .vscode/
+.kiro/
 *.user
 *.suo
 *.sln.docstates
