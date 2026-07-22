@@ -83,7 +83,7 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
             var imageUrl = imgNode?.GetAttributeValue("src", null);
 
             if (!string.IsNullOrWhiteSpace(imageUrl)
-                && TryResolveAllowedImageUri(baseUri, imageUrl, out var resolvedImageUri))
+                && AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, imageUrl, out var resolvedImageUri))
             {
                 imageUrl = resolvedImageUri.AbsoluteUri;
 
@@ -111,38 +111,10 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
         return results;
     }
 
-    private static bool TryResolveAllowedImageUri(Uri baseUri, string imageUrl, out Uri imageUri)
-    {
-        imageUri = null!;
-        if (!Uri.TryCreate(baseUri, imageUrl, out var resolved)
-            || resolved.Scheme != Uri.UriSchemeHttps)
-        {
-            return false;
-        }
-
-        var baseHost = baseUri.IdnHost.TrimEnd('.');
-        var imageHost = resolved.IdnHost.TrimEnd('.');
-        var exactConfiguredHost = string.Equals(baseHost, imageHost, StringComparison.OrdinalIgnoreCase)
-            && baseUri.Port == resolved.Port;
-        var configuredForAnimeClick = string.Equals(baseHost, "animeclick.it", StringComparison.OrdinalIgnoreCase)
-            || baseHost.EndsWith(".animeclick.it", StringComparison.OrdinalIgnoreCase);
-        var officialAnimeClickHost = string.Equals(imageHost, "animeclick.it", StringComparison.OrdinalIgnoreCase)
-            || imageHost.EndsWith(".animeclick.it", StringComparison.OrdinalIgnoreCase);
-        if (!exactConfiguredHost
-            && !(configuredForAnimeClick && officialAnimeClickHost && resolved.Port == 443))
-        {
-            return false;
-        }
-
-        imageUri = resolved;
-        return true;
-    }
-
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
     {
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        if (!Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var baseUri)
-            || !TryResolveAllowedImageUri(baseUri, url, out var imageUri))
+        if (!AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, url, out var imageUri))
         {
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
         }

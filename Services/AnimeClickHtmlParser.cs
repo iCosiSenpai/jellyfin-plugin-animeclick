@@ -25,7 +25,7 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"/episodio/(\d+(?:/[^/?#]+)?)")]
     private static partial Regex EpisodeUrlIdRegex();
 
-    [GeneratedRegex(@"(?:S(?:tagione)?\s*(\d+)\s*(?:E|Ep(?:isodio)?\.?)\s*(.+)|(\d+)\s*[xX]\s*(.+))", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?:S(?:tagione)?\s*(\d+)\s*(?:E|Ep(?:isodio)?\.?)\s*(.+)|(\d+)\s*[xX]\s*(.+))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SeasonEpisodeRegex();
 
     [GeneratedRegex(@"(?<!\d)(\d+)(?:[\.,](\d+))?([A-Za-z])?(?:\s*[-–/]\s*(\d+))?")]
@@ -34,19 +34,19 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"(\d+)")]
     private static partial Regex DigitsRegex();
 
-    [GeneratedRegex(@"(Opening|Ending)\s+(\d+)\s*\|\s*(.+)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(Opening|Ending)\s+(\d+)\s*\|\s*(.+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ThemeSongRegex();
 
-    [GeneratedRegex(@"myanimelist\.net/anime/(\d+)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"myanimelist\.net/anime/(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MalIdRegex();
 
-    [GeneratedRegex(@"anilist\.co/anime/(\d+)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"anilist\.co/anime/(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AniListIdRegex();
 
-    [GeneratedRegex(@"anidb\.net/(?:a|anime/)(\d+)", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"anidb\.net/(?:a|anime/)(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AniDbIdRegex();
 
-    [GeneratedRegex(@"\b(Special|SP|OAV|OVA|OAD|ONA|PV|NCOP|NCED|Recap|Riassunto|Episode\s*0|Episodio\s*0|Prologo|Pilot|Bonus|Extra|Episodio\s+Speciale)\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"\b(Special|SP|OAV|OVA|OAD|ONA|PV|NCOP|NCED|Recap|Riassunto|Episode\s*0|Episodio\s*0|Prologo|Pilot|Bonus|Extra|Episodio\s+Speciale)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SpecialTitleRegex();
 
     [GeneratedRegex(@"^(?:Episodio|Episode|Ep\.?)\s*#?\s*\d+(?:[\.,]\d+)?(?:\s*[-–/]\s*\d+)?[\.!]?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -176,9 +176,15 @@ public partial class AnimeClickHtmlParser
 
         // --- Rating Count ---
         var ratingCountNode = doc.DocumentNode.SelectSingleNode("//span[@itemprop='ratingCount']");
-        if (ratingCountNode is not null && int.TryParse(ratingCountNode.InnerText.Trim(), out var ratingCount))
+        if (ratingCountNode is not null)
         {
-            anime.RatingCount = ratingCount;
+            // Strip thousands separators/labels: rating count is a plain integer count.
+            var ratingCountDigits = new string(ratingCountNode.InnerText.Where(char.IsAsciiDigit).ToArray());
+            if (ratingCountDigits.Length > 0
+                && int.TryParse(ratingCountDigits, NumberStyles.None, CultureInfo.InvariantCulture, out var ratingCount))
+            {
+                anime.RatingCount = ratingCount;
+            }
         }
 
         // --- Genres ---
@@ -259,9 +265,15 @@ public partial class AnimeClickHtmlParser
 
         // --- Episode Count ---
         var episodesText = DtDdValue(doc, "Episodi");
-        if (!string.IsNullOrWhiteSpace(episodesText) && int.TryParse(episodesText.Trim(), out var epCount))
+        if (!string.IsNullOrWhiteSpace(episodesText))
         {
-            anime.EpisodeCount = epCount;
+            // Take the first digit run so decorated values ("24 ep", "24 + 2 special") still parse.
+            var episodesMatch = DigitsRegex().Match(episodesText);
+            if (episodesMatch.Success
+                && int.TryParse(episodesMatch.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var epCount))
+            {
+                anime.EpisodeCount = epCount;
+            }
         }
 
         // --- Seasons Count (Stagioni) ---
@@ -1286,7 +1298,7 @@ public partial class AnimeClickHtmlParser
         => label.Contains("Trailer", StringComparison.OrdinalIgnoreCase)
             || label.Contains("Teaser", StringComparison.OrdinalIgnoreCase)
             || label.Contains("Promo", StringComparison.OrdinalIgnoreCase)
-            || Regex.IsMatch(label, @"\bPV\s*\d*\b", RegexOptions.IgnoreCase);
+            || Regex.IsMatch(label, @"\bPV\s*\d*\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static string? NormalizeYouTubeUrl(string url)
     {
