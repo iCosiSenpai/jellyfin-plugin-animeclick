@@ -15,7 +15,11 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
     public void RegisterServices(IServiceCollection services)
     {
-        services.AddHttpClient<AnimeClickClient>();
+        // Resolve HttpClient through the shared IHttpClientFactory (like every other network
+        // client here) instead of registering a typed client. AddHttpClient<AnimeClickClient>()
+        // keys its options by the type name, which clashes and crashes registration if two
+        // plugin versions are ever loaded at once; a plain singleton avoids that entirely.
+        services.AddSingleton<AnimeClickClient>();
         services.AddSingleton<AnimeClickCacheService>();
         services.AddSingleton<AnimeClickHtmlParser>();
         services.AddSingleton<AnimeClickEpisodeListLoader>();

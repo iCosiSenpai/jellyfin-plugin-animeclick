@@ -16,18 +16,20 @@ public partial class AnimeClickClient
     private const int MaximumRequestDelayMilliseconds = 60_000;
     private const int MaxAttempts = 2;
 
-    // AnimeClickClient is registered as a typed HttpClient and can therefore have multiple
-    // instances (one per singleton provider). The gate must be process-wide or those
-    // instances would bypass the configured delay when Jellyfin refreshes items in parallel.
+    // AnimeClickClient resolves the shared HttpClient through IHttpClientFactory (exactly like
+    // the other network clients) instead of registering a typed client. This keeps the plugin
+    // from adding a type-name-keyed HttpClient registration that would clash if two plugin
+    // versions were ever loaded at once. The gate must stay process-wide, otherwise parallel
+    // Jellyfin refreshes would bypass the configured delay.
     private static readonly SemaphoreSlim RequestGate = new(1, 1);
     private static DateTime _nextRequestUtc = DateTime.MinValue;
 
-    private readonly HttpClient _httpClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AnimeClickClient> _logger;
 
-    public AnimeClickClient(HttpClient httpClient, ILogger<AnimeClickClient> logger)
+    public AnimeClickClient(IHttpClientFactory httpClientFactory, ILogger<AnimeClickClient> logger)
     {
-        _httpClient = httpClient;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -160,6 +162,7 @@ public partial class AnimeClickClient
             MinimumRequestDelayMilliseconds,
             MaximumRequestDelayMilliseconds);
         Exception? lastException = null;
+        var httpClient = _httpClientFactory.CreateClient();
 
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
@@ -187,7 +190,7 @@ public partial class AnimeClickClient
 
                 requestStarted = true;
                 _logger.LogDebug("AnimeClick HTTP fetch: {Url} (attempt {Attempt})", url, attempt + 1);
-                using var response = await _httpClient
+                using var response = await httpClient
                     .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
                     .ConfigureAwait(false);
 
