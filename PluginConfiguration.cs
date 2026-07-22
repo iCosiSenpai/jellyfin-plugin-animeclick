@@ -58,6 +58,13 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Importa titoli italiani degli episodi dalla pagina /episodi.</summary>
     public bool EnableEpisodeTitles { get; set; } = true;
 
+    /// <summary>
+    /// Override avanzati del layout, uno per riga: anime-id=flat,
+    /// anime-id=explicit oppure anime-id=13,24 con confini cumulativi.
+    /// Le righe invalide vengono ignorate e il resolver resta in modalità automatica.
+    /// </summary>
+    public string EpisodeLayoutOverrides { get; set; } = string.Empty;
+
     /// <summary>Crea collezioni automatiche basate su sequel/prequel/spin-off.</summary>
     public bool EnableCollections { get; set; } = false;
 
@@ -129,7 +136,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.4.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.4.1.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Applies narrow, idempotent upgrades to persisted settings. User-provided

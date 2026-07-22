@@ -3,7 +3,7 @@
 (function () {
     'use strict';
 
-    var V = '0.4.0.0';
+    var V = '0.4.1.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -304,20 +304,39 @@
 
     /* ===== navigation ===== */
 
+    function activateTab(tab, shouldFocus) {
+        if (!tab) return;
+        page.querySelectorAll('.ac-tab').forEach(function (item) {
+            var selected = item === tab;
+            item.setAttribute('aria-selected', selected ? 'true' : 'false');
+            item.tabIndex = selected ? 0 : -1;
+        });
+        page.querySelectorAll('.ac-panel').forEach(function (panel) {
+            var selected = panel.dataset.panel === tab.dataset.panel;
+            panel.classList.toggle('active', selected);
+            panel.setAttribute('aria-hidden', selected ? 'false' : 'true');
+        });
+        if (shouldFocus) tab.focus();
+    }
+
     function initTabs() {
-        page.querySelectorAll('.ac-tab').forEach(function (tab) {
+        var tabs = Array.prototype.slice.call(page.querySelectorAll('.ac-tab'));
+        tabs.forEach(function (tab, index) {
             tab.addEventListener('click', function () {
-                page.querySelectorAll('.ac-tab').forEach(function (item) {
-                    item.setAttribute('aria-selected', 'false');
-                });
-                tab.setAttribute('aria-selected', 'true');
-                page.querySelectorAll('.ac-panel').forEach(function (panel) {
-                    panel.classList.remove('active');
-                });
-                var target = page.querySelector('.ac-panel[data-panel="' + tab.dataset.panel + '"]');
-                if (target) target.classList.add('active');
+                activateTab(tab, false);
+            });
+            tab.addEventListener('keydown', function (event) {
+                var nextIndex = null;
+                if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+                if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+                if (event.key === 'Home') nextIndex = 0;
+                if (event.key === 'End') nextIndex = tabs.length - 1;
+                if (nextIndex == null) return;
+                event.preventDefault();
+                activateTab(tabs[nextIndex], true);
             });
         });
+        activateTab(page.querySelector('.ac-tab[aria-selected="true"]') || tabs[0], false);
     }
 
     /* ===== overview ===== */
@@ -499,7 +518,7 @@
         var onboarding = makeCard(
             'Cloud-only',
             'Sinossi episodi italiane, senza GPU sul NAS',
-            'Il plugin cerca prima una traduzione umana già disponibile. Ollama Cloud Free viene usato soltanto come ultimo fallback e le traduzioni sono memorizzate a lungo.'
+            'Il plugin cerca prima una traduzione umana già disponibile. Ollama Cloud viene usato soltanto come ultimo fallback e le traduzioni sono memorizzate a lungo.'
         );
         onboarding.body.appendChild(makeCheck(
             'acEnableEpisodeSynopsisTranslation',
@@ -587,7 +606,7 @@
 
         var advanced = makeDetails(
             'Parametri avanzati cloud e cache',
-            'I valori predefiniti sono ottimizzati per Ollama Cloud Free e per un NAS senza accelerazione GPU.'
+            'I valori predefiniti sono ottimizzati per Ollama Cloud e per un NAS senza accelerazione GPU.'
         );
         advanced.body.appendChild(makeField(
             'acOllamaCloudEndpoint',
@@ -635,7 +654,7 @@
         var fallbackGrid = el('div', 'ac-grid-3');
         fallbackGrid.appendChild(makeField('acFallbackAnimeId', 'ID AnimeClick', 'text', 'Esempio: 72/naruto.', {}, false));
         fallbackGrid.appendChild(makeField('acFallbackSeason', 'Stagione', 'number', '0 per gli special.', { min: '0', value: '1' }, false));
-        fallbackGrid.appendChild(makeField('acFallbackEpisode', 'Episodio', 'number', 'Numero episodio.', { min: '1', value: '1' }, false));
+        fallbackGrid.appendChild(makeField('acFallbackEpisode', 'Episodio', 'number', 'Numero episodio; per gli special usa stagione 0.', { min: '1', value: '1' }, false));
         fallback.body.appendChild(fallbackGrid);
         var fallbackButton = el('button', 'ac-btn', 'Esegui catena salvata');
         fallbackButton.type = 'button';
@@ -686,6 +705,33 @@
         cacheActions.appendChild(cacheResult);
         cache.body.appendChild(cacheActions);
         panel.appendChild(cache.card);
+
+        var episodeLayout = makeDetails(
+            'Resolver episodi e stagioni',
+            'Il resolver v5 usa automaticamente gruppi AnimeClick, timeline canonica e struttura reale della libreria. Inserisci un override soltanto per serie note con layout eccezionale.'
+        );
+        episodeLayout.body.appendChild(makeCallout(
+            'Fail-safe per serie anomale',
+            'Una riga per serie: ID=flat, ID=explicit oppure ID=13,24 con confini cumulativi. Le righe vuote, i commenti con # e le righe non valide vengono ignorati.',
+            'warn'
+        ));
+        var overrideField = makeTextArea(
+            'acEpisodeLayoutOverrides',
+            'Override layout episodi',
+            'Esempi: 72=flat · 123=explicit · 456=13,24. In 13,24 la stagione 1 termina al globale 13 e la stagione 2 al globale 24.'
+        );
+        var overrideInput = overrideField.querySelector('textarea');
+        overrideInput.rows = 7;
+        overrideInput.spellcheck = false;
+        overrideInput.autocomplete = 'off';
+        overrideInput.placeholder = '# Solo per eccezioni confermate\n72=flat\n123=explicit\n456=13,24';
+        episodeLayout.body.appendChild(overrideField);
+        episodeLayout.body.appendChild(el(
+            'p',
+            'ac-field-desc warn',
+            'Un override errato può impedire un match che il resolver automatico avrebbe risolto: preferisci sempre la modalità automatica.'
+        ));
+        panel.appendChild(episodeLayout.details);
 
         var advanced = makeDetails(
             'Ricerca, rete e compatibilità',
@@ -753,6 +799,7 @@
         setChecked('acEnableProductionLocations', config.EnableProductionLocations, true);
         setChecked('acEnableTrailers', config.EnableTrailers, true);
         setChecked('acEnableEpisodeTitles', config.EnableEpisodeTitles, true);
+        setValue('acEpisodeLayoutOverrides', config.EpisodeLayoutOverrides, '');
         setChecked('acEnableThemeSongs', config.EnableThemeSongs, true);
         setChecked('acEnableCollections', config.EnableCollections, false);
 
@@ -797,6 +844,7 @@
         config.EnableProductionLocations = val('acEnableProductionLocations').checked;
         config.EnableTrailers = val('acEnableTrailers').checked;
         config.EnableEpisodeTitles = val('acEnableEpisodeTitles').checked;
+        config.EpisodeLayoutOverrides = val('acEpisodeLayoutOverrides').value.trim();
         config.EnableThemeSongs = val('acEnableThemeSongs').checked;
         config.EnableCollections = val('acEnableCollections').checked;
 

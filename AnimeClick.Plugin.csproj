@@ -7,13 +7,13 @@
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <AssemblyName>AnimeClick.Plugin</AssemblyName>
     <RootNamespace>AnimeClick.Plugin</RootNamespace>
-    <Version>0.4.0.0</Version>
+    <Version>0.4.1.0</Version>
     <AssemblyVersion>$(Version)</AssemblyVersion>
     <FileVersion>$(Version)</FileVersion>
     <InformationalVersion>$(Version)</InformationalVersion>
     <PackageId>AnimeClick.Plugin</PackageId>
     <Authors>Alessio Cosi</Authors>
-    <Description>AnimeClick-first Italian anime metadata provider for Jellyfin with lock-aware authority, semantic enrichment and cloud-only episode synopsis fallback.</Description>
+    <Description>AnimeClick-first Italian anime metadata provider for Jellyfin with robust episode mapping, lock-aware authority and cloud-only synopsis fallback.</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -43,6 +43,8 @@
     <EmbeddedResource Include="Configuration\configPage.html" />
     <None Remove="Web\assets\*.*" />
     <EmbeddedResource Include="Web\assets\*.*" />
+    <None Remove="assets\banner.png;assets\logo.png" />
+    <EmbeddedResource Include="assets\banner.png;assets\logo.png" />
   </ItemGroup>
 
   <ItemGroup>
