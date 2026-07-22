@@ -122,8 +122,6 @@ public sealed class AnimeClickEpisodeLibraryLayout
 
     public IReadOnlyDictionary<int, AnimeClickEpisodeSeasonLayout> Seasons { get; }
 
-    public bool HasSingleRegularSeason => Seasons.Count == 1 && Seasons.ContainsKey(1);
-
     public bool TryGetGlobalOrdinal(
         int seasonNumber,
         int episodeNumber,
