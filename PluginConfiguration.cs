@@ -90,7 +90,7 @@ public class PluginConfiguration : BasePluginConfiguration
     public string OllamaCloudEndpoint { get; set; } = "https://ollama.com/api/chat";
 
     /// <summary>Modello cloud Ollama predefinito per traduzioni brevi EN→IT.</summary>
-    public string OllamaCloudModel { get; set; } = "gemma4:31b-cloud";
+    public string OllamaCloudModel { get; set; } = "gpt-oss:20b-cloud";
 
     /// <summary>
     /// Durata cache traduzioni in ore. Default 10 anni: una traduzione viene invalidata
@@ -145,12 +145,15 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     internal bool ApplyMigrations()
     {
-        if (!string.Equals(OllamaCloudModel, "gemma4:cloud", System.StringComparison.Ordinal))
+        // Move installs still on a previously shipped default to the current default.
+        // Custom model names (anything the user typed) are deliberately left untouched.
+        if (string.Equals(OllamaCloudModel, "gemma4:cloud", System.StringComparison.Ordinal)
+            || string.Equals(OllamaCloudModel, "gemma4:31b-cloud", System.StringComparison.Ordinal))
         {
-            return false;
+            OllamaCloudModel = "gpt-oss:20b-cloud";
+            return true;
         }
 
-        OllamaCloudModel = "gemma4:31b-cloud";
-        return true;
+        return false;
     }
 }

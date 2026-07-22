@@ -573,8 +573,8 @@
             'acOllamaCloudModel',
             'Modello cloud',
             'text',
-            'Consigliato: <strong>gemma4:31b-cloud</strong>. Usa qwen3.5:cloud soltanto come override manuale se il tuo account non abilita Gemma.',
-            { spellcheck: 'false', autocomplete: 'off', placeholder: 'gemma4:31b-cloud' }
+            'Consigliato: <strong>gpt-oss:20b-cloud</strong> (piccolo, economico, buona resa EN→IT). Puoi indicare un altro modello Ollama Cloud (suffisso -cloud), es. gemma4:31b-cloud.',
+            { spellcheck: 'false', autocomplete: 'off', placeholder: 'gpt-oss:20b-cloud' }
         ));
         var modelReset = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Ripristina modello consigliato');
         modelReset.type = 'button';
@@ -813,7 +813,7 @@
             ? 'Chiave salvata — lascia vuoto per mantenerla'
             : 'Inserisci la chiave Ollama Cloud';
         setValue('acOllamaCloudEndpoint', config.OllamaCloudEndpoint, 'https://ollama.com/api/chat');
-        setValue('acOllamaCloudModel', config.OllamaCloudModel, 'gemma4:31b-cloud');
+        setValue('acOllamaCloudModel', config.OllamaCloudModel, 'gpt-oss:20b-cloud');
         setValue('acEpisodeTranslationTimeoutSec', config.EpisodeTranslationTimeoutSec, 30);
         setValue('acTranslationCacheHours', config.TranslationCacheHours, 87600);
 
@@ -868,7 +868,7 @@
             throw new Error('Il profilo Ollama è cambiato sul server: ricarica la pagina o reinserisci la chiave.');
         }
         config.OllamaCloudEndpoint = normalizedOllamaEndpoint;
-        config.OllamaCloudModel = val('acOllamaCloudModel').value.trim() || 'gemma4:31b-cloud';
+        config.OllamaCloudModel = val('acOllamaCloudModel').value.trim() || 'gpt-oss:20b-cloud';
         config.EpisodeTranslationTimeoutSec = parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 30;
         config.TranslationCacheHours = parseInt(val('acTranslationCacheHours').value, 10) || 87600;
 
@@ -1105,7 +1105,7 @@
         }
 
         var payload = {
-            model: val('acOllamaCloudModel').value.trim() || 'gemma4:31b-cloud',
+            model: val('acOllamaCloudModel').value.trim() || 'gpt-oss:20b-cloud',
             timeoutSec: parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 30
         };
         var enteredApiKey = val('acOllamaCloudApiKey').value.trim();
@@ -1279,7 +1279,7 @@
         });
 
         page.querySelector('#acBtnRecommendedModel').addEventListener('click', function () {
-            val('acOllamaCloudModel').value = 'gemma4:31b-cloud';
+            val('acOllamaCloudModel').value = 'gpt-oss:20b-cloud';
             markDirty();
             toast('Modello consigliato ripristinato', 'success');
         });
