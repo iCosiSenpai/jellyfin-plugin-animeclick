@@ -85,14 +85,17 @@ jobs:
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            AnimeClick mantiene l'autorità dei metadati italiani e aggiunge il resolver
-            episodi v5: catalogo raw separato, topology Jellyfin fresca, matching
-            fail-safe per stagioni non uniformi, special, E0, decimali, suffissi e range.
+            AnimeClick diventa la prima fonte anche per le sinossi degli episodi:
+            legge esclusivamente la descrizione editoriale della pagina episodio e
+            ignora campi vuoti, segnaposto generici e commenti degli utenti.
 
-            Le sinossi episodi seguono la catena TVDB ita → TMDB it-IT → sorgente EN →
-            Ollama Cloud EN→IT. Ollama usa `gemma4:31b-cloud` come default, coda
-            asincrona a concorrenza globale 1 e cache content-addressed. La dashboard
-            include override layout avanzati, hero/banner aggiornato e diagnostica estesa.
+            La catena completa è AnimeClick → TheTVDB ita → TMDB it-IT →
+            TMDB en-US → TheTVDB eng → Ollama Cloud EN→IT. Titoli e sinossi
+            restano indipendenti e la modalità solo AnimeClick non richiede API key.
+
+            Include cache positiva/negativa sicura, diagnostica aggiornata e un README
+            completamente riscritto per l'utente finale, con tutorial Ollama e note sullo
+            scraping etico autorizzato da AnimeClick per uso non commerciale.
 
             **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
             **Versione:** `${{ env.VERSION }}`

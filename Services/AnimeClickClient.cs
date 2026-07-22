@@ -99,13 +99,34 @@ public partial class AnimeClickClient
         return true;
     }
 
+    /// <summary>Attempts to build a canonical episode detail URL from its provider ID.</summary>
+    public static bool TryBuildEpisodeUrl(string? baseUrl, string? episodeProviderId, out string url)
+    {
+        url = string.Empty;
+        if (string.IsNullOrWhiteSpace(baseUrl)
+            || !Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var baseUri)
+            || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)
+            || !TryNormalizeAnimeClickId(episodeProviderId, out var id))
+        {
+            return false;
+        }
+
+        if (!id.Contains('/', StringComparison.Ordinal))
+        {
+            id += "/x";
+        }
+
+        url = new Uri(baseUri, "episodio/" + id).AbsoluteUri;
+        return true;
+    }
+
     /// <summary>
     /// Returns a UA string with the assembly version, replacing only the plugin token
     /// instead of relying on the configured version having a fixed string length.
     /// </summary>
     internal static string GetEffectiveUserAgent(PluginConfiguration configuration)
     {
-        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(4) ?? "0.4.1.0";
+        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(4) ?? "0.4.2.0";
         var defaultUserAgent =
             $"AnimeClick-Jellyfin-Plugin/{assemblyVersion} (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
         var configured = configuration?.UserAgent?.Trim();
