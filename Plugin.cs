@@ -40,7 +40,13 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = Name,
-                EmbeddedResourcePath = ns + ".Configuration.configPage.html"
+                EmbeddedResourcePath = ns + ".Configuration.configPage.html",
+
+                // Show the plugin in the dashboard's left drawer. NOTE: Jellyfin 10.11's web
+                // client renders every plugin menu entry with a fixed Material "folder" icon
+                // and ignores PluginPageInfo.MenuIcon, so a custom AnimeClick logo in the
+                // sidebar is not achievable on this server version.
+                EnableInMainMenu = true
             },
             // Shared assets (served via /web/configurationpage?name=...)
             new PluginPageInfo { Name = "AnimeClickCss", EmbeddedResourcePath = ns + ".Web.assets.animeclick.css" },

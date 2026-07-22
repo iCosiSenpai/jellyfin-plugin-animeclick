@@ -775,11 +775,12 @@
 .ac-support-repo img {
     width: 100%;
     max-width: none;
-    height: 78px;
-    max-height: none;
+    height: auto;
+    max-height: 140px;
     border-radius: var(--ac-r-m) var(--ac-r-m) 0 0;
-    object-fit: cover;
-    object-position: center 43%;
+    object-fit: contain;
+    object-position: center;
+    background: var(--ac-surface-3);
 }
 .ac-support-repo span { padding: 0 12px; }
 
