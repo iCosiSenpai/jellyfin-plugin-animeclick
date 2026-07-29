@@ -23,6 +23,7 @@ public class AnimeClickAniListResolver
 {
     private const double MinimumTitleSimilarity = 0.80;
     private const double AmbiguityMargin = 0.05;
+    private const long MaximumResponseBytes = 4 * 1024 * 1024;
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
@@ -185,6 +186,7 @@ public class AnimeClickAniListResolver
 
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(8);
+            client.MaxResponseContentBufferSize = MaximumResponseBytes;
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://graphql.anilist.co")
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
@@ -192,7 +194,13 @@ public class AnimeClickAniListResolver
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogDebug("AniListResolver: AniList returned {Status} for {Title}", response.StatusCode, title);
+                // 429 is the common one: AniList allows ~90 requests/minute and a library scan
+                // can exceed that. The miss is deliberately not cached, so the next scan
+                // retries — which is only diagnosable if the throttling is actually visible.
+                _logger.LogWarning(
+                    "AniListResolver: AniList returned {Status} for {Title}",
+                    response.StatusCode,
+                    title);
                 return AniListQueryResult.Incomplete;
             }
 

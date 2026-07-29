@@ -32,6 +32,12 @@ namespace AnimeClick.Plugin.Providers;
 /// </summary>
 public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
 {
+    // 4 KB was not enough: a JPEG with an EXIF (APP1) or ICC profile (APP2) segment pushes the
+    // SOFn marker that carries the dimensions well past it, so the probe hit end-of-stream and
+    // reported failure for a whole class of posters. 64 KB covers those and is still a range
+    // request, not a full download.
+    private const int ProbePrefixBytes = 64 * 1024;
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickClient _client;
     private readonly AnimeClickCacheService _cache;
@@ -148,7 +154,15 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
             else
             {
                 (width, height) = await ProbePosterDimensionsAsync(imageUrl, configuration, cancellationToken);
-                await _cache.SetAsync(dimCacheKey, new ImageDim { W = width, H = height }, cancellationToken);
+
+                // Only a successful probe is cached. A 403, a timeout or an unrecognised
+                // header used to be stored as (0,0) for a week, and since width == 0 skips
+                // the MinPosterWidth check below, one transient failure disabled the
+                // low-resolution filter for that poster until the entry lapsed.
+                if (width > 0)
+                {
+                    await _cache.SetAsync(dimCacheKey, new ImageDim { W = width, H = height }, cancellationToken);
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -184,7 +198,7 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
     {
         var client = _httpClientFactory.CreateClient();
         var request = new HttpRequestMessage(HttpMethod.Get, new Uri(imageUrl));
-        request.Headers.Range = new RangeHeaderValue(0, 4095); // header only
+        request.Headers.Range = new RangeHeaderValue(0, ProbePrefixBytes - 1); // header only
         request.Headers.TryAddWithoutValidation(
             "User-Agent",
             AnimeClickClient.GetEffectiveUserAgent(configuration));
@@ -204,7 +218,7 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
 
             // Read a safe prefix into memory (handles non-seekable streams from HttpContent)
-            var prefix = new byte[4096];
+            var prefix = new byte[ProbePrefixBytes];
             int total = 0;
             while (total < prefix.Length)
             {

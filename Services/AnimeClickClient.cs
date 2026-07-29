@@ -23,6 +23,14 @@ public partial class AnimeClickClient
     // until Jellyfin restarts, with the requests hanging on the gate instead of failing.
     private const int MaximumServerBackoffMilliseconds = 15 * 60 * 1000;
 
+    // The factory's default client has no timeout of its own, so without these two the plugin
+    // inherited HttpClient's 100 s per request and an unbounded response body. An AnimeClick
+    // page is a few hundred KB: a request that needs more than half a minute, or a body of
+    // several MB, is a fault to surface rather than something to keep buffering into memory
+    // on a NAS.
+    private const int RequestTimeoutSeconds = 30;
+    private const long MaximumResponseBytes = 8 * 1024 * 1024;
+
     // AnimeClickClient resolves the shared HttpClient through IHttpClientFactory (exactly like
     // the other network clients) instead of registering a typed client. This keeps the plugin
     // from adding a type-name-keyed HttpClient registration that would clash if two plugin
@@ -207,6 +215,8 @@ public partial class AnimeClickClient
             MaximumRequestDelayMilliseconds);
         Exception? lastException = null;
         var httpClient = _httpClientFactory.CreateClient();
+        httpClient.Timeout = TimeSpan.FromSeconds(RequestTimeoutSeconds);
+        httpClient.MaxResponseContentBufferSize = MaximumResponseBytes;
 
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {

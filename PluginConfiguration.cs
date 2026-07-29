@@ -156,4 +156,64 @@ public class PluginConfiguration : BasePluginConfiguration
 
         return false;
     }
+
+    /// <summary>
+    /// Forces every numeric setting into a usable range and the base URL into an absolute
+    /// HTTP(S) form, returning whether anything had to be corrected. Applied both on load and
+    /// on save, because the configuration endpoint accepts whatever the client sends and the
+    /// only previous validation lived in the configuration page's JavaScript.
+    /// Secrets, model names and boolean toggles are never touched.
+    /// </summary>
+    internal bool Sanitize()
+    {
+        var original = (
+            MinPosterWidth,
+            TranslationCacheHours,
+            EpisodeTranslationTimeoutSec,
+            MaxSearchResults,
+            CacheHours,
+            NegativeCacheHours,
+            RequestDelayMilliseconds,
+            BaseUrl);
+
+        MinPosterWidth = ConfigurationLimits.Clamp(
+            MinPosterWidth,
+            ConfigurationLimits.MinPosterWidthMinimum,
+            ConfigurationLimits.MinPosterWidthMaximum);
+        TranslationCacheHours = ConfigurationLimits.Clamp(
+            TranslationCacheHours,
+            ConfigurationLimits.TranslationCacheHoursMinimum,
+            ConfigurationLimits.TranslationCacheHoursMaximum);
+        EpisodeTranslationTimeoutSec = ConfigurationLimits.Clamp(
+            EpisodeTranslationTimeoutSec,
+            ConfigurationLimits.TranslationTimeoutMinimum,
+            ConfigurationLimits.TranslationTimeoutMaximum);
+        MaxSearchResults = ConfigurationLimits.Clamp(
+            MaxSearchResults,
+            ConfigurationLimits.MaxSearchResultsMinimum,
+            ConfigurationLimits.MaxSearchResultsMaximum);
+        CacheHours = ConfigurationLimits.Clamp(
+            CacheHours,
+            ConfigurationLimits.CacheHoursMinimum,
+            ConfigurationLimits.CacheHoursMaximum);
+        NegativeCacheHours = ConfigurationLimits.Clamp(
+            NegativeCacheHours,
+            ConfigurationLimits.NegativeCacheHoursMinimum,
+            ConfigurationLimits.NegativeCacheHoursMaximum);
+        RequestDelayMilliseconds = ConfigurationLimits.Clamp(
+            RequestDelayMilliseconds,
+            ConfigurationLimits.RequestDelayMinimum,
+            ConfigurationLimits.RequestDelayMaximum);
+        BaseUrl = ConfigurationLimits.NormalizeBaseUrl(BaseUrl);
+
+        return original != (
+            MinPosterWidth,
+            TranslationCacheHours,
+            EpisodeTranslationTimeoutSec,
+            MaxSearchResults,
+            CacheHours,
+            NegativeCacheHours,
+            RequestDelayMilliseconds,
+            BaseUrl);
+    }
 }

@@ -33,6 +33,14 @@ public class AnimeClickTvdbClient
 {
     private const string BaseUrl = "https://api4.thetvdb.com/v4";
     private const string TestQuery = "Naruto";
+    private const int ApiTimeoutSeconds = 30;
+    private const long MaximumResponseBytes = 8 * 1024 * 1024;
+
+    // Whole-operation budget for one episode-list fetch. Timeouts are per request, so the
+    // pagination loop below could otherwise spend PageLimit x ApiTimeoutSeconds — nearly an
+    // hour — inside a single GetEpisodeOverviewAsync while holding its single-flight gate.
+    private const int EpisodeFetchBudgetSeconds = 180;
+    private const int PageLimit = 100;
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
@@ -61,9 +69,8 @@ public class AnimeClickTvdbClient
             return null;
         }
 
-        var apiKeyHash = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(configuration.TvdbApiKey)))[..16];
-        var tokenCacheKey = $"tvdbToken::{apiKeyHash}";
+        var apiKeyHash = ApiKeyHash(configuration.TvdbApiKey);
+        var tokenCacheKey = TokenCacheKey(configuration.TvdbApiKey);
         var cached = await _cache
             .GetAsync<string?>(tokenCacheKey, 24, cancellationToken)
             .ConfigureAwait(false);
@@ -93,7 +100,11 @@ public class AnimeClickTvdbClient
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogDebug("TvdbClient: login returned {Status}", response.StatusCode);
+                // An unusable API key is a configuration problem the user must see: at Debug
+                // it looked exactly like "AnimeClick has no synopsis for this episode".
+                _logger.LogWarning(
+                    "TvdbClient: login returned {Status}; check the TVDB API key in the plugin settings",
+                    response.StatusCode);
                 return null;
             }
 
@@ -113,7 +124,7 @@ public class AnimeClickTvdbClient
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("TvdbClient: login failed: {Message}", ex.Message);
+            _logger.LogWarning(ex, "TvdbClient: login failed");
             return null;
         }
         finally
@@ -449,6 +460,12 @@ public class AnimeClickTvdbClient
                 return ExternalIdLookupResult.ConfirmedMiss;
             }
 
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                InvalidateToken(configuration);
+                return ExternalIdLookupResult.Incomplete;
+            }
+
             response.EnsureSuccessStatusCode();
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             return TryParseFirstSeriesId(json, year, out var id)
@@ -461,7 +478,7 @@ public class AnimeClickTvdbClient
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("TvdbClient: search failed for \"{Title}\": {Message}", title, ex.Message);
+            _logger.LogWarning(ex, "TvdbClient: search failed for \"{Title}\"", title);
             return ExternalIdLookupResult.Incomplete;
         }
     }
@@ -471,26 +488,35 @@ public class AnimeClickTvdbClient
         PluginConfiguration configuration, CancellationToken cancellationToken)
     {
         var all = new List<TvdbEpisodeRecord>();
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(EpisodeFetchBudgetSeconds));
+        var budgetToken = budget.Token;
         try
         {
             var client = BuildClient(configuration);
-            for (var page = 0; page < 100; page++)
+            for (var page = 0; page < PageLimit; page++)
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, BuildEpisodesUrl(tvdbId, lang, page));
                 request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
 
-                using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                using var response = await client.SendAsync(request, budgetToken).ConfigureAwait(false);
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
                     return new TvdbEpisodeFetchResult(all, true);
                 }
 
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    InvalidateToken(configuration);
+                    return new TvdbEpisodeFetchResult(all, false);
+                }
+
                 response.EnsureSuccessStatusCode();
-                var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                var json = await response.Content.ReadAsStringAsync(budgetToken).ConfigureAwait(false);
                 if (!TryParseEpisodesFromPage(json, out var pageRecords))
                 {
-                    _logger.LogDebug(
-                        "TvdbClient: invalid episode page for tvdb={Tvdb} lang={Lang} page={Page}",
+                    _logger.LogWarning(
+                        "TvdbClient: invalid episode page for tvdb={Tvdb} lang={Lang} page={Page}; TVDB's response shape may have changed",
                         tvdbId,
                         lang,
                         page);
@@ -511,8 +537,9 @@ public class AnimeClickTvdbClient
 
             // A next link after the safety limit means the list is partial and must
             // neither be used nor cached as a confirmed result.
-            _logger.LogDebug(
-                "TvdbClient: episode pagination exceeded safety limit for tvdb={Tvdb} lang={Lang}",
+            _logger.LogWarning(
+                "TvdbClient: episode pagination exceeded the {Limit}-page safety limit for tvdb={Tvdb} lang={Lang}",
+                PageLimit,
                 tvdbId,
                 lang);
             return new TvdbEpisodeFetchResult(all, false);
@@ -521,10 +548,22 @@ public class AnimeClickTvdbClient
         {
             throw;
         }
+        catch (OperationCanceledException)
+        {
+            // Either one request hit ApiTimeoutSeconds or the whole fetch hit its budget.
+            // Partial pages are returned but never marked complete, so they are not cached.
+            _logger.LogWarning(
+                "TvdbClient: episode list for tvdb={Tvdb} lang={Lang} timed out after {Count} rows (per-request {Timeout}s, overall {Budget}s)",
+                tvdbId,
+                lang,
+                all.Count,
+                ApiTimeoutSeconds,
+                EpisodeFetchBudgetSeconds);
+            return new TvdbEpisodeFetchResult(all, false);
+        }
         catch (Exception ex)
         {
-            _logger.LogDebug("TvdbClient: episode list fetch failed for tvdb={Tvdb} lang={Lang}: {Message}",
-                tvdbId, lang, ex.Message);
+            _logger.LogWarning(ex, "TvdbClient: episode list fetch failed for tvdb={Tvdb} lang={Lang}", tvdbId, lang);
             return new TvdbEpisodeFetchResult(all, false);
         }
     }
@@ -533,6 +572,28 @@ public class AnimeClickTvdbClient
 
     private SemaphoreSlim GetSingleFlight(string key)
         => _singleFlight.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
+
+    private static string ApiKeyHash(string apiKey)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)))[..16];
+
+    private static string TokenCacheKey(string apiKey) => $"tvdbToken::{ApiKeyHash(apiKey)}";
+
+    /// <summary>
+    /// Discards the cached bearer token so the next call logs in again. Without this, a token
+    /// TVDB has expired or revoked kept being replayed for the rest of its 24h cache window
+    /// and every synopsis failed with nothing above Debug in the log to explain why.
+    /// </summary>
+    private void InvalidateToken(PluginConfiguration configuration)
+    {
+        if (string.IsNullOrWhiteSpace(configuration.TvdbApiKey))
+        {
+            return;
+        }
+
+        _cache.ClearKey(TokenCacheKey(configuration.TvdbApiKey));
+        _logger.LogWarning(
+            "TvdbClient: TVDB rejected the cached token (401); discarded, the next request will log in again");
+    }
 
     private sealed record ExternalIdLookupResult(int? Id, bool Completed)
     {
@@ -543,8 +604,14 @@ public class AnimeClickTvdbClient
     private HttpClient BuildClient(PluginConfiguration configuration)
     {
         var client = _httpClientFactory.CreateClient();
-        client.Timeout = TimeSpan.FromSeconds(
-            Math.Clamp(configuration.EpisodeTranslationTimeoutSec, 5, 120));
+
+        // Deliberately not EpisodeTranslationTimeoutSec: that setting is the budget for one
+        // Ollama translation call, and using it here meant a user who raised it for a slow
+        // model also allowed a single TVDB request to hang for up to two minutes. TVDB is a
+        // plain JSON API; 30 s matches that setting's own default, so behaviour is unchanged
+        // for anyone who left it alone.
+        client.Timeout = TimeSpan.FromSeconds(ApiTimeoutSeconds);
+        client.MaxResponseContentBufferSize = MaximumResponseBytes;
         client.DefaultRequestHeaders.TryAddWithoutValidation(
             "User-Agent",
             AnimeClickClient.GetEffectiveUserAgent(configuration));

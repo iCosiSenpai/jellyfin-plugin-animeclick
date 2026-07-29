@@ -26,6 +26,13 @@ namespace AnimeClick.Plugin.Services;
 public class AnimeClickTmdbClient
 {
     private const string BaseUrl = "https://api.themoviedb.org/3";
+    private const int ApiTimeoutSeconds = 15;
+    private const int DiagnosticsTimeoutSeconds = 30;
+
+    // TMDB returns small JSON documents. Without a cap the plugin would buffer whatever the
+    // endpoint sends into memory, which on a NAS is the difference between a failed lookup
+    // and a dead Jellyfin process.
+    private const long MaximumResponseBytes = 8 * 1024 * 1024;
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
@@ -241,13 +248,13 @@ public class AnimeClickTmdbClient
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(
-                "TmdbClient: explicit episode translation fetch failed for tmdb={Tmdb} S{Season}E{Episode} lang={Language}: {Message}",
+            _logger.LogWarning(
+                ex,
+                "TmdbClient: explicit episode translation fetch failed for tmdb={Tmdb} S{Season}E{Episode} lang={Language}",
                 tmdbId,
                 season,
                 episode,
-                normalizedLanguage,
-                ex.Message);
+                normalizedLanguage);
             return null;
         }
     }
@@ -260,11 +267,7 @@ public class AnimeClickTmdbClient
     {
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(15);
-            client.DefaultRequestHeaders.TryAddWithoutValidation(
-                "User-Agent",
-                AnimeClickClient.GetEffectiveUserAgent(configuration));
+            var client = BuildClient(configuration);
 
             using var response = await client
                 .GetAsync(BuildSearchTvUrl(configuration.TmdbApiKey, title, year), cancellationToken)
@@ -272,6 +275,13 @@ public class AnimeClickTmdbClient
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 return ExternalIdLookupResult.ConfirmedMiss;
+            }
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _logger.LogWarning(
+                    "TmdbClient: TMDB rejected the API key (401); check it in the plugin settings");
+                return ExternalIdLookupResult.Incomplete;
             }
 
             response.EnsureSuccessStatusCode();
@@ -286,7 +296,7 @@ public class AnimeClickTmdbClient
         }
         catch (Exception ex)
         {
-            _logger.LogDebug("TmdbClient: search/tv failed for \"{Title}\": {Message}", title, ex.Message);
+            _logger.LogWarning(ex, "TmdbClient: search/tv failed for \"{Title}\"", title);
             return ExternalIdLookupResult.Incomplete;
         }
     }
@@ -300,11 +310,7 @@ public class AnimeClickTmdbClient
     {
         try
         {
-            var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(15);
-            client.DefaultRequestHeaders.TryAddWithoutValidation(
-                "User-Agent",
-                AnimeClickClient.GetEffectiveUserAgent(configuration));
+            var client = BuildClient(configuration);
 
             using var response = await client
                 .GetAsync(
@@ -318,6 +324,13 @@ public class AnimeClickTmdbClient
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 return EpisodeTranslationsFetchResult.ConfirmedEmpty;
+            }
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _logger.LogWarning(
+                    "TmdbClient: TMDB rejected the API key (401); check it in the plugin settings");
+                return EpisodeTranslationsFetchResult.Incomplete;
             }
 
             response.EnsureSuccessStatusCode();
@@ -337,14 +350,25 @@ public class AnimeClickTmdbClient
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(
-                "TmdbClient: episode translations request failed for tmdb={Tmdb} S{Season}E{Episode}: {Message}",
+            _logger.LogWarning(
+                ex,
+                "TmdbClient: episode translations request failed for tmdb={Tmdb} S{Season}E{Episode}",
                 tmdbId,
                 season,
-                episode,
-                ex.Message);
+                episode);
             return EpisodeTranslationsFetchResult.Incomplete;
         }
+    }
+
+    private HttpClient BuildClient(PluginConfiguration configuration)
+    {
+        var client = _httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(ApiTimeoutSeconds);
+        client.MaxResponseContentBufferSize = MaximumResponseBytes;
+        client.DefaultRequestHeaders.TryAddWithoutValidation(
+            "User-Agent",
+            AnimeClickClient.GetEffectiveUserAgent(configuration));
+        return client;
     }
 
     private static bool TryValidateEpisodeTranslationsPayload(
@@ -534,7 +558,8 @@ public class AnimeClickTmdbClient
         try
         {
             var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(30);
+            client.Timeout = TimeSpan.FromSeconds(DiagnosticsTimeoutSeconds);
+            client.MaxResponseContentBufferSize = MaximumResponseBytes;
             client.DefaultRequestHeaders.UserAgent.ParseAdd("AnimeClick-Jellyfin-Plugin/diagnostics");
 
             var url = BuildSearchTvUrl(apiKey, "Boku no Kokoro", 2023);

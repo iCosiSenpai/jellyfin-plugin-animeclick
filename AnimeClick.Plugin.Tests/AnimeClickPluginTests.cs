@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Net;
 using System.Net.Http.Headers;
+using AnimeClick.Plugin.Configuration;
 using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
@@ -1040,6 +1041,47 @@ public class AnimeClickPluginTests
         "A relative thumbnail must still resolve against the configured base URL.");
     Assert(results.Single(result => result.Title == "Insecure").ThumbnailUrl is null,
         "A plain-HTTP thumbnail must be dropped rather than downgraded.");
+}
+
+    [Xunit.Fact(DisplayName = "Configuration bounds clamp out-of-range values")]
+    public void TestConfigurationLimitsClampNumbers()
+{
+    // The configuration endpoint deserializes the request body straight onto the settings
+    // object, so these bounds are the only server-side gate; the page's JS is bypassable.
+    Assert(ConfigurationLimits.Clamp(-1, ConfigurationLimits.RequestDelayMinimum, ConfigurationLimits.RequestDelayMaximum)
+           == ConfigurationLimits.RequestDelayMinimum,
+        "A negative request delay must be raised to the minimum.");
+    Assert(ConfigurationLimits.Clamp(int.MaxValue, ConfigurationLimits.RequestDelayMinimum, ConfigurationLimits.RequestDelayMaximum)
+           == ConfigurationLimits.RequestDelayMaximum,
+        "An absurd request delay must be capped.");
+    Assert(ConfigurationLimits.Clamp(0, ConfigurationLimits.MaxSearchResultsMinimum, ConfigurationLimits.MaxSearchResultsMaximum)
+           == ConfigurationLimits.MaxSearchResultsMinimum,
+        "Zero search results must become at least one.");
+    Assert(ConfigurationLimits.Clamp(10, ConfigurationLimits.MaxSearchResultsMinimum, ConfigurationLimits.MaxSearchResultsMaximum) == 10,
+        "A value already in range must be left alone.");
+    Assert(ConfigurationLimits.Clamp(0, ConfigurationLimits.NegativeCacheHoursMinimum, ConfigurationLimits.NegativeCacheHoursMaximum) == 0,
+        "Zero negative-cache hours is a deliberate choice and must survive.");
+    Assert(ConfigurationLimits.Clamp(5, 10, 1) == 5,
+        "An inverted range must be tolerated rather than throw.");
+}
+
+    [Xunit.Fact(DisplayName = "Base URL is normalized or replaced by the default")]
+    public void TestConfigurationLimitsNormalizeBaseUrl()
+{
+    Assert(ConfigurationLimits.NormalizeBaseUrl("https://www.animeclick.it") == ConfigurationLimits.DefaultBaseUrl,
+        "The default base URL must round-trip unchanged, so a normal install is not rewritten on every start.");
+    Assert(ConfigurationLimits.NormalizeBaseUrl("  https://www.animeclick.it/  ") == ConfigurationLimits.DefaultBaseUrl,
+        "Whitespace and a trailing slash must be normalized away.");
+    Assert(ConfigurationLimits.NormalizeBaseUrl("https://mirror.example:8443/ac") == "https://mirror.example:8443/ac",
+        "A custom host, port and path must be preserved.");
+    Assert(ConfigurationLimits.NormalizeBaseUrl("non-un-url") == ConfigurationLimits.DefaultBaseUrl,
+        "A value that is not a URL must fall back to the default.");
+    Assert(ConfigurationLimits.NormalizeBaseUrl("file:///etc/passwd") == ConfigurationLimits.DefaultBaseUrl,
+        "A non-HTTP scheme must fall back to the default.");
+    Assert(ConfigurationLimits.NormalizeBaseUrl("/anime/72") == ConfigurationLimits.DefaultBaseUrl,
+        "A relative value must fall back to the default: every scraping URL is built on this.");
+    Assert(ConfigurationLimits.NormalizeBaseUrl(null) == ConfigurationLimits.DefaultBaseUrl,
+        "A missing base URL must fall back to the default.");
 }
 
     private static void Assert(bool condition, string message)
