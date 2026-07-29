@@ -46,8 +46,15 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"anidb\.net/(?:a|anime/)(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AniDbIdRegex();
 
-    [GeneratedRegex(@"\b(Special|SP|OAV|OVA|OAD|ONA|PV|NCOP|NCED|Recap|Riassunto|Episode\s*0|Episodio\s*0|Prologo|Pilot|Bonus|Extra|Episodio\s+Speciale)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    // "Special[ei]?" also covers the Italian "Speciale"/"Speciali", which plain \bSpecial\b
+    // does not: the word boundary fails before the trailing vowel, so rows labelled
+    // "Speciale ..." used to be classified as regular episodes.
+    [GeneratedRegex(@"\b(Special[ei]?|SP|OAV|OVA|OAD|ONA|PV|NCOP|NCED|Recap|Riassunto|Riepilogo|Sigla|Episode\s*0|Episodio\s*0|Prologo|Pilot|Bonus|Extra)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SpecialTitleRegex();
+
+    /// <summary>Matches an explicit episode marker followed by a number, e.g. "Ep. 01".</summary>
+    [GeneratedRegex(@"\b(?:E|Ep|Eps|Episodio|Episode|Puntata)\.?\s*#?\s*\d", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex EpisodeMarkerRegex();
 
     [GeneratedRegex(@"^(?:Episodio|Episode|Ep\.?)\s*#?\s*\d+(?:[\.,]\d+)?(?:\s*[-–/]\s*\d+)?[\.!]?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex EpisodeOverviewPlaceholderRegex();
@@ -375,7 +382,7 @@ public partial class AnimeClickHtmlParser
                 var urlNode = actorNode.SelectSingleNode(".//a[@itemprop='url']");
                 var actorId = urlNode?.GetAttributeValue("href", null);
                 var imageUrl = actorNode.SelectSingleNode(".//img")?.GetAttributeValue("src", null);
-                imageUrl = ToSafePersonImageUrl(baseUrl, imageUrl);
+                imageUrl = ToSafeImageUrl(baseUrl, imageUrl);
 
                 people.Add(new AnimeClickPerson
                 {
@@ -481,7 +488,7 @@ public partial class AnimeClickHtmlParser
                 var actorId = nameNode.GetAttributeValue("href", null);
                 var mediaNode = nameNode.SelectSingleNode("ancestor::div[contains(@class, 'media')][1]");
                 var imageUrl = mediaNode?.SelectSingleNode(".//img")?.GetAttributeValue("src", null);
-                imageUrl = ToSafePersonImageUrl(baseUrl, imageUrl);
+                imageUrl = ToSafeImageUrl(baseUrl, imageUrl);
 
                 people.Add(new AnimeClickPerson
                 {
@@ -539,13 +546,11 @@ public partial class AnimeClickHtmlParser
             var title = NormalizeWhitespace(linkNode.InnerText) ?? string.Empty;
             var id = ExtractId(href);
 
-            // Thumbnail
+            // Thumbnail. Validated against the configured host: this URL is handed to Jellyfin
+            // as RemoteSearchResult.ImageUrl and fetched server-side, so an absolute src
+            // pointing anywhere would otherwise become an arbitrary outbound request.
             var imgNode = item.SelectSingleNode(".//img");
-            var thumbnailUrl = imgNode?.GetAttributeValue("src", null);
-            if (thumbnailUrl is not null && !thumbnailUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-            {
-                thumbnailUrl = baseUrl + thumbnailUrl;
-            }
+            var thumbnailUrl = ToSafeImageUrl(baseUrl, imgNode?.GetAttributeValue("src", null));
 
             // Year from <li>anno inizio: 2002</li>
             int? year = null;
@@ -631,7 +636,12 @@ public partial class AnimeClickHtmlParser
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    private static string? ToSafePersonImageUrl(string baseUrl, string? url)
+    /// <summary>
+    /// Resolves a scraped image URL against the configured base and confirms it targets an
+    /// allowed host over HTTPS, returning null otherwise. Every image URL the parser hands
+    /// back is fetched server-side by Jellyfin, so none of them may point anywhere else.
+    /// </summary>
+    private static string? ToSafeImageUrl(string baseUrl, string? url)
     {
         if (string.IsNullOrWhiteSpace(url)
             || !Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var baseUri)
@@ -935,6 +945,23 @@ public partial class AnimeClickHtmlParser
             return;
         }
 
+        // EpisodeTokenRegex takes the first run of digits wherever it sits, so a label with no
+        // season and no episode marker whose first number is a calendar year ("Speciale
+        // natalizio 2015") used to become episode 2015. Treat it as non-standard instead: it is
+        // then classified as a special and never enters the canonical timeline, where it would
+        // push the following episodes down a slot on a page that mixes seasoned and unseasoned
+        // rows, and would break the equal-split hint on a flat one. A label that is *only* the
+        // number is still honoured, so genuinely long-running series keep working.
+        if (!seasonMatch.Success
+            && LooksLikeCalendarYear(numberMatch.Groups[1].Value)
+            && !string.Equals(rawLabel.Trim(), numberMatch.Value, StringComparison.Ordinal)
+            && !EpisodeMarkerRegex().IsMatch(rawLabel))
+        {
+            episodeNumber = 0;
+            hasNonStandardNumber = true;
+            return;
+        }
+
         var hasFraction = numberMatch.Groups[2].Success;
         var hasSuffix = numberMatch.Groups[3].Success;
         if (numberMatch.Groups[4].Success
@@ -945,6 +972,12 @@ public partial class AnimeClickHtmlParser
 
         hasNonStandardNumber = hasFraction || hasSuffix || episodeNumberEnd.HasValue;
     }
+
+    /// <summary>Four digits in the plausible broadcast-year range, e.g. "2015".</summary>
+    private static bool LooksLikeCalendarYear(string digits)
+        => digits.Length == 4
+           && int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var value)
+           && value is >= 1900 and <= 2099;
 
     /// <summary>
     /// Builds canonical coordinates. When every regular row has an unambiguous numeric

@@ -16,6 +16,13 @@ public partial class AnimeClickClient
     private const int MaximumRequestDelayMilliseconds = 60_000;
     private const int MaxAttempts = 2;
 
+    // A Retry-After from the server is honoured but never trusted unbounded. The deadline is
+    // persisted in the process-wide gate below, which only ever moves forward, so an absurd
+    // value — from a misconfigured origin, an intermediate proxy, or a hostile host set as
+    // BaseUrl — would otherwise park every later request behind a wait of arbitrary length
+    // until Jellyfin restarts, with the requests hanging on the gate instead of failing.
+    private const int MaximumServerBackoffMilliseconds = 15 * 60 * 1000;
+
     // AnimeClickClient resolves the shared HttpClient through IHttpClientFactory (exactly like
     // the other network clients) instead of registering a typed client. This keeps the plugin
     // from adding a type-name-keyed HttpClient registration that would clash if two plugin
@@ -240,14 +247,16 @@ public partial class AnimeClickClient
                     {
                         if (retryDelay > TimeSpan.FromSeconds(30))
                         {
-                            // Never retry before the server's Retry-After deadline. A very
-                            // long deadline is persisted in the global gate and surfaced now.
+                            // Never retry before the server's Retry-After deadline. The deadline
+                            // is persisted in the process-wide gate, so it pauses every other
+                            // AnimeClick request too: say so, and surface the failure now.
                             suppressRetry = true;
                             _logger.LogWarning(
-                                "AnimeClick {Status} for {Url} requested Retry-After={Delay}; not retrying",
+                                "AnimeClick {Status} for {Url}: honouring Retry-After={Delay} (capped at {Cap}); all AnimeClick requests are paused until then",
                                 response.StatusCode,
                                 url,
-                                retryDelay);
+                                retryDelay,
+                                TimeSpan.FromMilliseconds(MaximumServerBackoffMilliseconds));
                         }
                         else
                         {
@@ -343,8 +352,14 @@ public partial class AnimeClickClient
             ? DateTime.MaxValue
             : utcNow.Add(delay);
 
-    private static TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt)
+    /// <summary>
+    /// Server-requested backoff, clamped to <see cref="MaximumServerBackoffMilliseconds"/>.
+    /// Exposed internally so the clamp itself is covered by regression tests.
+    /// </summary>
+    internal static TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt)
     {
+        ArgumentNullException.ThrowIfNull(response);
+
         var retryAfter = response.Headers.RetryAfter;
         var delay = retryAfter?.Delta;
         if (!delay.HasValue && retryAfter?.Date is { } retryDate)
@@ -357,6 +372,7 @@ public partial class AnimeClickClient
             delay = TimeSpan.FromMilliseconds(300 + (attempt * 400));
         }
 
-        return delay.Value;
+        var maximum = TimeSpan.FromMilliseconds(MaximumServerBackoffMilliseconds);
+        return delay.Value > maximum ? maximum : delay.Value;
     }
 }
