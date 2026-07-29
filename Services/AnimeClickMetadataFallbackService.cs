@@ -423,7 +423,7 @@ public sealed class AnimeClickMetadataFallbackService
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(
+            _logger.LogWarning(
                 ex,
                 "AnimeClick fallback failed for {Id} S{Season}E{Episode}; field left unchanged",
                 animeClickId,

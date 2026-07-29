@@ -30,6 +30,11 @@ public class AnimeClickOllamaTranslator
 
     internal const string PromptVersion = "metadata-it-v2";
 
+    /// <summary>Upper bound on the source text sent to the model, in characters.</summary>
+    internal const int MaximumSourceCharacters = 8000;
+
+    private const long MaximumResponseBytes = 4 * 1024 * 1024;
+
     // Ollama Free allows one cloud model at a time. A process-wide gate prevents
     // scans and diagnostics from competing for the same account slot.
     private static readonly SemaphoreSlim TranslationGate = new(1, 1);
@@ -131,7 +136,16 @@ public class AnimeClickOllamaTranslator
             return null;
         }
 
+        // Cap the prompt: the source is scraped or third-party text of unknown length, and it
+        // is both billed and latency-bound at the model. Truncating before the cache key keeps
+        // a truncated and an untruncated run from colliding. 8000 characters is the same limit
+        // the diagnostics preview endpoint already applies.
         var plain = StripHtml(sourceText);
+        if (plain is { Length: > MaximumSourceCharacters })
+        {
+            plain = plain[..MaximumSourceCharacters];
+        }
+
         if (string.IsNullOrWhiteSpace(plain)
             || !TryNormalizeCloudEndpoint(configuration.OllamaCloudEndpoint, out var endpointUri))
         {
@@ -175,6 +189,7 @@ public class AnimeClickOllamaTranslator
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(
                 Math.Clamp(configuration.EpisodeTranslationTimeoutSec, 5, 120));
+            client.MaxResponseContentBufferSize = MaximumResponseBytes;
 
             using var request = new HttpRequestMessage(HttpMethod.Post, endpointUri)
             {
@@ -185,7 +200,9 @@ public class AnimeClickOllamaTranslator
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogDebug(
+                // Wrong key, exhausted quota or an unknown model all land here, and at Debug
+                // they were indistinguishable from "this episode has no synopsis".
+                _logger.LogWarning(
                     "OllamaTranslator: endpoint returned {Status} for field={Field} model={Model}",
                     response.StatusCode,
                     fieldName,
@@ -213,11 +230,11 @@ public class AnimeClickOllamaTranslator
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(
-                "OllamaTranslator: translation failed for field={Field} source={Source}: {Message}",
+            _logger.LogWarning(
+                ex,
+                "OllamaTranslator: translation failed for field={Field} source={Source}",
                 fieldName,
-                sourceIdentity,
-                ex.Message);
+                sourceIdentity);
             return null;
         }
         finally

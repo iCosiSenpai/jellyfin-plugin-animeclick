@@ -17,12 +17,33 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         Instance = this;
 
-        // Migrate only the superseded default model. SaveConfiguration persists the
-        // normalized value while preserving every API key and any custom model choice.
-        if (Configuration.ApplyMigrations())
+        // Migrate only the superseded default model, then force the persisted values into
+        // usable ranges. SaveConfiguration persists the normalized result while preserving
+        // every API key and any custom model choice.
+        var migrated = Configuration.ApplyMigrations();
+        var sanitized = Configuration.Sanitize();
+        if (migrated || sanitized)
         {
             SaveConfiguration();
         }
+    }
+
+    /// <summary>
+    /// Validates whatever the configuration endpoint received before it is persisted. The
+    /// endpoint deserializes the request body straight onto the configuration object, so this
+    /// is the only server-side gate: without it a negative delay or a BaseUrl that is not a
+    /// URL reached every consumer, and the page's JavaScript checks were bypassable.
+    /// </summary>
+    public override void UpdateConfiguration(BasePluginConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        if (configuration is PluginConfiguration animeClickConfiguration)
+        {
+            animeClickConfiguration.Sanitize();
+        }
+
+        base.UpdateConfiguration(configuration);
     }
 
     public override Guid Id => Guid.Parse("1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11");
