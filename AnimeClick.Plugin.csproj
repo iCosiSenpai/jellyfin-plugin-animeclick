@@ -7,7 +7,7 @@
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <AssemblyName>AnimeClick.Plugin</AssemblyName>
     <RootNamespace>AnimeClick.Plugin</RootNamespace>
-    <Version>0.4.3.0</Version>
+    <Version>0.4.4.0</Version>
     <AssemblyVersion>$(Version)</AssemblyVersion>
     <FileVersion>$(Version)</FileVersion>
     <InformationalVersion>$(Version)</InformationalVersion>

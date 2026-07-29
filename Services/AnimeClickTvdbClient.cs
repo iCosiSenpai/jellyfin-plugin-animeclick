@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -45,8 +44,17 @@ public class AnimeClickTvdbClient
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickTvdbClient> _logger;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _singleFlight =
-        new(StringComparer.Ordinal);
+
+    // Bounded gate pools instead of a per-key dictionary, which added one SemaphoreSlim for
+    // every distinct key ever seen and never removed or disposed any of them.
+    //
+    // Three separate pools on purpose, not one: the resolve and episode paths call LoginAsync
+    // while already holding their own gate. With a single pool two unrelated keys can hash to
+    // the same slot, and SemaphoreSlim is not reentrant, so that would deadlock — depending on
+    // the hash of the configured API key, which is about as reproducible as it sounds.
+    private readonly SemaphoreStripe _loginGates = new(8);
+    private readonly SemaphoreStripe _resolveGates = new();
+    private readonly SemaphoreStripe _episodeGates = new();
 
     public AnimeClickTvdbClient(
         IHttpClientFactory httpClientFactory,
@@ -79,7 +87,7 @@ public class AnimeClickTvdbClient
             return cached;
         }
 
-        var gate = GetSingleFlight("login::" + apiKeyHash);
+        var gate = _loginGates.Get("login::" + apiKeyHash);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -168,7 +176,7 @@ public class AnimeClickTvdbClient
             return null;
         }
 
-        var gate = GetSingleFlight("resolve::" + cacheKey);
+        var gate = _resolveGates.Get("resolve::" + cacheKey);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -278,7 +286,7 @@ public class AnimeClickTvdbClient
                 return null;
             }
 
-            var gate = GetSingleFlight("episodes::" + listCacheKey);
+            var gate = _episodeGates.Get("episodes::" + listCacheKey);
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -569,9 +577,6 @@ public class AnimeClickTvdbClient
     }
 
     private sealed record TvdbEpisodeFetchResult(List<TvdbEpisodeRecord> Episodes, bool Completed);
-
-    private SemaphoreSlim GetSingleFlight(string key)
-        => _singleFlight.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
 
     private static string ApiKeyHash(string apiKey)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)))[..16];

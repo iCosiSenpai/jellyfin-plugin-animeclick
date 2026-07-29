@@ -147,8 +147,12 @@ public partial class AnimeClickClient
     public static bool TryResolveAllowedImageUri(string? baseUrl, string? imageUrl, out Uri imageUri)
     {
         imageUri = null!;
+
+        // The base is treated as a directory: with a configured base that carries a path, a
+        // relative src must resolve underneath it rather than replacing its last segment.
         if (string.IsNullOrWhiteSpace(imageUrl)
-            || !Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri)
+            || string.IsNullOrWhiteSpace(baseUrl)
+            || !Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var baseUri)
             || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)
             || !Uri.TryCreate(baseUri, imageUrl, out var resolved)
             || resolved.Scheme != Uri.UriSchemeHttps)
@@ -180,7 +184,9 @@ public partial class AnimeClickClient
     /// </summary>
     internal static string GetEffectiveUserAgent(PluginConfiguration configuration)
     {
-        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(4) ?? "0.4.3.0";
+        // "0.0.0.0" rather than the version of the day: this fallback only fires if the assembly
+        // carries no version at all, and a literal here silently rots at every release.
+        var assemblyVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(4) ?? "0.0.0.0";
         var defaultUserAgent =
             $"AnimeClick-Jellyfin-Plugin/{assemblyVersion} (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
         var configured = configuration?.UserAgent?.Trim();

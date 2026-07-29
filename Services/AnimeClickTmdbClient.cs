@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Linq;
 using System.Net;
@@ -37,8 +36,12 @@ public class AnimeClickTmdbClient
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickTmdbClient> _logger;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _singleFlight =
-        new(StringComparer.Ordinal);
+    // Bounded gate pools instead of a per-key dictionary, which never released anything.
+    // The episode keys are per episode, so on a large library that dictionary accumulated one
+    // SemaphoreSlim per episode for the lifetime of the process. Separate pools per purpose so
+    // that a future nested acquisition cannot deadlock on a shared non-reentrant gate.
+    private readonly SemaphoreStripe _resolveGates = new();
+    private readonly SemaphoreStripe _episodeGates = new();
 
     public AnimeClickTmdbClient(
         IHttpClientFactory httpClientFactory,
@@ -85,7 +88,7 @@ public class AnimeClickTmdbClient
             return null;
         }
 
-        var gate = GetSingleFlight("resolve::" + cacheKey);
+        var gate = _resolveGates.Get("resolve::" + cacheKey);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -190,7 +193,7 @@ public class AnimeClickTmdbClient
         {
             if (translationsJson is null)
             {
-                var gate = GetSingleFlight("episode::" + cacheKey);
+                var gate = _episodeGates.Get("episode::" + cacheKey);
                 await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
@@ -655,9 +658,6 @@ public class AnimeClickTmdbClient
             return null;
         }
     }
-
-    private SemaphoreSlim GetSingleFlight(string key)
-        => _singleFlight.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
 
     private sealed record EpisodeTranslationsFetchResult(
         string? Json,
