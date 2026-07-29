@@ -37,6 +37,9 @@
   <ItemGroup>
     <Compile Remove="AnimeClick.Plugin.Tests\**\*.cs" />
     <None Remove="AnimeClick.Plugin.Tests\**\*" />
+    <!-- Development tool, not part of the plugin: see tools/AnimeClick.Harness. -->
+    <Compile Remove="tools\**\*.cs" />
+    <None Remove="tools\**\*" />
   </ItemGroup>
 
   <ItemGroup>
@@ -49,5 +52,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="AnimeClick.Plugin.Tests" />
+    <!-- The audit harness in tools/ replays the production pipeline, which needs the same
+         internal entry points as the tests (FinalizeEpisodeList and friends). -->
+    <InternalsVisibleTo Include="AnimeClick.Harness" />
   </ItemGroup>
 </Project>

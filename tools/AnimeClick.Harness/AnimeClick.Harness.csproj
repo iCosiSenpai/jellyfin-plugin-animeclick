@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>AnimeClick.Harness</AssemblyName>
+    <RootNamespace>AnimeClick.Harness</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Development tool, never shipped: it is excluded from the plugin's own compilation
+         (see the Compile Remove in AnimeClick.Plugin.csproj) and from the release package. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\AnimeClick.Plugin.csproj" />
+  </ItemGroup>
+</Project>
