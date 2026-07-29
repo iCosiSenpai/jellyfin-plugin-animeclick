@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Common.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace AnimeClick.Plugin.Services;
 
@@ -25,10 +26,14 @@ public class AnimeClickCacheService
     private static readonly SemaphoreSlim MutationGate = new(1, 1);
 
     private readonly string _cacheDirectory;
+    private readonly ILogger<AnimeClickCacheService> _logger;
 
-    public AnimeClickCacheService(IApplicationPaths applicationPaths)
+    public AnimeClickCacheService(
+        IApplicationPaths applicationPaths,
+        ILogger<AnimeClickCacheService> logger)
     {
         _cacheDirectory = Path.Combine(applicationPaths.CachePath, "AnimeClickMetadata");
+        _logger = logger;
         Directory.CreateDirectory(_cacheDirectory);
     }
 
@@ -83,6 +88,11 @@ public class AnimeClickCacheService
                 DeleteFileBestEffort(path);
                 return default;
             }
+            catch (UnauthorizedAccessException)
+            {
+                // A cache miss is preferable to failing the metadata pipeline.
+                return default;
+            }
         }
         finally
         {
@@ -99,6 +109,8 @@ public class AnimeClickCacheService
     /// <summary>
     /// Serializes to a temporary file and atomically replaces the final entry. A cancelled
     /// write can therefore never leave a partially-written JSON file visible to readers.
+    /// A write that cannot complete is logged and ignored: several callers invoke this
+    /// outside any try/catch, and a failed cache write must not abort an item's metadata.
     /// </summary>
     public async Task SetAsync<T>(string key, T payload, CancellationToken cancellationToken)
     {
@@ -128,6 +140,23 @@ public class AnimeClickCacheService
 
                 cancellationToken.ThrowIfCancellationRequested();
                 File.Move(tempPath, path, overwrite: true);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is IOException
+                                          or UnauthorizedAccessException
+                                          or NotSupportedException
+                                          or JsonException)
+            {
+                // Disk full, a read-only cache directory, or a key that sanitizes to a
+                // filename past the filesystem limit would otherwise propagate out of
+                // GetMetadata and lose every AnimeClick field for that item.
+                _logger.LogWarning(
+                    ex,
+                    "AnimeClick: cache write failed for {Key}; continuing without caching",
+                    key);
             }
             finally
             {

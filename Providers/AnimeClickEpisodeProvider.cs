@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -231,8 +232,15 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
     {
+        // Defense in depth: see AnimeClickSeriesProvider.GetImageResponse.
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (!AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, url, out var imageUri))
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+        }
+
         var client = _httpClientFactory.CreateClient();
-        return client.GetAsync(new Uri(url), cancellationToken);
+        return client.GetAsync(imageUri, cancellationToken);
     }
 
     private async Task<AnimeClickEpisode?> ResolveEpisodeAsync(

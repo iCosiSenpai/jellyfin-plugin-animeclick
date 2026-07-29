@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -220,8 +221,17 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
     {
+        // Defense in depth: Jellyfin's remote-search image proxy passes the URL straight
+        // through, so an unvalidated fetch here turns the scanner into an arbitrary outbound
+        // request. Mirrors AnimeClickAnimeImageProvider.
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (!AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, url, out var imageUri))
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+        }
+
         var client = _httpClientFactory.CreateClient();
-        return client.GetAsync(new Uri(url), cancellationToken);
+        return client.GetAsync(imageUri, cancellationToken);
     }
 
     private async Task<AnimeClickAnime?> FetchAnimeAsync(string url, PluginConfiguration configuration, string cacheKey, CancellationToken cancellationToken)

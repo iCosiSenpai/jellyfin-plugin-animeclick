@@ -1,4 +1,6 @@
 using System.Linq;
+using System.Net;
+using System.Net.Http.Headers;
 using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
@@ -926,6 +928,118 @@ public class AnimeClickPluginTests
     var match = AnimeClickEpisodeMatcher.Match(episodes, 1, 1);
     Assert(match.Episode?.Title == "Pilot" && match.Strategy == "globalOrdinal",
         "Title heuristics must not remove E01 and shift the regular timeline.");
+}
+
+    [Xunit.Fact(DisplayName = "Italian 'Speciale' row is special, not episode 2015")]
+    public void TestItalianSpecialeLabelDoesNotBecomeEpisodeYear()
+{
+    // Mixed page: seasoned rows plus one unseasoned special. Before the fix the special was
+    // parsed as regular episode 2015, so the canonical order fell back to page order and
+    // every following episode was pushed one slot down the timeline.
+    var html = """
+        <table class="table"><tbody>
+        <tr><td>S1 Ep. 01</td><td><a href="/episodio/901/uno">Uno</a></td><td>23'</td></tr>
+        <tr><td>S1 Ep. 02</td><td><a href="/episodio/902/due">Due</a></td><td>23'</td></tr>
+        <tr><td>Speciale natalizio 2015</td><td><a href="/episodio/998/speciale">Speciale</a></td><td>45'</td></tr>
+        <tr><td>S1 Ep. 03</td><td><a href="/episodio/903/tre">Tre</a></td><td>23'</td></tr>
+        </tbody></table>
+        """;
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(html, "https://www.animeclick.it");
+    var special = episodes.Single(episode => episode.RawNumberLabel == "Speciale natalizio 2015");
+    var third = episodes.Single(episode => episode.Title == "Tre");
+
+    Assert(special.IsSpecial, "An Italian 'Speciale' row must be classified as a special.");
+    Assert(special.Number != 2015, "A calendar year in the label must not become the episode number.");
+    Assert(third.GlobalOrdinal == 3 && third.AbsoluteNumber == 3,
+        "A special row must not push the following regular episodes down the timeline.");
+    Assert(AnimeClickEpisodeMatcher.Match(episodes, 1, 3).Episode?.Title == "Tre",
+        "S01E03 must still resolve to the third regular episode.");
+}
+
+    [Xunit.Fact(DisplayName = "Year-only label without keywords is not an episode number")]
+    public void TestYearInLabelWithoutSpecialKeywordIsNonStandard()
+{
+    var html = """
+        <table class="table"><tbody>
+        <tr><td>S1 Ep. 01</td><td><a href="/episodio/911/uno">Uno</a></td><td>23'</td></tr>
+        <tr><td>Corto animato 2015</td><td><a href="/episodio/912/corto">Corto</a></td><td>5'</td></tr>
+        </tbody></table>
+        """;
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(html, "https://www.animeclick.it");
+    var shortFilm = episodes.Single(episode => episode.Title == "Corto");
+
+    Assert(shortFilm.IsSpecial, "A label whose only number is a year carries no episode number.");
+    Assert(shortFilm.RawEpisodeNumber is null, "A year must not be stored as a raw episode number.");
+}
+
+    [Xunit.Fact(DisplayName = "A label that is only a number stays a regular episode")]
+    public void TestBareHighEpisodeNumberIsStillRegular()
+{
+    // Guards against over-correcting: long-running series legitimately reach four digits,
+    // and AnimeClick has used bare numeric labels.
+    var html = """
+        <table class="table"><tbody>
+        <tr><td>2015</td><td><a href="/episodio/921/bare">Bare</a></td><td>23'</td></tr>
+        <tr><td>Ep. 2016</td><td><a href="/episodio/922/marked">Marked</a></td><td>23'</td></tr>
+        </tbody></table>
+        """;
+    var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(html, "https://www.animeclick.it");
+
+    Assert(episodes.Single(episode => episode.Title == "Bare") is { IsSpecial: false, Number: 2015 },
+        "A label consisting only of the number must stay a regular episode.");
+    Assert(episodes.Single(episode => episode.Title == "Marked") is { IsSpecial: false, Number: 2016 },
+        "An explicit episode marker must keep a four-digit number as the episode number.");
+}
+
+    [Xunit.Fact(DisplayName = "Server Retry-After is clamped to 15 minutes")]
+    public void TestRetryAfterIsClamped()
+{
+    // An unbounded Retry-After used to be persisted in the process-wide request gate, which
+    // only ever moves forward: every later request then waited behind it until restart.
+    using var absurd = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+    absurd.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromDays(3650));
+    using var distantDate = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+    distantDate.Headers.RetryAfter = new RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddYears(5));
+    using var reasonable = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+    reasonable.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(45));
+    using var absent = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+
+    var cap = TimeSpan.FromMinutes(15);
+    Assert(AnimeClickClient.GetRetryDelay(absurd, 0) == cap, "A 10-year Retry-After delta must be clamped.");
+    Assert(AnimeClickClient.GetRetryDelay(distantDate, 0) == cap, "A distant Retry-After date must be clamped.");
+    Assert(AnimeClickClient.GetRetryDelay(reasonable, 0) == TimeSpan.FromSeconds(45),
+        "A reasonable Retry-After must be honoured unchanged.");
+    Assert(AnimeClickClient.GetRetryDelay(absent, 1) == TimeSpan.FromMilliseconds(700),
+        "Without Retry-After the delay must stay the attempt-based default.");
+}
+
+    [Xunit.Fact(DisplayName = "Search thumbnails outside the configured host are dropped")]
+    public void TestSearchThumbnailHostIsValidated()
+{
+    // ThumbnailUrl becomes RemoteSearchResult.ImageUrl, which Jellyfin fetches server-side.
+    var html = """
+        <div class="media item-search-item">
+          <h4 class="media-heading"><a href="/anime/1/foreign">Foreign</a></h4>
+          <img src="http://evil.tld/track.jpg">
+        </div>
+        <div class="media item-search-item">
+          <h4 class="media-heading"><a href="/anime/2/relative">Relative</a></h4>
+          <img src="/immagini/locandina.jpg">
+        </div>
+        <div class="media item-search-item">
+          <h4 class="media-heading"><a href="/anime/3/insecure">Insecure</a></h4>
+          <img src="http://www.animeclick.it/immagini/locandina.jpg">
+        </div>
+        """;
+    var results = new AnimeClickHtmlParser().ParseSearchResults(html, "https://www.animeclick.it");
+
+    Assert(results.Single(result => result.Title == "Foreign").ThumbnailUrl is null,
+        "A thumbnail on a foreign host must be dropped, not handed to Jellyfin.");
+    Assert(results.Single(result => result.Title == "Relative").ThumbnailUrl
+           == "https://www.animeclick.it/immagini/locandina.jpg",
+        "A relative thumbnail must still resolve against the configured base URL.");
+    Assert(results.Single(result => result.Title == "Insecure").ThumbnailUrl is null,
+        "A plain-HTTP thumbnail must be dropped rather than downgraded.");
 }
 
     private static void Assert(bool condition, string message)
