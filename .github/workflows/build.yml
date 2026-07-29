@@ -19,8 +19,8 @@ jobs:
         run: dotnet restore AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj
       - name: Build
         run: dotnet build AnimeClick.Plugin.csproj -c Release --no-restore
-      - name: Run regression harness
-        run: dotnet run --project AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release --no-restore
+      - name: Test
+        run: dotnet test AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release --no-restore
 
   release:
     needs: build

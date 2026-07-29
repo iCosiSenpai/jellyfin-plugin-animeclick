@@ -3,7 +3,20 @@ using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
 
-static void TestDangersSeasonOrdinalMatching()
+// Suite di regressione di AnimeClick.Plugin.
+//
+// Prima era una console app con un runner scritto a mano: 'dotnet test' usciva 0
+// senza eseguire nulla, dando un falso verde. Ora sono fatti xunit veri, quindi
+// 'dotnet test' li esegue e un fallimento fa fallire la build.
+//
+// I corpi dei test non sono stati toccati: l'helper Assert(condizione, messaggio)
+// lancia ancora InvalidOperationException, che xunit riporta come fallimento con
+// il messaggio originale. I nomi leggibili del vecchio runner sono conservati in
+// DisplayName.
+public class AnimeClickPluginTests
+{
+    [Xunit.Fact(DisplayName = "Dangers S2 matcher uses season ordinal")]
+    public void TestDangersSeasonOrdinalMatching()
 {
     var parser = new AnimeClickHtmlParser();
     var episodes = parser.ParseEpisodesPage(TestFixtures.DangersEpisodesHtml, "https://www.animeclick.it");
@@ -30,7 +43,8 @@ static void TestDangersSeasonOrdinalMatching()
     Assert(s2e5.Episode?.ProviderId == "90017/io-voglio-saperne-di-piu", "Episode provider ID should come from /episodio URL.");
 }
 
-static void TestSearchScoring()
+    [Xunit.Fact(DisplayName = "Search scorer prefers 2023 series over movie and special")]
+    public void TestSearchScoring()
 {
     var parser = new AnimeClickHtmlParser();
     var results = parser.ParseSearchResults(TestFixtures.SearchHtml, "https://www.animeclick.it")
@@ -41,7 +55,8 @@ static void TestSearchScoring()
     Assert(results[0].Format?.Contains("Serie TV", StringComparison.OrdinalIgnoreCase) == true, "Expected parser to retain TV format.");
 }
 
-static void TestTrailerOnlyMultimedia()
+    [Xunit.Fact(DisplayName = "Trailer-only multimedia reports diagnostic warning")]
+    public void TestTrailerOnlyMultimedia()
 {
     var parser = new AnimeClickHtmlParser();
     var diagnostics = parser.ParseMultimediaDiagnostics(TestFixtures.TrailerOnlyMultimediaHtml);
@@ -51,7 +66,8 @@ static void TestTrailerOnlyMultimedia()
     Assert(!string.IsNullOrWhiteSpace(diagnostics.Warning), "Trailer-only page should include a diagnostic warning.");
 }
 
-static void TestConfigDefaults()
+    [Xunit.Fact(DisplayName = "Config defaults: fill-gaps + fallback images")]
+    public void TestConfigDefaults()
 {
     // PluginConfiguration extends Jellyfin's BasePluginConfiguration, which is not
     // available outside the Jellyfin runtime, so defaults are verified by reading
@@ -60,7 +76,8 @@ static void TestConfigDefaults()
     Assert(true, "Config defaults (OverwriteNonItalianFields=false, EnableAnimeClickImages=true) are declared in PluginConfiguration.cs.");
 }
 
-static void TestAnimePageImageUrlExtraction()
+    [Xunit.Fact(DisplayName = "Anime page ImageUrl extraction for fallback provider")]
+    public void TestAnimePageImageUrlExtraction()
 {
     var html = """
         <html><head>
@@ -82,7 +99,8 @@ static void TestAnimePageImageUrlExtraction()
         "Parser must extract the Italian overview.");
 }
 
-static void TestTmdbUrlBuilding()
+    [Xunit.Fact(DisplayName = "TMDB search/tv + episode URL building")]
+    public void TestTmdbUrlBuilding()
 {
     var searchUrl = AnimeClickTmdbClient.BuildSearchTvUrl("KEY123", "Boku no Kokoro", 2023);
     Assert(searchUrl == "https://api.themoviedb.org/3/search/tv?api_key=KEY123&query=Boku%20no%20Kokoro&language=en&include_adult=false&first_air_date_year=2023",
@@ -97,7 +115,8 @@ static void TestTmdbUrlBuilding()
         "episode URL must interpolate tmdbId/season/episode.");
 }
 
-static void TestTmdbResponseParsing()
+    [Xunit.Fact(DisplayName = "TMDB search + episode response parsing")]
+    public void TestTmdbResponseParsing()
 {
     var searchJson = "{\"results\":[{\"id\":1428,\"first_air_date\":\"2023-04-01\"},{\"id\":9999,\"first_air_date\":\"2015-01-01\"}]}";
     Assert(AnimeClickTmdbClient.ParseFirstTvId(searchJson, 2023) == 1428,
@@ -116,7 +135,8 @@ static void TestTmdbResponseParsing()
         "ParseEpisodeOverview must return null when overview is absent.");
 }
 
-static void TestOllamaTranslatorStripHtml()
+    [Xunit.Fact(DisplayName = "Ollama translator HTML stripping")]
+    public void TestOllamaTranslatorStripHtml()
 {
     Assert(AnimeClickOllamaTranslator.StripHtml("<i>Hello</i> <b>world</b>") == "Hello world",
         "StripHtml must remove <i>/<b> tags.");
@@ -130,7 +150,8 @@ static void TestOllamaTranslatorStripHtml()
         "StripHtml must return empty for empty input.");
 }
 
-static void TestOllamaTranslatorRequestAndResponse()
+    [Xunit.Fact(DisplayName = "Ollama translator request body + response parsing")]
+    public void TestOllamaTranslatorRequestAndResponse()
 {
     var body = AnimeClickOllamaTranslator.BuildRequestBody("gemma4:31b-cloud", "sys-prompt", "Translate this.");
     Assert(body.Contains("\"model\":\"gemma4:31b-cloud\"", StringComparison.OrdinalIgnoreCase),
@@ -156,7 +177,8 @@ static void TestOllamaTranslatorRequestAndResponse()
         "ParseTranslatedContent must return null when content is absent.");
 }
 
-static void TestOllamaTranslatorUnicodeEscapes()
+    [Xunit.Fact(DisplayName = "Ollama translator \\uXXXX unicode escapes")]
+    public void TestOllamaTranslatorUnicodeEscapes()
 {
     // \uXXXX escapes — Italian accented chars from Ollama models that emit JSON-escaped text.
     var accentJson = "{\"message\":{\"content\":\"Caff\\u00E8 vicino\\u00E0\"}}";
@@ -187,7 +209,8 @@ static void TestOllamaTranslatorUnicodeEscapes()
         "ParseTranslatedContent must gracefully handle malformed \\u sequences without crashing.");
 }
 
-static void TestSearchScorerAccentFolding()
+    [Xunit.Fact(DisplayName = "Search scorer folds Italian accents for matching")]
+    public void TestSearchScorerAccentFolding()
 {
     // Verify RemoveDiacritics directly
     Assert(AnimeClickSearchScorer.RemoveDiacritics("Caffè") == "Caffe",
@@ -218,7 +241,8 @@ static void TestSearchScorerAccentFolding()
         "Accented query must hit the +100 exact-match bonus against an unaccented title.");
 }
 
-static void TestSearchQueryCleaners()
+    [Xunit.Fact(DisplayName = "Search query cleaners (sequel, fullwidth, & etc)")]
+    public void TestSearchQueryCleaners()
 {
     // CleanSearchQuery
     Assert(AnimeClickSeriesSearchProvider.CleanSearchQuery("Naruto (2024)") == "Naruto",
@@ -239,7 +263,8 @@ static void TestSearchQueryCleaners()
         "Short query takes first 3 words");
 }
 
-static void TestImprovedScorer()
+    [Xunit.Fact(DisplayName = "Improved scorer fuzzy + overlap")]
+    public void TestImprovedScorer()
 {
     var r = new AnimeClickSearchResult { Id = "x/y", Title = "The Dangers in My Heart", ProductionYear = 2023, Format = "Serie TV" };
     var s = AnimeClickSearchScorer.Score(r, "Dangers in My Heart", 2023, true);
@@ -250,7 +275,8 @@ static void TestImprovedScorer()
     Assert(fuzzy > 20, "Fuzzy token overlap should still give positive score");
 }
 
-static void TestTvdbUrlBuilding()
+    [Xunit.Fact(DisplayName = "TVDB login/search/episodes URL building")]
+    public void TestTvdbUrlBuilding()
 {
     Assert(AnimeClickTvdbClient.BuildSearchUrl("Naruto") ==
         "https://api4.thetvdb.com/v4/search?query=Naruto",
@@ -269,7 +295,8 @@ static void TestTvdbUrlBuilding()
         "BuildLoginBody must include the apikey field.");
 }
 
-static void TestTvdbResponseParsing()
+    [Xunit.Fact(DisplayName = "TVDB token + series id parsing (numeric tvdb_id)")]
+    public void TestTvdbResponseParsing()
 {
     Assert(AnimeClickTvdbClient.ParseLoginToken("{\"data\":{\"token\":\"abc-123\"}}") == "abc-123",
         "ParseLoginToken must extract data.token.");
@@ -297,7 +324,8 @@ static void TestTvdbResponseParsing()
         "ParseFirstSeriesId must return null when no series-type results exist.");
 }
 
-static void TestTvdbSeriesIdStringAndFallback()
+    [Xunit.Fact(DisplayName = "TVDB string tvdb_id + record id fallback")]
+    public void TestTvdbSeriesIdStringAndFallback()
 {
     // TVDB v4 /search returns tvdb_id as a JSON string ("78857"), not a number.
     var stringIdJson = "{\"data\":[{\"type\":\"series\",\"tvdb_id\":\"78857\",\"year\":\"2002\"}]}";
@@ -331,7 +359,8 @@ static void TestTvdbSeriesIdStringAndFallback()
         "ParseFirstSeriesId must prefer tvdb_id over record id when tvdb_id is a string.");
 }
 
-static void TestTvdbEpisodesParsing()
+    [Xunit.Fact(DisplayName = "TVDB episodes overview + next link parsing")]
+    public void TestTvdbEpisodesParsing()
 {
     var epJson = "{\"data\":[{\"seasonNumber\":2,\"number\":5,\"overview\":\"Ichika va al festival.\"},{\"seasonNumber\":1,\"number\":1,\"overview\":\"Altro.\"}]}";
     Assert(AnimeClickTvdbClient.ParseEpisodeOverview(epJson, 2, 5) == "Ichika va al festival.",
@@ -349,7 +378,8 @@ static void TestTvdbEpisodesParsing()
         "ParseNextLink must return null when links is absent.");
 }
 
-static void TestAsteriskContinuousBlockSeasonSplit()
+    [Xunit.Fact(DisplayName = "Asterisk War 24ep block splits into 2 seasons via seasonsCount")]
+    public void TestAsteriskContinuousBlockSeasonSplit()
 {
     var parser = new AnimeClickHtmlParser();
 
@@ -411,7 +441,8 @@ static void TestAsteriskContinuousBlockSeasonSplit()
     Assert(!s2e1NoSplit.Success && s2e1NoSplit.Strategy == "none", "S02E01 must NOT match without seasonsCount (regression baseline).");
 }
 
-static void TestSeasonsCountRefusedOnUnevenSplit()
+    [Xunit.Fact(DisplayName = "Parser refuses to split when episode count is uneven across seasons")]
+    public void TestSeasonsCountRefusedOnUnevenSplit()
 {
     var parser = new AnimeClickHtmlParser();
 
@@ -444,7 +475,8 @@ static void TestSeasonsCountRefusedOnUnevenSplit()
     Assert(episodes.All(e => e.SeasonNumber is null), "Parser must NOT synthesise SeasonNumber when the split is uneven (17 % 2 != 0).");
 }
 
-static void TestAniListIdParsing()
+    [Xunit.Fact(DisplayName = "AniList GraphQL id/escape parsing")]
+    public void TestAniListIdParsing()
 {
     Assert(
         AnimeClickAniListResolver.ParseAniListIdFromSearch("{\"data\":{\"Media\":{\"id\":14175,\"type\":\"ANIME\"}}}") == "14175",
@@ -471,7 +503,8 @@ static void TestAniListIdParsing()
         "EscapeGraphQL must escape backslashes.");
 }
 
-static void TestTranslationQueuePolicy()
+    [Xunit.Fact(DisplayName = "Translation queue failure backoff policy")]
+    public void TestTranslationQueuePolicy()
 {
     Assert(
         AnimeClickTranslationQueue.GetFailureBackoff(TimeSpan.FromSeconds(2), 30) == TimeSpan.FromMinutes(5),
@@ -484,7 +517,8 @@ static void TestTranslationQueuePolicy()
         "Backoff classification must use the same 5-second lower timeout clamp as the translator.");
 }
 
-static void TestSyntheticSeasonAbsoluteFallback()
+    [Xunit.Fact(DisplayName = "Nagi S1E14-E26 crosses only synthetic season boundaries")]
+    public void TestSyntheticSeasonAbsoluteFallback()
 {
     var rows = string.Join(
         '\n',
@@ -546,7 +580,7 @@ static void TestSyntheticSeasonAbsoluteFallback()
         "An absolute S2 group without a complete preceding timeline must not fabricate S02E01.");
 }
 
-static string BuildFlatEpisodeHtml(int count, bool descending = false)
+    private static string BuildFlatEpisodeHtml(int count, bool descending = false)
 {
     var numbers = descending
         ? Enumerable.Range(1, count).Reverse()
@@ -558,7 +592,8 @@ static string BuildFlatEpisodeHtml(int count, bool descending = false)
     return "<html><body><table class=\"table\"><tbody>" + rows + "</tbody></table></body></html>";
 }
 
-static void TestCanonicalTimelineExcludesInterleavedSpecials()
+    [Xunit.Fact(DisplayName = "Canonical timeline excludes interleaved specials and decimal rows")]
+    public void TestCanonicalTimelineExcludesInterleavedSpecials()
 {
     var html = """
         <table><tbody>
@@ -606,7 +641,8 @@ static void TestCanonicalTimelineExcludesInterleavedSpecials()
         "Duplicate special coordinates must miss safely without a provider ID or title.");
 }
 
-static void TestAlternateSeasonLabelsAndOutOfOrderRows()
+    [Xunit.Fact(DisplayName = "Parser accepts alternate labels and repairs reversed numeric rows")]
+    public void TestAlternateSeasonLabelsAndOutOfOrderRows()
 {
     var labels = """
         <table><tbody>
@@ -630,7 +666,8 @@ static void TestAlternateSeasonLabelsAndOutOfOrderRows()
         "Unambiguous reversed rows must be canonicalized by numeric order.");
 }
 
-static void TestLibraryTopologySupportsUnevenThirteenPlusEleven()
+    [Xunit.Fact(DisplayName = "Jellyfin topology maps an uneven 13+11 split")]
+    public void TestLibraryTopologySupportsUnevenThirteenPlusEleven()
 {
     var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(
         BuildFlatEpisodeHtml(24),
@@ -655,7 +692,8 @@ static void TestLibraryTopologySupportsUnevenThirteenPlusEleven()
     Assert(s2e11.Episode?.GlobalOrdinal == 24, "13+11 topology must map S02E11 to global episode 24.");
 }
 
-static void TestSingleJellyfinSeasonCanCrossExplicitAnimeClickGroups()
+    [Xunit.Fact(DisplayName = "Single Jellyfin season crosses explicit AnimeClick groups safely")]
+    public void TestSingleJellyfinSeasonCanCrossExplicitAnimeClickGroups()
 {
     var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(
         TestFixtures.DangersEpisodesHtml,
@@ -674,7 +712,8 @@ static void TestSingleJellyfinSeasonCanCrossExplicitAnimeClickGroups()
         "A verified flat Jellyfin season must cross explicit AnimeClick S1/S2 groups.");
 }
 
-static void TestProviderIdPinsNonStandardEpisode()
+    [Xunit.Fact(DisplayName = "Existing provider ID pins decimal and A/B episodes")]
+    public void TestProviderIdPinsNonStandardEpisode()
 {
     var html = """
         <table><tbody>
@@ -697,7 +736,8 @@ static void TestProviderIdPinsNonStandardEpisode()
         "Existing episode provider ID must pin a non-standard row.");
 }
 
-static void TestDoubleEpisodeRequiresExplicitRange()
+    [Xunit.Fact(DisplayName = "Double-episode files require an explicit range")]
+    public void TestDoubleEpisodeRequiresExplicitRange()
 {
     var html = """
         <table><tbody>
@@ -740,7 +780,8 @@ static void TestDoubleEpisodeRequiresExplicitRange()
         "An unseasoned AnimeClick range must match a normal Jellyfin multi-episode file.");
 }
 
-static void TestManualLayoutOverrides()
+    [Xunit.Fact(DisplayName = "Manual flat and cumulative-boundary overrides")]
+    public void TestManualLayoutOverrides()
 {
     var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(
         BuildFlatEpisodeHtml(24),
@@ -784,7 +825,8 @@ static void TestManualLayoutOverrides()
         "Season-zero matching must run before a regular flat override.");
 }
 
-static void TestIncompleteTopologyNeedsCorroboration()
+    [Xunit.Fact(DisplayName = "Incomplete topology requires title corroboration")]
+    public void TestIncompleteTopologyNeedsCorroboration()
 {
     var episodes = new AnimeClickHtmlParser().ParseEpisodesPage(
         BuildFlatEpisodeHtml(24),
@@ -821,7 +863,8 @@ static void TestIncompleteTopologyNeedsCorroboration()
         "Exact title evidence may corroborate a partial target-season topology.");
 }
 
-static void TestRawCatalogFingerprintAndPaginationDeduplication()
+    [Xunit.Fact(DisplayName = "Raw catalog fingerprint and pagination deduplication")]
+    public void TestRawCatalogFingerprintAndPaginationDeduplication()
 {
     var parser = new AnimeClickHtmlParser();
     var episodes = parser.ParseEpisodesPage(BuildFlatEpisodeHtml(3), "https://www.animeclick.it");
@@ -859,7 +902,8 @@ static void TestRawCatalogFingerprintAndPaginationDeduplication()
         "Reliable Jellyfin topology must not make duplicate AnimeClick coordinates matchable.");
 }
 
-static void TestRegularTitlesThatLookSpecialDoNotShiftTimeline()
+    [Xunit.Fact(DisplayName = "Regular Pilot/Prologo titles do not shift the timeline")]
+    public void TestRegularTitlesThatLookSpecialDoNotShiftTimeline()
 {
     var html = """
         <table><tbody>
@@ -884,52 +928,11 @@ static void TestRegularTitlesThatLookSpecialDoNotShiftTimeline()
         "Title heuristics must not remove E01 and shift the regular timeline.");
 }
 
-static void Assert(bool condition, string message)
+    private static void Assert(bool condition, string message)
 {
     if (!condition)
     {
         throw new InvalidOperationException(message);
     }
 }
-
-var tests = new (string Name, Action Run)[]
-{
-    ("Dangers S2 matcher uses season ordinal", TestDangersSeasonOrdinalMatching),
-    ("Asterisk War 24ep block splits into 2 seasons via seasonsCount", TestAsteriskContinuousBlockSeasonSplit),
-    ("Nagi S1E14-E26 crosses only synthetic season boundaries", TestSyntheticSeasonAbsoluteFallback),
-    ("Parser refuses to split when episode count is uneven across seasons", TestSeasonsCountRefusedOnUnevenSplit),
-    ("Canonical timeline excludes interleaved specials and decimal rows", TestCanonicalTimelineExcludesInterleavedSpecials),
-    ("Regular Pilot/Prologo titles do not shift the timeline", TestRegularTitlesThatLookSpecialDoNotShiftTimeline),
-    ("Parser accepts alternate labels and repairs reversed numeric rows", TestAlternateSeasonLabelsAndOutOfOrderRows),
-    ("Jellyfin topology maps an uneven 13+11 split", TestLibraryTopologySupportsUnevenThirteenPlusEleven),
-    ("Single Jellyfin season crosses explicit AnimeClick groups safely", TestSingleJellyfinSeasonCanCrossExplicitAnimeClickGroups),
-    ("Existing provider ID pins decimal and A/B episodes", TestProviderIdPinsNonStandardEpisode),
-    ("Double-episode files require an explicit range", TestDoubleEpisodeRequiresExplicitRange),
-    ("Manual flat and cumulative-boundary overrides", TestManualLayoutOverrides),
-    ("Incomplete topology requires title corroboration", TestIncompleteTopologyNeedsCorroboration),
-    ("Raw catalog fingerprint and pagination deduplication", TestRawCatalogFingerprintAndPaginationDeduplication),
-    ("Translation queue failure backoff policy", TestTranslationQueuePolicy),
-    ("Search scorer prefers 2023 series over movie and special", TestSearchScoring),
-    ("Search query cleaners (sequel, fullwidth, & etc)", TestSearchQueryCleaners),
-    ("Improved scorer fuzzy + overlap", TestImprovedScorer),
-    ("Trailer-only multimedia reports diagnostic warning", TestTrailerOnlyMultimedia),
-    ("AniList GraphQL id/escape parsing", TestAniListIdParsing),
-    ("Config defaults: fill-gaps + fallback images", TestConfigDefaults),
-    ("Anime page ImageUrl extraction for fallback provider", TestAnimePageImageUrlExtraction),
-    ("TMDB search/tv + episode URL building", TestTmdbUrlBuilding),
-    ("TMDB search + episode response parsing", TestTmdbResponseParsing),
-    ("TVDB login/search/episodes URL building", TestTvdbUrlBuilding),
-    ("TVDB token + series id parsing (numeric tvdb_id)", TestTvdbResponseParsing),
-    ("TVDB string tvdb_id + record id fallback", TestTvdbSeriesIdStringAndFallback),
-    ("TVDB episodes overview + next link parsing", TestTvdbEpisodesParsing),
-    ("Ollama translator HTML stripping", TestOllamaTranslatorStripHtml),
-    ("Ollama translator request body + response parsing", TestOllamaTranslatorRequestAndResponse),
-    ("Ollama translator \\uXXXX unicode escapes", TestOllamaTranslatorUnicodeEscapes),
-    ("Search scorer folds Italian accents for matching", TestSearchScorerAccentFolding)
-};
-
-foreach (var test in tests)
-{
-    test.Run();
-    Console.WriteLine("PASS " + test.Name);
 }
