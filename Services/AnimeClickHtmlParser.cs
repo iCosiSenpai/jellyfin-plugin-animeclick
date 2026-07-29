@@ -640,30 +640,14 @@ public partial class AnimeClickHtmlParser
     /// Resolves a scraped image URL against the configured base and confirms it targets an
     /// allowed host over HTTPS, returning null otherwise. Every image URL the parser hands
     /// back is fetched server-side by Jellyfin, so none of them may point anywhere else.
+    /// Delegates to <see cref="AnimeClickClient.TryResolveAllowedImageUri"/>: the same
+    /// allow-list used to exist twice, once here and once there, which is one copy too many
+    /// for a security check.
     /// </summary>
     private static string? ToSafeImageUrl(string baseUrl, string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url)
-            || !Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var baseUri)
-            || !Uri.TryCreate(baseUri, url, out var imageUri)
-            || imageUri.Scheme != Uri.UriSchemeHttps)
-        {
-            return null;
-        }
-
-        var baseHost = baseUri.IdnHost.TrimEnd('.');
-        var imageHost = imageUri.IdnHost.TrimEnd('.');
-        var exactConfiguredHost = string.Equals(baseHost, imageHost, StringComparison.OrdinalIgnoreCase)
-            && baseUri.Port == imageUri.Port;
-        var configuredForAnimeClick = string.Equals(baseHost, "animeclick.it", StringComparison.OrdinalIgnoreCase)
-            || baseHost.EndsWith(".animeclick.it", StringComparison.OrdinalIgnoreCase);
-        var officialAnimeClickHost = string.Equals(imageHost, "animeclick.it", StringComparison.OrdinalIgnoreCase)
-            || imageHost.EndsWith(".animeclick.it", StringComparison.OrdinalIgnoreCase);
-
-        return exactConfiguredHost || (configuredForAnimeClick && officialAnimeClickHost && imageUri.Port == 443)
+        => AnimeClickClient.TryResolveAllowedImageUri(baseUrl, url, out var imageUri)
             ? imageUri.AbsoluteUri
             : null;
-    }
 
     // ── Helper: OG / meta tags ──
 
@@ -787,6 +771,17 @@ public partial class AnimeClickHtmlParser
     /// (i.e. AnimeClick lists the episodes as a continuous "Ep. 01"..<c>Ep. NN</c> block without per-row
     /// <c>S1/S2 Ep.</c> prefixes), the parser synthesises the season number so the matcher's
     /// <c>seasonOrdinal</c> branch can resolve multi-season Jellyfin libraries.
+    /// <para>
+    /// <b>Not used in production.</b> <see cref="AnimeClickEpisodeListLoader"/> deliberately always
+    /// passes <c>null</c> here and to <see cref="FinalizeEpisodeList"/>, because inferred season
+    /// boundaries must not be persisted: they would go stale the moment Jellyfin's own layout
+    /// changes from 1x24 to 13+11. The equal-split decision is taken at match time instead, from
+    /// <see cref="AnimeClickEpisodeCatalog.DeclaredSeasonsCount"/>. This overload therefore only
+    /// runs from the test suite, and the <c>SeasonNumberIsSynthetic</c> branches of the matcher are
+    /// unreachable in a running server. Kept as the documented legacy path rather than deleted,
+    /// since removing it also means removing matcher branches: worth doing, but as its own change
+    /// with its own verification, not folded into a cleanup pass.
+    /// </para>
     /// </summary>
     public List<AnimeClickEpisode> ParseEpisodesPage(string html, string baseUrl, int? seasonsCount)
     {
@@ -889,6 +884,8 @@ public partial class AnimeClickHtmlParser
     /// <summary>
     /// Recomputes canonical ordinals and optional legacy equal-split hints. Callers that
     /// merge pages invoke this only after the complete table has been collected.
+    /// <paramref name="seasonsCount"/> is always null in production — see the remarks on
+    /// <see cref="ParseEpisodesPage(string, string, int?)"/>.
     /// </summary>
     internal static void FinalizeEpisodeList(List<AnimeClickEpisode> episodes, int? seasonsCount)
     {

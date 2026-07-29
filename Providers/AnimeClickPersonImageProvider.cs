@@ -23,11 +23,16 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickClient _animeClickClient;
+    private readonly AnimeClickCacheService _cache;
 
-    public AnimeClickPersonImageProvider(IHttpClientFactory httpClientFactory, AnimeClickClient animeClickClient)
+    public AnimeClickPersonImageProvider(
+        IHttpClientFactory httpClientFactory,
+        AnimeClickClient animeClickClient,
+        AnimeClickCacheService cache)
     {
         _httpClientFactory = httpClientFactory;
         _animeClickClient = animeClickClient;
+        _cache = cache;
     }
 
     public string Name => "AnimeClick";
@@ -69,6 +74,36 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
 
         try
         {
+            // This was the only provider with no cache at all: it re-scraped the /autore page
+            // for every person on every refresh, which on a library with hundreds of voice
+            // actors was the plugin's heaviest scraping path. Positive and negative results are
+            // cached separately so a person who genuinely has no photo is not fetched again on
+            // every scan, while a transient network failure stays immediately retryable.
+            var cacheKey = $"person-image:v1::{personUri.AbsolutePath}";
+            var missCacheKey = $"person-image-empty:v1::{personUri.AbsolutePath}";
+
+            var cachedUrl = await _cache
+                .GetAsync<string>(cacheKey, configuration.CacheHours, cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(cachedUrl))
+            {
+                results.Add(new RemoteImageInfo
+                {
+                    ProviderName = Name,
+                    Type = ImageType.Primary,
+                    Url = cachedUrl
+                });
+                return results;
+            }
+
+            var cachedMiss = await _cache
+                .GetAsync<string>(missCacheKey, configuration.NegativeCacheHours, cancellationToken)
+                .ConfigureAwait(false);
+            if (string.Equals(cachedMiss, "empty", StringComparison.Ordinal))
+            {
+                return results;
+            }
+
             // Ethical fetching via the process-wide AnimeClick rate gate.
             var response = await _animeClickClient.GetStringAsync(
                 personUri.AbsoluteUri,
@@ -90,14 +125,19 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
                 // Skip generic placeholder
                 if (!imageUrl.Contains("not_found", StringComparison.OrdinalIgnoreCase))
                 {
+                    await _cache.SetAsync(cacheKey, imageUrl, cancellationToken).ConfigureAwait(false);
                     results.Add(new RemoteImageInfo
                     {
                         ProviderName = Name,
                         Type = ImageType.Primary,
                         Url = imageUrl
                     });
+                    return results;
                 }
             }
+
+            // The page loaded and simply has no usable photo: a confirmed miss, worth caching.
+            await _cache.SetAsync(missCacheKey, "empty", cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

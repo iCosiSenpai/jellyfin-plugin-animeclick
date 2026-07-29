@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -28,8 +27,9 @@ public class AnimeClickAniListResolver
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickAniListResolver> _logger;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _singleFlight =
-        new(StringComparer.Ordinal);
+    // Bounded gate pool instead of a per-key dictionary that was never pruned: one
+    // SemaphoreSlim per distinct title looked up, kept for the lifetime of the process.
+    private readonly SemaphoreStripe _lookupGates = new();
 
     public AnimeClickAniListResolver(
         IHttpClientFactory httpClientFactory,
@@ -84,7 +84,7 @@ public class AnimeClickAniListResolver
             return null;
         }
 
-        var gate = _singleFlight.GetOrAdd(cacheKey, static _ => new SemaphoreSlim(1, 1));
+        var gate = _lookupGates.Get(cacheKey);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
