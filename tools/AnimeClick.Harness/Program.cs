@@ -29,6 +29,7 @@ internal static class Program
 
         var ids = new List<string>();
         string? search = null;
+        string? relationsFor = null;
         string? jellyfinUrl = null;
         string? tokenFile = null;
         var limit = int.MaxValue;
@@ -56,6 +57,9 @@ internal static class Program
                     break;
                 case "--jellyfin" when i + 1 < args.Length:
                     jellyfinUrl = args[++i];
+                    break;
+                case "--relations" when i + 1 < args.Length:
+                    relationsFor = args[++i];
                     break;
                 case "--token-file" when i + 1 < args.Length:
                     tokenFile = args[++i];
@@ -112,6 +116,12 @@ internal static class Program
             return await RunLibraryDiffAsync(
                     fetcher, parser, jellyfinUrl, token, limit, cts.Token)
                 .ConfigureAwait(false);
+        }
+
+        if (relationsFor is not null)
+        {
+            await DumpRelationsAsync(fetcher, parser, relationsFor, cts.Token).ConfigureAwait(false);
+            return 0;
         }
 
         if (ids.Count == 0)
@@ -637,27 +647,66 @@ internal static class Program
             index++;
             Console.Write($"\r[{index}/{series.Count}] {Truncate(entry.Name, 45),-46}");
 
-            var animeUrl = $"{BaseUrl}/anime/{entry.AnimeClickId.Trim('/')}";
-            var detailHtml = await fetcher.GetAsync(animeUrl, cancellationToken).ConfigureAwait(false);
-            if (detailHtml is null)
-            {
-                Console.WriteLine($"\r  ! {entry.Name}: pagina AnimeClick non raggiungibile ({entry.AnimeClickId})");
-                continue;
-            }
-
-            var anime = parser.ParseAnimePage(animeUrl, detailHtml);
-            var scratch = new AnimeReport { AnimeClickId = entry.AnimeClickId };
-            var rows = await LoadEpisodesAsync(fetcher, parser, animeUrl, scratch, cancellationToken)
+            // Each Jellyfin season may point at its own AnimeClick entry, because AnimeClick
+            // publishes a franchise as separate entries per season while Jellyfin merges them
+            // into one series. Matching every episode against the series-level entry — which is
+            // what this tool did first — invents failures for every season past the first.
+            var seasonIds = await jellyfin.GetSeasonAnimeClickIdsAsync(entry.Id, cancellationToken)
                 .ConfigureAwait(false);
-            if (rows.Count == 0)
-            {
-                Console.WriteLine($"\r  ! {entry.Name}: nessuna riga episodio su AnimeClick ({entry.AnimeClickId})");
-                continue;
-            }
-
             var libraryEpisodes = await jellyfin.GetEpisodesAsync(entry.Id, cancellationToken)
                 .ConfigureAwait(false);
-            outcomes.Add(LibraryDiff.Compare(entry, libraryEpisodes, rows, anime.SeasonsCount));
+
+            var sources = new Dictionary<string, LibraryDiff.SeasonSource?>(StringComparer.OrdinalIgnoreCase);
+
+            async Task<LibraryDiff.SeasonSource?> LoadAsync(string animeClickId, bool seasonSpecific)
+            {
+                var cacheKey = animeClickId + "|" + seasonSpecific;
+                if (sources.TryGetValue(cacheKey, out var existing))
+                {
+                    return existing;
+                }
+
+                var url = $"{BaseUrl}/anime/{animeClickId.Trim('/')}";
+                var html = await fetcher.GetAsync(url, cancellationToken).ConfigureAwait(false);
+                LibraryDiff.SeasonSource? source = null;
+                if (html is not null)
+                {
+                    var page = parser.ParseAnimePage(url, html);
+                    var scratch = new AnimeReport { AnimeClickId = animeClickId };
+                    var rows = await LoadEpisodesAsync(fetcher, parser, url, scratch, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (rows.Count > 0)
+                    {
+                        source = new LibraryDiff.SeasonSource(rows, page.SeasonsCount, seasonSpecific, animeClickId);
+                    }
+                }
+
+                sources[cacheKey] = source;
+                return source;
+            }
+
+            var perSeason = new Dictionary<int, LibraryDiff.SeasonSource?>();
+            foreach (var season in libraryEpisodes
+                         .Where(e => e.SeasonNumber is > 0)
+                         .Select(e => e.SeasonNumber!.Value)
+                         .Distinct())
+            {
+                perSeason[season] = seasonIds.TryGetValue(season, out var ownId)
+                    ? await LoadAsync(ownId, seasonSpecific: true).ConfigureAwait(false)
+                    : await LoadAsync(entry.AnimeClickId, seasonSpecific: false).ConfigureAwait(false);
+            }
+
+            var seriesLevel = await LoadAsync(entry.AnimeClickId, seasonSpecific: false).ConfigureAwait(false);
+            if (seriesLevel is null && perSeason.Values.All(s => s is null))
+            {
+                Console.WriteLine($"\r  ! {entry.Name}: nessuna pagina AnimeClick utilizzabile ({entry.AnimeClickId})");
+                continue;
+            }
+
+            outcomes.Add(LibraryDiff.Compare(
+                entry,
+                libraryEpisodes,
+                season => season is > 0 && perSeason.TryGetValue(season.Value, out var s) ? s : seriesLevel));
         }
 
         Console.WriteLine("\r" + new string(' ', 60));
@@ -718,6 +767,55 @@ internal static class Program
         Console.WriteLine(
             "alta è un esito legittimo. \"Rischio di peggioramento\" è invece AnimeClick che offrirebbe un");
         Console.WriteLine("segnaposto al posto di un titolo vero.");
+    }
+
+    /// <summary>
+    /// Prints what the parser extracts from an anime's /relazioni page. This is the input the
+    /// season resolver depends on to follow a franchise from one AnimeClick entry to its sequels:
+    /// if Format comes back null the resolver discards the candidate, and a Jellyfin series that
+    /// aggregates several seasons can never be filled beyond the first.
+    /// </summary>
+    private static async Task DumpRelationsAsync(
+        Fetcher fetcher,
+        AnimeClickHtmlParser parser,
+        string animeClickId,
+        CancellationToken cancellationToken)
+    {
+        var url = $"{BaseUrl}/anime/{animeClickId.Trim('/')}/relazioni";
+        var html = await fetcher.GetAsync(url, cancellationToken).ConfigureAwait(false);
+        if (html is null)
+        {
+            Console.WriteLine($"pagina relazioni non raggiungibile: {url}");
+            return;
+        }
+
+        var relations = parser.ParseRelationsPage(html, BaseUrl);
+        Console.WriteLine($"relazioni estratte da {url}: {relations.Count}");
+        if (relations.Count == 0)
+        {
+            Console.WriteLine("  nessuna: il selettore delle relazioni non ha trovato niente");
+            return;
+        }
+
+        Console.WriteLine($"  {"id",-42} {"anno",4}  {"formato",-24} titolo");
+        var withFormat = 0;
+        foreach (var relation in relations)
+        {
+            if (!string.IsNullOrWhiteSpace(relation.Format))
+            {
+                withFormat++;
+            }
+
+            Console.WriteLine(
+                $"  {Truncate(relation.AnimeClickId ?? "-", 42),-42} {relation.Year?.ToString() ?? "-",4}  "
+                + $"{Truncate(relation.Format ?? "(null)", 24),-24} {Truncate(relation.Title ?? "-", 40)}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(
+            $"con Format valorizzato: {withFormat}/{relations.Count} — "
+            + "AnimeClickSeasonResolver.IsTelevisionSeries scarta tutte quelle senza Format, "
+            + "quindi con 0 la risoluzione delle stagioni non può mai scattare.");
     }
 
     private static void DumpRows(List<AnimeClickEpisode> episodes)
