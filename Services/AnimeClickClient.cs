@@ -61,6 +61,22 @@ public partial class AnimeClickClient
     public static bool TryNormalizeAnimeClickId(string? value, out string normalized)
     {
         normalized = value?.Trim().Trim('/') ?? string.Empty;
+
+        // AnimeClick slugs carry Italian accents, and the URL the id was captured from encodes
+        // them: "216767/c%C3%A8-una-ragione-per-tutto". Without decoding first, the character
+        // class below rejects '%' and the plugin refuses an id it wrote itself — and with it the
+        // whole AnimeClick episode-synopsis path disappears silently for every episode whose
+        // title has an accent. Measured on a real library: 224 of 1781 stored episode ids, 13%.
+        //
+        // Decoding before validating is also the safe order: validation still runs against the
+        // same conservative class, so nothing structural survives it. "%2F" becomes a second
+        // slash and "%2E%2E" becomes dots, and both are then rejected rather than reaching URL
+        // composition.
+        if (normalized.Contains('%', StringComparison.Ordinal))
+        {
+            normalized = Uri.UnescapeDataString(normalized);
+        }
+
         if (AnimeClickIdRegex().IsMatch(normalized))
         {
             return true;

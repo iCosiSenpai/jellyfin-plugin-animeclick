@@ -88,6 +88,7 @@ internal static class LibraryDiff
     internal sealed record SeasonSource(
         List<AnimeClickEpisode> Rows,
         int DeclaredSeasonsCount,
+        int? DeclaredEpisodeCount,
         bool IsSeasonSpecificPage,
         string AnimeClickId);
 
@@ -135,7 +136,8 @@ internal static class LibraryDiff
                     JellyfinTitle = episode.Name,
                     ExistingProviderId = episode.AnimeClickProviderId,
                     IsSeasonSpecificPage = true,
-                    DeclaredSeasonsCount = source.DeclaredSeasonsCount > 0 ? source.DeclaredSeasonsCount : null
+                    DeclaredSeasonsCount = source.DeclaredSeasonsCount > 0 ? source.DeclaredSeasonsCount : null,
+                    DeclaredEpisodeCount = source.DeclaredEpisodeCount
                 }
                 : new AnimeClickEpisodeMatchContext(episode.SeasonNumber, episode.IndexNumber!.Value)
                 {
@@ -143,7 +145,8 @@ internal static class LibraryDiff
                     JellyfinTitle = episode.Name,
                     ExistingProviderId = episode.AnimeClickProviderId,
                     LibraryLayout = layout,
-                    DeclaredSeasonsCount = source.DeclaredSeasonsCount > 0 ? source.DeclaredSeasonsCount : null
+                    DeclaredSeasonsCount = source.DeclaredSeasonsCount > 0 ? source.DeclaredSeasonsCount : null,
+                    DeclaredEpisodeCount = source.DeclaredEpisodeCount
                 };
 
             var match = AnimeClickEpisodeMatcher.Match(source.Rows, context);
