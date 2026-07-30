@@ -67,6 +67,35 @@ internal sealed class JellyfinClient : IDisposable
         return series;
     }
 
+    /// <summary>
+    /// AnimeClick id resolved onto each season, when the season provider managed to follow the
+    /// franchise. Essential: a Jellyfin series aggregates seasons that AnimeClick publishes as
+    /// separate entries, so matching every episode against the series-level entry would be wrong.
+    /// </summary>
+    public async Task<Dictionary<int, string>> GetSeasonAnimeClickIdsAsync(
+        string seriesId,
+        CancellationToken cancellationToken)
+    {
+        using var document = await GetJsonAsync(
+                $"Items?parentId={seriesId}&includeItemTypes=Season&fields=ProviderIds,IndexNumber"
+                + "&enableImages=false&limit=200",
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        var map = new Dictionary<int, string>();
+        foreach (var item in document.RootElement.GetProperty("Items").EnumerateArray())
+        {
+            var season = Int(item, "IndexNumber");
+            var animeClickId = ProviderId(item, "AnimeClick");
+            if (season is > 0 && !string.IsNullOrWhiteSpace(animeClickId))
+            {
+                map[season.Value] = animeClickId;
+            }
+        }
+
+        return map;
+    }
+
     public async Task<List<JellyfinEpisode>> GetEpisodesAsync(
         string seriesId,
         CancellationToken cancellationToken)

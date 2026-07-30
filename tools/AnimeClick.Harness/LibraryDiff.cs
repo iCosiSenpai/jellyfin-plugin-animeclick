@@ -85,11 +85,16 @@ internal static class LibraryDiff
         return new AnimeClickEpisodeLibraryLayout(seriesId, seasons);
     }
 
+    internal sealed record SeasonSource(
+        List<AnimeClickEpisode> Rows,
+        int DeclaredSeasonsCount,
+        bool IsSeasonSpecificPage,
+        string AnimeClickId);
+
     internal static SeriesOutcome Compare(
         JellyfinSeries series,
         List<JellyfinEpisode> libraryEpisodes,
-        List<AnimeClickEpisode> animeClickRows,
-        int declaredSeasonsCount)
+        Func<int?, SeasonSource?> sourceForSeason)
     {
         var outcome = new SeriesOutcome
         {
@@ -106,15 +111,42 @@ internal static class LibraryDiff
         {
             outcome.EpisodesInLibrary++;
 
-            var context = new AnimeClickEpisodeMatchContext(episode.SeasonNumber, episode.IndexNumber!.Value)
+            var source = sourceForSeason(episode.SeasonNumber);
+            if (source is null)
             {
-                JellyfinEpisodeNumberEnd = episode.IndexNumberEnd,
-                JellyfinTitle = episode.Name,
-                ExistingProviderId = episode.AnimeClickProviderId,
-                LibraryLayout = layout,
-                DeclaredSeasonsCount = declaredSeasonsCount > 0 ? declaredSeasonsCount : null
-            };
-            var match = AnimeClickEpisodeMatcher.Match(animeClickRows, context);
+                outcome.Unresolved++;
+                if (outcome.Samples.Count < 8)
+                {
+                    outcome.Samples.Add(
+                        $"S{episode.SeasonNumber ?? 0:00}E{episode.IndexNumber:00} "
+                        + $"\"{Short(episode.Name)}\" → nessuna pagina AnimeClick per questa stagione");
+                }
+
+                continue;
+            }
+
+            // When the season resolved to its own AnimeClick entry, the plugin asks that page for
+            // its own first, second, … episode: exactly what AnimeClickEpisodeProvider does with
+            // IsSeasonSpecificPage. Asking it for "season 3 episode 1" would find nothing.
+            var context = source.IsSeasonSpecificPage
+                ? new AnimeClickEpisodeMatchContext(1, episode.IndexNumber!.Value)
+                {
+                    JellyfinEpisodeNumberEnd = episode.IndexNumberEnd,
+                    JellyfinTitle = episode.Name,
+                    ExistingProviderId = episode.AnimeClickProviderId,
+                    IsSeasonSpecificPage = true,
+                    DeclaredSeasonsCount = source.DeclaredSeasonsCount > 0 ? source.DeclaredSeasonsCount : null
+                }
+                : new AnimeClickEpisodeMatchContext(episode.SeasonNumber, episode.IndexNumber!.Value)
+                {
+                    JellyfinEpisodeNumberEnd = episode.IndexNumberEnd,
+                    JellyfinTitle = episode.Name,
+                    ExistingProviderId = episode.AnimeClickProviderId,
+                    LibraryLayout = layout,
+                    DeclaredSeasonsCount = source.DeclaredSeasonsCount > 0 ? source.DeclaredSeasonsCount : null
+                };
+
+            var match = AnimeClickEpisodeMatcher.Match(source.Rows, context);
             var coordinate = $"S{episode.SeasonNumber ?? 0:00}E{episode.IndexNumber:00}";
 
             if (!match.Success)
