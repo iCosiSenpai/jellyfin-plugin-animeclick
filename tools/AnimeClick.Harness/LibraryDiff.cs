@@ -48,6 +48,9 @@ internal static class LibraryDiff
 
         public int WeakConfidence { get; set; }
 
+        /// <summary>Seasons whose proposed titles look like the stored ones shifted by a fixed step.</summary>
+        public List<string> Shifts { get; } = [];
+
         public List<string> Samples { get; } = [];
     }
 
@@ -95,7 +98,8 @@ internal static class LibraryDiff
     internal static SeriesOutcome Compare(
         JellyfinSeries series,
         List<JellyfinEpisode> libraryEpisodes,
-        Func<int?, SeasonSource?> sourceForSeason)
+        Func<int?, SeasonSource?> sourceForSeason,
+        bool ignoreDeclaredCount = false)
     {
         var outcome = new SeriesOutcome
         {
@@ -104,6 +108,13 @@ internal static class LibraryDiff
         };
 
         var layout = BuildLayout(Guid.Parse(series.Id), libraryEpisodes);
+
+        // Collected to look for a systematic offset afterwards: a shift is invisible episode by
+        // episode, because every single title looks like a plausible title. It only shows up in
+        // the sequence — the proposed name for E01 is the stored name of E02, and so on down the
+        // season. That is how "Arrivare a te" hid, and it was found by chance rather than looked
+        // for. Position: season -> (episode number, stored title, proposed title).
+        var sequences = new Dictionary<int, List<(int Episode, string? Stored, string? Proposed)>>();
 
         foreach (var episode in libraryEpisodes
                      .Where(e => e.IndexNumber is > 0)
@@ -137,7 +148,7 @@ internal static class LibraryDiff
                     ExistingProviderId = episode.AnimeClickProviderId,
                     IsSeasonSpecificPage = true,
                     DeclaredSeasonsCount = source.DeclaredSeasonsCount > 0 ? source.DeclaredSeasonsCount : null,
-                    DeclaredEpisodeCount = source.DeclaredEpisodeCount
+                    DeclaredEpisodeCount = ignoreDeclaredCount ? null : source.DeclaredEpisodeCount
                 }
                 : new AnimeClickEpisodeMatchContext(episode.SeasonNumber, episode.IndexNumber!.Value)
                 {
@@ -146,7 +157,7 @@ internal static class LibraryDiff
                     ExistingProviderId = episode.AnimeClickProviderId,
                     LibraryLayout = layout,
                     DeclaredSeasonsCount = source.DeclaredSeasonsCount > 0 ? source.DeclaredSeasonsCount : null,
-                    DeclaredEpisodeCount = source.DeclaredEpisodeCount
+                    DeclaredEpisodeCount = ignoreDeclaredCount ? null : source.DeclaredEpisodeCount
                 };
 
             var match = AnimeClickEpisodeMatcher.Match(source.Rows, context);
@@ -172,6 +183,16 @@ internal static class LibraryDiff
             }
 
             var proposed = match.Episode!.Title;
+
+            var seasonKey = episode.SeasonNumber ?? 0;
+            if (!sequences.TryGetValue(seasonKey, out var sequence))
+            {
+                sequence = [];
+                sequences[seasonKey] = sequence;
+            }
+
+            sequence.Add((episode.IndexNumber!.Value, episode.Name, proposed));
+
             if (TitlesMatch(episode.Name, proposed))
             {
                 outcome.TitleEqual++;
@@ -223,7 +244,69 @@ internal static class LibraryDiff
             }
         }
 
+        foreach (var (season, sequence) in sequences.OrderBy(pair => pair.Key))
+        {
+            var shift = DetectShift(sequence);
+            if (shift is not null)
+            {
+                outcome.Shifts.Add($"S{season:00}: {shift}");
+            }
+        }
+
         return outcome;
+    }
+
+    /// <summary>
+    /// Looks for a constant offset between the proposed titles and the stored ones. Returns a
+    /// description when one explains the season clearly better than no offset at all.
+    /// <para>
+    /// This is the mechanical signature of the defect that mis-titles a whole season: each episode
+    /// receives its neighbour's name, so every title is individually plausible and only the
+    /// sequence gives it away. Checking it by eye across a library is not realistic, which is
+    /// exactly why it went unnoticed.
+    /// </para>
+    /// </summary>
+    private static string? DetectShift(List<(int Episode, string? Stored, string? Proposed)> sequence)
+    {
+        var stored = sequence
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Stored))
+            .ToDictionary(entry => entry.Episode, entry => Normalize(entry.Stored!));
+        if (stored.Count < 4)
+        {
+            return null;
+        }
+
+        int Agreement(int offset) => sequence.Count(entry =>
+            !string.IsNullOrWhiteSpace(entry.Proposed)
+            && stored.TryGetValue(entry.Episode + offset, out var storedTitle)
+            && storedTitle == Normalize(entry.Proposed!));
+
+        var aligned = Agreement(0);
+        var best = 0;
+        var bestAgreement = aligned;
+        foreach (var offset in new[] { -3, -2, -1, 1, 2, 3 })
+        {
+            var agreement = Agreement(offset);
+            if (agreement > bestAgreement)
+            {
+                bestAgreement = agreement;
+                best = offset;
+            }
+        }
+
+        // Require the offset to explain most of the season and to beat the aligned reading
+        // clearly, so a couple of coincidentally repeated titles cannot raise a false alarm.
+        if (best == 0 || bestAgreement < 3 || bestAgreement < aligned + 3)
+        {
+            return null;
+        }
+
+        var direction = best > 0
+            ? $"AnimeClick è avanti di {best}"
+            : $"AnimeClick è indietro di {-best}";
+        return $"{direction} — {bestAgreement} episodi combaciano con lo scarto, "
+               + $"{aligned} senza. Esempio: E{sequence[0].Episode:00} in libreria "
+               + $"\"{Short(sequence[0].Stored)}\", AnimeClick propone \"{Short(sequence[0].Proposed)}\"";
     }
 
     /// <summary>
