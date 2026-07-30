@@ -29,6 +29,9 @@ internal static class Program
 
         var ids = new List<string>();
         string? search = null;
+        string? jellyfinUrl = null;
+        string? tokenFile = null;
+        var limit = int.MaxValue;
         var overviewSamples = 3;
         var dumpRows = false;
         var refresh = false;
@@ -50,6 +53,15 @@ internal static class Program
                     break;
                 case "--search" when i + 1 < args.Length:
                     search = args[++i];
+                    break;
+                case "--jellyfin" when i + 1 < args.Length:
+                    jellyfinUrl = args[++i];
+                    break;
+                case "--token-file" when i + 1 < args.Length:
+                    tokenFile = args[++i];
+                    break;
+                case "--limit" when i + 1 < args.Length:
+                    limit = int.Parse(args[++i]);
                     break;
                 case "--overview-samples" when i + 1 < args.Length:
                     overviewSamples = int.Parse(args[++i]);
@@ -92,6 +104,14 @@ internal static class Program
         {
             await SearchAsync(fetcher, parser, search, cts.Token).ConfigureAwait(false);
             return 0;
+        }
+
+        if (jellyfinUrl is not null)
+        {
+            var token = (await File.ReadAllTextAsync(tokenFile!, cts.Token).ConfigureAwait(false)).Trim();
+            return await RunLibraryDiffAsync(
+                    fetcher, parser, jellyfinUrl, token, limit, cts.Token)
+                .ConfigureAwait(false);
         }
 
         if (ids.Count == 0)
@@ -582,6 +602,124 @@ internal static class Program
                     StartsAtOne: true,
                     IsContiguous: true)));
 
+    /// <summary>
+    /// Walks the library and reports, per series, where the stored episode titles differ from
+    /// what the matcher resolves today. The matcher receives the real topology and the real file
+    /// titles, so this is the production view rather than the pessimistic one.
+    /// </summary>
+    private static async Task<int> RunLibraryDiffAsync(
+        Fetcher fetcher,
+        AnimeClickHtmlParser parser,
+        string jellyfinUrl,
+        string token,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        using var jellyfin = new JellyfinClient(jellyfinUrl, token);
+        var serverName = await jellyfin.GetServerNameAsync(cancellationToken).ConfigureAwait(false);
+        var series = await jellyfin.GetAnimeClickSeriesAsync(cancellationToken).ConfigureAwait(false);
+        Console.WriteLine($"server: {serverName} — {series.Count} serie con id AnimeClick");
+        if (limit < series.Count)
+        {
+            Console.WriteLine($"limitato alle prime {limit}");
+            series = series.Take(limit).ToList();
+        }
+
+        var outcomes = new List<LibraryDiff.SeriesOutcome>();
+        var index = 0;
+        foreach (var entry in series)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            index++;
+            Console.Write($"\r[{index}/{series.Count}] {Truncate(entry.Name, 45),-46}");
+
+            var animeUrl = $"{BaseUrl}/anime/{entry.AnimeClickId.Trim('/')}";
+            var detailHtml = await fetcher.GetAsync(animeUrl, cancellationToken).ConfigureAwait(false);
+            if (detailHtml is null)
+            {
+                Console.WriteLine($"\r  ! {entry.Name}: pagina AnimeClick non raggiungibile ({entry.AnimeClickId})");
+                continue;
+            }
+
+            var anime = parser.ParseAnimePage(animeUrl, detailHtml);
+            var scratch = new AnimeReport { AnimeClickId = entry.AnimeClickId };
+            var rows = await LoadEpisodesAsync(fetcher, parser, animeUrl, scratch, cancellationToken)
+                .ConfigureAwait(false);
+            if (rows.Count == 0)
+            {
+                Console.WriteLine($"\r  ! {entry.Name}: nessuna riga episodio su AnimeClick ({entry.AnimeClickId})");
+                continue;
+            }
+
+            var libraryEpisodes = await jellyfin.GetEpisodesAsync(entry.Id, cancellationToken)
+                .ConfigureAwait(false);
+            outcomes.Add(LibraryDiff.Compare(entry, libraryEpisodes, rows, anime.SeasonsCount));
+        }
+
+        Console.WriteLine("\r" + new string(' ', 60));
+        PrintDiffSummary(outcomes, fetcher);
+        return outcomes.Any(o => o.Unresolved > 0) ? 1 : 0;
+    }
+
+    private static void PrintDiffSummary(List<LibraryDiff.SeriesOutcome> outcomes, Fetcher fetcher)
+    {
+        var interesting = outcomes
+            .Where(o => o.Unresolved > 0
+                        || o.WouldFillPlaceholder > 0
+                        || o.WouldOverwriteWithPlaceholder > 0
+                        || o.TitleDifferent - o.BothPlaceholder - o.WouldFillPlaceholder
+                        - o.WouldOverwriteWithPlaceholder > 0)
+            .OrderByDescending(o => o.Unresolved)
+            .ThenByDescending(o => o.WouldOverwriteWithPlaceholder)
+            .ThenByDescending(o => o.WouldFillPlaceholder)
+            .ToList();
+
+        foreach (var outcome in interesting)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"── {outcome.SeriesName}  [{outcome.AnimeClickId}]");
+            Console.WriteLine(
+                $"   episodi {outcome.EpisodesInLibrary} | risolti {outcome.Resolved} | "
+                + $"senza match {outcome.Unresolved} | titolo uguale {outcome.TitleEqual} | "
+                + $"da riempire {outcome.WouldFillPlaceholder} | rischio segnaposto "
+                + $"{outcome.WouldOverwriteWithPlaceholder} | entrambi segnaposto {outcome.BothPlaceholder} | "
+                + $"conf. bassa {outcome.WeakConfidence}");
+            foreach (var sample in outcome.Samples)
+            {
+                Console.WriteLine("     " + sample);
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("═══ riepilogo libreria ═══");
+        Console.WriteLine($"serie confrontate         : {outcomes.Count}");
+        Console.WriteLine($"serie con episodi persi   : {outcomes.Count(o => o.Unresolved > 0)}");
+        Console.WriteLine($"episodi totali            : {outcomes.Sum(o => o.EpisodesInLibrary)}");
+        Console.WriteLine($"episodi senza match       : {outcomes.Sum(o => o.Unresolved)}");
+        Console.WriteLine($"titolo già coincidente    : {outcomes.Sum(o => o.TitleEqual)}");
+        Console.WriteLine($"segnaposto da riempire    : {outcomes.Sum(o => o.WouldFillPlaceholder)}");
+        Console.WriteLine($"rischio di peggioramento  : {outcomes.Sum(o => o.WouldOverwriteWithPlaceholder)}");
+        Console.WriteLine($"segnaposto su entrambi    : {outcomes.Sum(o => o.BothPlaceholder)}");
+        Console.WriteLine(
+            "titolo diverso, entrambi reali: "
+            + outcomes.Sum(o => o.TitleDifferent - o.BothPlaceholder - o.WouldFillPlaceholder
+                                - o.WouldOverwriteWithPlaceholder));
+        Console.WriteLine($"match a confidenza <.80   : {outcomes.Sum(o => o.WeakConfidence)}");
+        Console.WriteLine($"richieste di rete         : {fetcher.NetworkRequests} (cache: {fetcher.CacheHits})");
+        Console.WriteLine();
+        Console.WriteLine(
+            "\"titolo diverso, entrambi reali\" è il caso da guardare a mano: in questa libreria sono attivi");
+        Console.WriteLine(
+            "anche AniList, Kitsu, AniSearch e TMDb, quindi un titolo scritto da un provider a priorità più");
+        Console.WriteLine(
+            "alta è un esito legittimo. \"Rischio di peggioramento\" è invece AnimeClick che offrirebbe un");
+        Console.WriteLine("segnaposto al posto di un titolo vero.");
+    }
+
     private static void DumpRows(List<AnimeClickEpisode> episodes)
     {
         Console.WriteLine();
@@ -793,6 +931,10 @@ internal static class Program
                                      (ripetibile)
               --file <path>          file con un id per riga (# per i commenti)
               --search "<titolo>"    cerca il titolo e stampa gli id, poi esce
+              --jellyfin <url>       confronta la libreria Jellyfin con quello che il plugin
+                                     produrrebbe oggi (richiede --token-file). Sola lettura.
+              --token-file <path>    file contenente la API key di Jellyfin
+              --limit <n>            in modalità --jellyfin, ferma dopo n serie
               --overview-samples <n> pagine episodio da campionare per la sinossi (default 3, 0 disattiva)
               --delay <secondi>      pausa fra richieste di rete (default 1.5)
               --dump-rows            stampa le righe come le vede il parser
