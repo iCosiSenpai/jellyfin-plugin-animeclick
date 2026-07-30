@@ -268,9 +268,12 @@ internal static class LibraryDiff
     /// </summary>
     private static string? DetectShift(List<(int Episode, string? Stored, string? Proposed)> sequence)
     {
+        // Grouped rather than indexed directly: a library can hold two episodes with the same
+        // number in one season (duplicate files, split parts), and that must not throw here.
         var stored = sequence
             .Where(entry => !string.IsNullOrWhiteSpace(entry.Stored))
-            .ToDictionary(entry => entry.Episode, entry => Normalize(entry.Stored!));
+            .GroupBy(entry => entry.Episode)
+            .ToDictionary(group => group.Key, group => Normalize(group.First().Stored!));
         if (stored.Count < 4)
         {
             return null;
