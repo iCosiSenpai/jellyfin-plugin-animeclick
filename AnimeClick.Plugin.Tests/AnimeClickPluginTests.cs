@@ -1186,6 +1186,55 @@ public class AnimeClickPluginTests
         "When the counts agree the sequel-page mapping must be unaffected.");
 }
 
+    [Xunit.Fact(DisplayName = "TVDB episode page: data is an object with an episodes array")]
+    public void TestTvdbEpisodePageRealShape()
+{
+    // Trimmed from a live /series/317802/episodes/default/ita?page=0 response. The parser used to
+    // require "data" itself to be an array, so every page was rejected and the TVDB synopsis
+    // chain produced nothing — invisibly, because the failure was logged at Debug. No test
+    // covered this parser with a realistic payload, which is how the wrong shape survived.
+    const string realShape = """
+        {
+          "status": "success",
+          "data": {
+            "id": 317802,
+            "name": "WWW.WORKING!!",
+            "slug": "www-working",
+            "defaultSeasonType": 1,
+            "episodes": [
+              { "id": 1, "seasonNumber": 1, "number": 1, "overview": "" },
+              { "id": 2, "seasonNumber": 1, "number": 2, "overview": "Trama del secondo." },
+              { "id": 3, "seasonNumber": 0, "number": 1, "overview": "Uno speciale." }
+            ],
+            "year": "2016"
+          },
+          "links": { "prev": null, "self": "…", "next": null, "total_items": 3, "page_size": 500 }
+        }
+        """;
+
+    var records = AnimeClickTvdbClient.ParseEpisodesFromPage(realShape);
+    Assert(records.Count == 3, $"Expected 3 episode records from data.episodes, got {records.Count}.");
+    Assert(AnimeClickTvdbClient.ParseEpisodeOverview(realShape, 1, 2) == "Trama del secondo.",
+        "S01E02 overview must be read from data.episodes.");
+    Assert(AnimeClickTvdbClient.ParseEpisodeOverview(realShape, 0, 1) == "Uno speciale.",
+        "Season zero must be addressable too.");
+    Assert(AnimeClickTvdbClient.ParseEpisodeOverview(realShape, 1, 1) == "",
+        "An episode with no Italian overview must come back empty, not missing: that is a real answer.");
+    Assert(AnimeClickTvdbClient.ParseNextLink(realShape) is null,
+        "A single-page response must report no next link.");
+
+    // The older flat shape must keep working, and a payload with neither must still be refused.
+    Assert(AnimeClickTvdbClient.ParseEpisodesFromPage(
+               """{"data":[{"seasonNumber":2,"number":5,"overview":"Piatto."}]}""").Count == 1,
+        "A response with data as an array must still parse.");
+    Assert(AnimeClickTvdbClient.ParseEpisodesFromPage("""{"data":{"id":1,"name":"senza episodi"}}""").Count == 0,
+        "An object without an episodes array must yield nothing.");
+    Assert(AnimeClickTvdbClient.ParseEpisodesFromPage("""{"data":"stringa"}""").Count == 0,
+        "A scalar data must be refused.");
+    Assert(AnimeClickTvdbClient.ParseEpisodesFromPage("non json").Count == 0,
+        "Malformed JSON must be refused.");
+}
+
     private static void Assert(bool condition, string message)
 {
     if (!condition)

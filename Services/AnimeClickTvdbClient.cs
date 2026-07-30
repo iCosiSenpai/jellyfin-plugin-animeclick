@@ -756,13 +756,37 @@ public class AnimeClickTvdbClient
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("data", out var data)
-                || data.ValueKind != JsonValueKind.Array)
+            if (!doc.RootElement.TryGetProperty("data", out var data))
             {
                 return false;
             }
 
-            foreach (var item in data.EnumerateArray())
+            // TheTVDB v4 answers /series/{id}/episodes/default/{lang} with "data" as an *object*
+            // describing the series, whose "episodes" property holds the array. This parser used
+            // to require "data" itself to be an array, so every page was classified as invalid and
+            // the entire TVDB synopsis path never produced anything — silently, because the
+            // failure was logged at Debug until 0.4.4.0 raised it. Verified against the live API:
+            // data is a dict with 21 keys, data.episodes is the list.
+            // An array is still accepted, so a response in the older shape keeps working.
+            JsonElement episodes;
+            if (data.ValueKind == JsonValueKind.Object)
+            {
+                if (!data.TryGetProperty("episodes", out episodes)
+                    || episodes.ValueKind != JsonValueKind.Array)
+                {
+                    return false;
+                }
+            }
+            else if (data.ValueKind == JsonValueKind.Array)
+            {
+                episodes = data;
+            }
+            else
+            {
+                return false;
+            }
+
+            foreach (var item in episodes.EnumerateArray())
             {
                 var season = item.TryGetProperty("seasonNumber", out var sEl) && sEl.ValueKind == JsonValueKind.Number
                     ? sEl.GetInt32() : 0;
