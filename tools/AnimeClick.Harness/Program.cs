@@ -743,7 +743,7 @@ internal static class Program
             Console.WriteLine(
                 $"   episodi {outcome.EpisodesInLibrary} | risolti {outcome.Resolved} | "
                 + $"senza match {outcome.Unresolved} | titolo uguale {outcome.TitleEqual} | "
-                + $"da riempire {outcome.WouldFillPlaceholder} | rischio segnaposto "
+                + $"da riempire {outcome.WouldFillPlaceholder} | segnaposto rifiutati "
                 + $"{outcome.WouldOverwriteWithPlaceholder} | entrambi segnaposto {outcome.BothPlaceholder} | "
                 + $"conf. bassa {outcome.WeakConfidence}");
             foreach (var shift in outcome.Shifts)
@@ -766,7 +766,7 @@ internal static class Program
         Console.WriteLine($"episodi senza match       : {outcomes.Sum(o => o.Unresolved)}");
         Console.WriteLine($"titolo già coincidente    : {outcomes.Sum(o => o.TitleEqual)}");
         Console.WriteLine($"segnaposto da riempire    : {outcomes.Sum(o => o.WouldFillPlaceholder)}");
-        Console.WriteLine($"rischio di peggioramento  : {outcomes.Sum(o => o.WouldOverwriteWithPlaceholder)}");
+        Console.WriteLine($"segnaposto rifiutati      : {outcomes.Sum(o => o.WouldOverwriteWithPlaceholder)}");
         Console.WriteLine($"segnaposto su entrambi    : {outcomes.Sum(o => o.BothPlaceholder)}");
         Console.WriteLine(
             "titolo diverso, entrambi reali: "
@@ -776,12 +776,20 @@ internal static class Program
         Console.WriteLine($"richieste di rete         : {fetcher.NetworkRequests} (cache: {fetcher.CacheHits})");
         Console.WriteLine();
         Console.WriteLine(
-            "\"titolo diverso, entrambi reali\" è il caso da guardare a mano: in questa libreria sono attivi");
+            "\"titolo diverso, entrambi reali\" è il caso da guardare a mano, e va letto insieme");
         Console.WriteLine(
-            "anche AniList, Kitsu, AniSearch e TMDb, quindi un titolo scritto da un provider a priorità più");
+            "all'ordine dei fetcher della libreria (Impostazioni > Librerie > Episodio): se AnimeClick");
         Console.WriteLine(
-            "alta è un esito legittimo. \"Rischio di peggioramento\" è invece AnimeClick che offrirebbe un");
-        Console.WriteLine("segnaposto al posto di un titolo vero.");
+            "viene prima, a un refresh il suo titolo sostituisce quello attuale, quindi questi sono gli");
+        Console.WriteLine(
+            "episodi che cambierebbero nome. Di solito hanno un titolo altrui perché AnimeClick allora");
+        Console.WriteLine("non riusciva ad agganciarli.");
+        Console.WriteLine();
+        Console.WriteLine(
+            "\"Segnaposto rifiutati\" sono le righe in cui AnimeClick ha solo \"Episodio N\" mentre la");
+        Console.WriteLine(
+            "libreria ha un titolo vero: il provider non li scrive, quindi lì non si rischia nulla — il");
+        Console.WriteLine("numero misura la qualità dei dati a monte.");
     }
 
     /// <summary>
