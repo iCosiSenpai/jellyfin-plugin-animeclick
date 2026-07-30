@@ -56,8 +56,21 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"\b(?:E|Ep|Eps|Episodio|Episode|Puntata)\.?\s*#?\s*\d", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex EpisodeMarkerRegex();
 
-    [GeneratedRegex(@"^(?:Episodio|Episode|Ep\.?)\s*#?\s*\d+(?:[\.,]\d+)?(?:\s*[-–/]\s*\d+)?[\.!]?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex EpisodeOverviewPlaceholderRegex();
+    // Covers both an episode overview and an episode title that carry no information beyond the
+    // number. The episode provider used to guard titles with its own, narrower pattern requiring
+    // a space and rejecting nothing else: "Episodio 11." , "Ep.11", "Episodio 11-12",
+    // "Episodio #11" and "Episode 3!" all got written into the library as titles. One concept,
+    // one pattern. "Puntata" is included because AnimeClick uses it too.
+    [GeneratedRegex(@"^(?:Episodio|Episode|Ep\.?|Puntata)\s*#?\s*\d+(?:[\.,]\d+)?(?:\s*[-–/]\s*\d+)?[\.!]?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex EpisodePlaceholderTextRegex();
+
+    /// <summary>
+    /// True when the text is a bare episode designation such as "Episodio 11" or "Ep.11-12",
+    /// i.e. it adds nothing to the number Jellyfin already has. Used to refuse it both as an
+    /// overview and as a title.
+    /// </summary>
+    public static bool IsPlaceholderEpisodeText(string? text)
+        => !string.IsNullOrWhiteSpace(text) && EpisodePlaceholderTextRegex().IsMatch(text.Trim());
 
     /// <summary>
     /// Parses an AnimeClick episode detail page. Only the schema.org description is
@@ -88,7 +101,7 @@ public partial class AnimeClickHtmlParser
         }
 
         overview = NormalizeWhitespace(descriptionNode.InnerText);
-        if (string.IsNullOrWhiteSpace(overview) || EpisodeOverviewPlaceholderRegex().IsMatch(overview))
+        if (string.IsNullOrWhiteSpace(overview) || IsPlaceholderEpisodeText(overview))
         {
             overview = null;
         }

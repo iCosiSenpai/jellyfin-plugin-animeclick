@@ -1235,6 +1235,36 @@ public class AnimeClickPluginTests
         "Malformed JSON must be refused.");
 }
 
+    [Xunit.Fact(DisplayName = "Placeholder episode text is refused as title and as overview")]
+    public void TestPlaceholderEpisodeTextIsSharedBetweenTitleAndOverview()
+{
+    // The episode provider used to guard titles with its own narrower pattern; these six forms
+    // slipped through it and were written into the library as if they were real titles.
+    foreach (var placeholder in new[]
+             {
+                 "Episodio 11", "Episodio 11.", "Episodio11", "Ep.11", "Ep. 11",
+                 "Episodio 11-12", "Episodio #11", "Episode 3!", "Puntata 5", "Episodio 11,5"
+             })
+    {
+        Assert(AnimeClickHtmlParser.IsPlaceholderEpisodeText(placeholder),
+            $"\"{placeholder}\" adds nothing to the number and must be refused.");
+    }
+
+    foreach (var real in new[]
+             {
+                 "Il ritorno di Naruto", "Episodio speciale di Natale", "San Valentino",
+                 "12 anni dopo", "Ep. 11 - La resa dei conti"
+             })
+    {
+        Assert(!AnimeClickHtmlParser.IsPlaceholderEpisodeText(real),
+            $"\"{real}\" carries information and must be kept.");
+    }
+
+    Assert(!AnimeClickHtmlParser.IsPlaceholderEpisodeText(null)
+           && !AnimeClickHtmlParser.IsPlaceholderEpisodeText("   "),
+        "Null and blank are not placeholders: there is nothing to refuse.");
+}
+
     private static void Assert(bool condition, string message)
 {
     if (!condition)
