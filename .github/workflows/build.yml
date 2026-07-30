@@ -106,47 +106,39 @@ jobs:
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            Rilascio di correttezza, sicurezza e robustezza: tre giri di audit del codice
-            sopra la 0.4.3, senza nuove funzionalità e senza cambi di configurazione
-            richiesti all'utente.
+            Rilascio di correzioni. Tre difetti sono stati trovati mettendo il plugin alla prova
+            su una libreria reale, non leggendo il codice, e due di essi impedivano da sempre a
+            intere funzioni di produrre qualcosa.
 
-            **Correttezza dei metadati**
-            - **Righe "Speciale" non diventano più episodi con numero l'anno.** L'etichetta
-              italiana `Speciale ...` non veniva riconosciuta come speciale e il primo numero
-              trovato nell'etichetta veniva preso come numero di episodio: una riga
-              "Speciale natalizio 2015" diventava l'episodio 2015. Su una pagina con etichette
-              miste questo spostava di una posizione tutti gli episodi successivi; su una pagina
-              piatta rompeva la suddivisione automatica delle stagioni. Riconosciute anche
-              `Riepilogo` e `Sigla`.
-            - Il filtro sulle locandine a bassa risoluzione non si disattiva più da solo: il
-              rilevamento delle dimensioni non memorizza più i propri fallimenti per una
-              settimana, e legge un prefisso abbastanza grande da funzionare anche sui JPEG con
-              dati EXIF o profilo colore.
+            **Le sinossi italiane da TheTVDB non hanno mai funzionato**
+            TheTVDB risponde con l'elenco degli episodi annidato dentro un oggetto, mentre il
+            plugin si aspettava un elenco al primo livello: ogni pagina veniva quindi scartata
+            come non valida e l'anello TheTVDB della catena sinossi non ha mai restituito niente,
+            in silenzio. Su otto serie di prova TheTVDB aveva 119 sinossi italiane su 212
+            episodi, tutte irraggiungibili. Essendo il primo anello dopo AnimeClick, la
+            correzione riduce anche il ricorso alla traduzione automatica.
 
-            **Sicurezza**
-            - Gli URL immagine di serie, film, episodi e stagioni passano ora dalla stessa
-              allow-list host su HTTPS già usata da locandine e foto del cast: quattro percorsi
-              su sei scaricavano qualunque indirizzo. Stesso controllo sulle anteprime dei
-              risultati di ricerca.
-            - Un header `Retry-After` senza limiti non può più bloccare lo scraping fino al
-              riavvio di Jellyfin: la pausa richiesta dal server è rispettata ma limitata a 15
-              minuti.
-            - Le impostazioni sono validate sul server e non solo nella pagina di
-              configurazione: URL di base non valido, ritardi negativi o valori fuori scala
-              vengono corretti invece di essere salvati.
+            **Le sinossi di AnimeClick mancavano su tutti gli episodi con un accento nel titolo**
+            L'identificativo salvato per quegli episodi contiene la codifica percentuale
+            (`c%C3%A8-una-ragione`), e il plugin la rifiutava, cioè rifiutava un dato che aveva
+            scritto lui stesso: la sinossi AnimeClick non veniva mai richiesta. Su una libreria di
+            prova erano 224 identificativi su 1781, il 13%.
 
-            **Robustezza e diagnosi**
-            - Timeout espliciti e tetto sulla dimensione delle risposte su tutti i client di
-              rete; budget complessivo sul recupero della lista episodi di TheTVDB.
-            - Un token TheTVDB scaduto o revocato viene ora scartato invece di essere
-              riutilizzato per 24 ore lasciando ogni sinossi vuota.
-            - **I fallimenti veri sono visibili nel log**: chiave API sbagliata, quota esaurita,
-              401 e cambi di struttura del sito erano registrati a livello Debug, quindi con la
-              configurazione di default apparivano all'utente solo come "nessun metadato".
-            - Un errore di scrittura della cache (disco pieno, permessi) non fa più perdere
-              tutti i metadati dell'elemento in lavorazione.
-            - Le foto degli autori sono ora in cache: era il percorso di scraping più pesante,
-              ripetuto per ogni doppiatore a ogni scansione.
+            **Una stagione intera poteva ricevere i titoli sfalsati di una posizione**
+            Quando la tabella di AnimeClick contiene più righe degli episodi che AnimeClick stessa
+            dichiara, i suoi numeri e le sue posizioni non corrispondono più alla libreria e ogni
+            titolo finiva sull'episodio precedente, con piena confidenza. Ora quella discordanza
+            viene rilevata e il titolo del file deve confermare la corrispondenza: in mancanza
+            l'episodio resta intatto, perché nessun metadato è preferibile a un metadato
+            plausibile e sbagliato.
+
+            **Altre correzioni**
+            - I titoli che ripetono soltanto il numero (`Episodio 11.`, `Ep.11`, `Episodio 11-12`,
+              `Puntata 5`) non vengono più scritti: la regola è ora una sola per titoli e sinossi.
+            - La coda delle traduzioni non può più fermarsi in silenzio: un guasto viene registrato
+              e il lavoratore riparte, invece di lasciare le traduzioni bloccate fino al riavvio.
+            - Passo minimo e rispetto delle richieste di rallentamento verso TheTVDB, TMDB e
+              AniList, che prima venivano interrogati senza freni durante una scansione.
 
             La catena sinossi episodi resta AnimeClick → TheTVDB ita → TMDB it-IT →
             TMDB en-US → TheTVDB eng → Ollama Cloud EN→IT. La modalità solo AnimeClick
