@@ -33,6 +33,7 @@ internal static class Program
         string? jellyfinUrl = null;
         string? tokenFile = null;
         var limit = int.MaxValue;
+        var ignoreDeclaredCount = false;
         var overviewSamples = 3;
         var dumpRows = false;
         var refresh = false;
@@ -72,6 +73,9 @@ internal static class Program
                     break;
                 case "--delay" when i + 1 < args.Length:
                     delaySeconds = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+                case "--ignore-declared-count":
+                    ignoreDeclaredCount = true;
                     break;
                 case "--dump-rows":
                     dumpRows = true;
@@ -114,7 +118,7 @@ internal static class Program
         {
             var token = (await File.ReadAllTextAsync(tokenFile!, cts.Token).ConfigureAwait(false)).Trim();
             return await RunLibraryDiffAsync(
-                    fetcher, parser, jellyfinUrl, token, limit, cts.Token)
+                    fetcher, parser, jellyfinUrl, token, limit, ignoreDeclaredCount, cts.Token)
                 .ConfigureAwait(false);
         }
 
@@ -623,6 +627,7 @@ internal static class Program
         string jellyfinUrl,
         string token,
         int limit,
+        bool ignoreDeclaredCount,
         CancellationToken cancellationToken)
     {
         using var jellyfin = new JellyfinClient(jellyfinUrl, token);
@@ -707,7 +712,8 @@ internal static class Program
             outcomes.Add(LibraryDiff.Compare(
                 entry,
                 libraryEpisodes,
-                season => season is > 0 && perSeason.TryGetValue(season.Value, out var s) ? s : seriesLevel));
+                season => season is > 0 && perSeason.TryGetValue(season.Value, out var s) ? s : seriesLevel,
+                ignoreDeclaredCount));
         }
 
         Console.WriteLine("\r" + new string(' ', 60));
@@ -718,12 +724,14 @@ internal static class Program
     private static void PrintDiffSummary(List<LibraryDiff.SeriesOutcome> outcomes, Fetcher fetcher)
     {
         var interesting = outcomes
-            .Where(o => o.Unresolved > 0
+            .Where(o => o.Shifts.Count > 0
+                        || o.Unresolved > 0
                         || o.WouldFillPlaceholder > 0
                         || o.WouldOverwriteWithPlaceholder > 0
                         || o.TitleDifferent - o.BothPlaceholder - o.WouldFillPlaceholder
                         - o.WouldOverwriteWithPlaceholder > 0)
-            .OrderByDescending(o => o.Unresolved)
+            .OrderByDescending(o => o.Shifts.Count)
+            .ThenByDescending(o => o.Unresolved)
             .ThenByDescending(o => o.WouldOverwriteWithPlaceholder)
             .ThenByDescending(o => o.WouldFillPlaceholder)
             .ToList();
@@ -738,6 +746,11 @@ internal static class Program
                 + $"da riempire {outcome.WouldFillPlaceholder} | rischio segnaposto "
                 + $"{outcome.WouldOverwriteWithPlaceholder} | entrambi segnaposto {outcome.BothPlaceholder} | "
                 + $"conf. bassa {outcome.WeakConfidence}");
+            foreach (var shift in outcome.Shifts)
+            {
+                Console.WriteLine("     SLITTAMENTO " + shift);
+            }
+
             foreach (var sample in outcome.Samples)
             {
                 Console.WriteLine("     " + sample);
@@ -747,6 +760,7 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine("═══ riepilogo libreria ═══");
         Console.WriteLine($"serie confrontate         : {outcomes.Count}");
+        Console.WriteLine($"SERIE CON SLITTAMENTO     : {outcomes.Count(o => o.Shifts.Count > 0)}");
         Console.WriteLine($"serie con episodi persi   : {outcomes.Count(o => o.Unresolved > 0)}");
         Console.WriteLine($"episodi totali            : {outcomes.Sum(o => o.EpisodesInLibrary)}");
         Console.WriteLine($"episodi senza match       : {outcomes.Sum(o => o.Unresolved)}");
@@ -1034,6 +1048,9 @@ internal static class Program
                                      produrrebbe oggi (richiede --token-file). Sola lettura.
               --token-file <path>    file contenente la API key di Jellyfin
               --limit <n>            in modalità --jellyfin, ferma dopo n serie
+              --ignore-declared-count
+                                     ignora la guardia sul conteggio dichiarato: mostra cosa
+                                     proporrebbe il matcher senza di essa
               --overview-samples <n> pagine episodio da campionare per la sinossi (default 3, 0 disattiva)
               --delay <secondi>      pausa fra richieste di rete (default 1.5)
               --dump-rows            stampa le righe come le vede il parser
