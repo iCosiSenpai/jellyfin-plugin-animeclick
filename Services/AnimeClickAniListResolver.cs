@@ -24,6 +24,10 @@ public class AnimeClickAniListResolver
     private const double AmbiguityMargin = 0.05;
     private const long MaximumResponseBytes = 4 * 1024 * 1024;
 
+    // AniList documenta circa 90 richieste al minuto: 700 ms fra l'una e l'altra tiene il passo
+    // sotto quella soglia anche con una scansione che procede senza pause.
+    private static readonly RequestThrottle Throttle = new("AniList", TimeSpan.FromMilliseconds(700));
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickAniListResolver> _logger;
@@ -191,9 +195,21 @@ public class AnimeClickAniListResolver
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
             };
+            await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
+                if (RequestThrottle.IsRateLimited(response.StatusCode))
+                {
+                    var pause = Throttle.NoticeRateLimit(response);
+                    _logger.LogWarning(
+                        "AniListResolver: AniList ha risposto {Status} per {Title}; pausa di {Pause} prima della prossima richiesta",
+                        response.StatusCode,
+                        title,
+                        pause);
+                    return AniListQueryResult.Incomplete;
+                }
+
                 // 429 is the common one: AniList allows ~90 requests/minute and a library scan
                 // can exceed that. The miss is deliberately not cached, so the next scan
                 // retries — which is only diagnosable if the throttling is actually visible.

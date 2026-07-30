@@ -33,6 +33,9 @@ public class AnimeClickTmdbClient
     // and a dead Jellyfin process.
     private const long MaximumResponseBytes = 8 * 1024 * 1024;
 
+    // TMDB e' generoso ma non illimitato, e una scansione grande fa due richieste per episodio.
+    private static readonly RequestThrottle Throttle = new("TMDB", TimeSpan.FromMilliseconds(120));
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickTmdbClient> _logger;
@@ -272,9 +275,20 @@ public class AnimeClickTmdbClient
         {
             var client = BuildClient(configuration);
 
+            await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             using var response = await client
                 .GetAsync(BuildSearchTvUrl(configuration.TmdbApiKey, title, year), cancellationToken)
                 .ConfigureAwait(false);
+            if (RequestThrottle.IsRateLimited(response.StatusCode))
+            {
+                var pause = Throttle.NoticeRateLimit(response);
+                _logger.LogWarning(
+                    "TmdbClient: TMDB ha risposto {Status}; pausa di {Pause} prima della prossima richiesta",
+                    response.StatusCode,
+                    pause);
+                return ExternalIdLookupResult.Incomplete;
+            }
+
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 return ExternalIdLookupResult.ConfirmedMiss;
@@ -315,6 +329,7 @@ public class AnimeClickTmdbClient
         {
             var client = BuildClient(configuration);
 
+            await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             using var response = await client
                 .GetAsync(
                     BuildEpisodeTranslationsUrl(
@@ -327,6 +342,16 @@ public class AnimeClickTmdbClient
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 return EpisodeTranslationsFetchResult.ConfirmedEmpty;
+            }
+
+            if (RequestThrottle.IsRateLimited(response.StatusCode))
+            {
+                var pause = Throttle.NoticeRateLimit(response);
+                _logger.LogWarning(
+                    "TmdbClient: TMDB ha risposto {Status} sulle traduzioni; pausa di {Pause} prima della prossima richiesta",
+                    response.StatusCode,
+                    pause);
+                return EpisodeTranslationsFetchResult.Incomplete;
             }
 
             if (response.StatusCode == HttpStatusCode.Unauthorized)
