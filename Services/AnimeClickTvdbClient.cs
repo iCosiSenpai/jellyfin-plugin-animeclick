@@ -41,6 +41,11 @@ public class AnimeClickTvdbClient
     private const int EpisodeFetchBudgetSeconds = 180;
     private const int PageLimit = 100;
 
+    // Prima di questo, TheTVDB veniva interrogato alla velocita' con cui la scansione produceva
+    // richieste, e con il fix del parser della pagina episodi ora le sue risposte vengono
+    // davvero usate, quindi il traffico reale sale.
+    private static readonly RequestThrottle Throttle = new("TheTVDB", TimeSpan.FromMilliseconds(200));
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickTvdbClient> _logger;
@@ -105,7 +110,18 @@ public class AnimeClickTvdbClient
                 Content = new StringContent(BuildLoginBody(configuration.TvdbApiKey), Encoding.UTF8, "application/json")
             };
 
+            await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (RequestThrottle.IsRateLimited(response.StatusCode))
+            {
+                var pause = Throttle.NoticeRateLimit(response);
+                _logger.LogWarning(
+                    "TvdbClient: login ha risposto {Status}; pausa di {Pause} prima della prossima richiesta",
+                    response.StatusCode,
+                    pause);
+                return null;
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 // An unusable API key is a configuration problem the user must see: at Debug
@@ -462,10 +478,21 @@ public class AnimeClickTvdbClient
             using var request = new HttpRequestMessage(HttpMethod.Get, BuildSearchUrl(title));
             request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
 
+            await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 return ExternalIdLookupResult.ConfirmedMiss;
+            }
+
+            if (RequestThrottle.IsRateLimited(response.StatusCode))
+            {
+                var pause = Throttle.NoticeRateLimit(response);
+                _logger.LogWarning(
+                    "TvdbClient: ricerca ha risposto {Status}; pausa di {Pause} prima della prossima richiesta",
+                    response.StatusCode,
+                    pause);
+                return ExternalIdLookupResult.Incomplete;
             }
 
             if (response.StatusCode == HttpStatusCode.Unauthorized)
@@ -507,10 +534,22 @@ public class AnimeClickTvdbClient
                 using var request = new HttpRequestMessage(HttpMethod.Get, BuildEpisodesUrl(tvdbId, lang, page));
                 request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
 
+                await Throttle.WaitAsync(budgetToken).ConfigureAwait(false);
                 using var response = await client.SendAsync(request, budgetToken).ConfigureAwait(false);
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
                     return new TvdbEpisodeFetchResult(all, true);
+                }
+
+                if (RequestThrottle.IsRateLimited(response.StatusCode))
+                {
+                    var pause = Throttle.NoticeRateLimit(response);
+                    _logger.LogWarning(
+                        "TvdbClient: lista episodi ha risposto {Status} per tvdb={Tvdb}; pausa di {Pause}",
+                        response.StatusCode,
+                        tvdbId,
+                        pause);
+                    return new TvdbEpisodeFetchResult(all, false);
                 }
 
                 if (response.StatusCode == HttpStatusCode.Unauthorized)

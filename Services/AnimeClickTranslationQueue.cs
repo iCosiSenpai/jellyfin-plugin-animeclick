@@ -17,6 +17,8 @@ namespace AnimeClick.Plugin.Services;
 public sealed class AnimeClickTranslationQueue : IDisposable
 {
     private const int QueueCapacity = 256;
+    private const int WorkerRestartLimit = 5;
+    private static readonly TimeSpan WorkerRestartDelay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FastFailureBackoff = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan TimeoutBackoff = TimeSpan.FromMinutes(15);
 
@@ -250,7 +252,58 @@ public sealed class AnimeClickTranslationQueue : IDisposable
 
     private async Task ProcessQueueAsync()
     {
-        try
+        // Supervisor. The drain loop below used to be this whole method with only a cancellation
+        // catch, so any other exception escaping it faulted this task with nobody observing it:
+        // no log at any level, _pending never drained again, and from then on every EnqueueAsync
+        // answered AlreadyQueued for those keys. The Italian synopsis feature stopped existing
+        // silently until Jellyfin restarted. A fault is now reported and retried, bounded.
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await DrainQueueAsync().ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                // Nothing claimed can be trusted after an unexpected fault here, and releasing
+                // the claims is what keeps EnqueueAsync from refusing those keys forever.
+                _pending.Clear();
+
+                if (attempt >= WorkerRestartLimit)
+                {
+                    _logger.LogError(
+                        ex,
+                        "AnimeClick translation worker failed {Attempts} times and will not restart; episode synopses needing translation stay untranslated until Jellyfin is restarted",
+                        attempt);
+                    return;
+                }
+
+                _logger.LogError(
+                    ex,
+                    "AnimeClick translation worker faulted (attempt {Attempt} of {Limit}); restarting in {Delay}",
+                    attempt,
+                    WorkerRestartLimit,
+                    WorkerRestartDelay);
+
+                try
+                {
+                    await Task.Delay(WorkerRestartDelay, _shutdown.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    private async Task DrainQueueAsync()
+    {
         {
             await foreach (var item in _channel.Reader.ReadAllAsync(_shutdown.Token).ConfigureAwait(false))
             {
@@ -352,10 +405,6 @@ public sealed class AnimeClickTranslationQueue : IDisposable
                     _pending.TryRemove(item.WorkKey, out _);
                 }
             }
-        }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
-        {
-            // Normal plugin shutdown.
         }
     }
 

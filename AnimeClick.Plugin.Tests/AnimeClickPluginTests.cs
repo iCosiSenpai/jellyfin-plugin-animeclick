@@ -1265,6 +1265,45 @@ public class AnimeClickPluginTests
         "Null and blank are not placeholders: there is nothing to refuse.");
 }
 
+    [Xunit.Fact(DisplayName = "Request throttle paces requests and clamps a hostile Retry-After")]
+    public async Task TestRequestThrottle()
+{
+    // Pacing: the second start must not happen before the minimum interval has passed.
+    var paced = new RequestThrottle("prova", TimeSpan.FromMilliseconds(150));
+    var clock = System.Diagnostics.Stopwatch.StartNew();
+    await paced.WaitAsync(CancellationToken.None);
+    await paced.WaitAsync(CancellationToken.None);
+    clock.Stop();
+    Assert(clock.ElapsedMilliseconds >= 140,
+        $"Two consecutive requests must be spaced by the minimum interval, took {clock.ElapsedMilliseconds} ms.");
+
+    // A server-requested pause is honoured but never unbounded: the same reasoning as the
+    // AnimeClick gate, where an absurd value could park every later request until restart.
+    var clamped = new RequestThrottle("prova", TimeSpan.Zero);
+    using var absurd = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+    absurd.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromDays(3650));
+    Assert(clamped.NoticeRateLimit(absurd) == TimeSpan.FromMinutes(15),
+        "A ten-year Retry-After must be clamped to the maximum backoff.");
+
+    var honoured = new RequestThrottle("prova", TimeSpan.Zero);
+    using var reasonable = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+    reasonable.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(20));
+    Assert(honoured.NoticeRateLimit(reasonable) == TimeSpan.FromSeconds(20),
+        "A reasonable Retry-After must be honoured as asked.");
+
+    var defaulted = new RequestThrottle("prova", TimeSpan.Zero);
+    using var noHeader = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+    Assert(defaulted.NoticeRateLimit(noHeader) == TimeSpan.FromSeconds(30),
+        "Without the header a sensible default pause must still be applied.");
+
+    Assert(RequestThrottle.IsRateLimited(HttpStatusCode.TooManyRequests)
+           && RequestThrottle.IsRateLimited(HttpStatusCode.ServiceUnavailable),
+        "429 and 503 mean the caller is going too fast.");
+    Assert(!RequestThrottle.IsRateLimited(HttpStatusCode.NotFound)
+           && !RequestThrottle.IsRateLimited(HttpStatusCode.Unauthorized),
+        "404 and 401 are not throttling and must not trigger a pause.");
+}
+
     private static void Assert(bool condition, string message)
 {
     if (!condition)
