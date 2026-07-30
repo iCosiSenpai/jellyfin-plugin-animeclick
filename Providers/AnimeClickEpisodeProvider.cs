@@ -398,11 +398,9 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             var wroteMetadata = false;
             if (!string.IsNullOrWhiteSpace(match.Title))
             {
-                var isGeneric = System.Text.RegularExpressions.Regex.IsMatch(
-                    match.Title,
-                    @"^(?:Episodio|Episode|Ep\.?)\s+\d+$",
-                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                if (!isGeneric)
+                // Shared with the overview check in the parser: a title that only restates the
+                // number is worse than leaving Jellyfin's own, because it looks deliberate.
+                if (!AnimeClickHtmlParser.IsPlaceholderEpisodeText(match.Title))
                 {
                     result.Item.Name = match.Title;
                     wroteMetadata = true;
