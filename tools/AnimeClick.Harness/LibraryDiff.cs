@@ -229,8 +229,8 @@ internal static class LibraryDiff
                 if (outcome.Samples.Count < 8)
                 {
                     outcome.Samples.Add(
-                        $"{coordinate} RISCHIO: in libreria \"{Short(episode.Name)}\", "
-                        + $"AnimeClick offre il segnaposto \"{Short(proposed)}\"");
+                        $"{coordinate} SCARTATO: AnimeClick offre il segnaposto \"{Short(proposed)}\", "
+                        + $"il plugin lo rifiuta e resta \"{Short(episode.Name)}\"");
                 }
 
                 continue;
