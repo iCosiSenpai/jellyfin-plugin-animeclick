@@ -1084,6 +1084,108 @@ public class AnimeClickPluginTests
         "A missing base URL must fall back to the default.");
 }
 
+    [Xunit.Fact(DisplayName = "Percent-encoded episode ids are accepted and round-trip to a URL")]
+    public void TestPercentEncodedProviderIdsAreUsable()
+{
+    // The plugin writes these itself, from the episode URL, whenever the Italian title carries
+    // an accent. Before the fix the id was rejected on the way back in and the AnimeClick
+    // synopsis was never fetched for those episodes — 13% of a real library.
+    Assert(AnimeClickClient.TryNormalizeAnimeClickId("216767/c%C3%A8-una-ragione-per-tutto", out var accented),
+        "An id with a percent-encoded accent must be accepted.");
+    Assert(accented == "216767/cè-una-ragione-per-tutto",
+        $"The accent must be decoded, got \"{accented}\".");
+
+    Assert(AnimeClickClient.TryBuildEpisodeUrl("https://www.animeclick.it", accented, out var url),
+        "A decoded id must still build an episode URL.");
+    Assert(url == "https://www.animeclick.it/episodio/216767/c%C3%A8-una-ragione-per-tutto",
+        $"The URL must re-encode the accent for the request, got \"{url}\".");
+
+    Assert(AnimeClickClient.TryNormalizeAnimeClickId("215342/il-lavoro-part-time-pu%C3%B2-cambiare-la-vita", out _),
+        "The other shape observed in the library must be accepted too.");
+
+    // Plain ids must be untouched: this is the regression that matters most.
+    Assert(AnimeClickClient.TryNormalizeAnimeClickId("216762/una-storia-divertente", out var plain)
+           && plain == "216762/una-storia-divertente",
+        "An id without encoding must pass through unchanged.");
+    Assert(AnimeClickClient.TryNormalizeAnimeClickId("2966-naruto", out var legacy) && legacy == "2966/naruto",
+        "The legacy dash form must still be migrated.");
+}
+
+    [Xunit.Fact(DisplayName = "Decoding an id cannot smuggle path separators or traversal")]
+    public void TestPercentDecodingCannotEscapeTheIdShape()
+{
+    // Decoding happens before validation on purpose, so an encoded separator becomes a real one
+    // and is then refused by the same conservative class, instead of reaching URL composition.
+    foreach (var hostile in new[]
+             {
+                 "216767/a%2Fb",
+                 "216767/%2E%2E%2F%2E%2E%2Fetc%2Fpasswd",
+                 "216767/..%2Fadmin",
+                 "216767/a%00b",
+                 "216767/a%20b",
+                 "216767/%2Fetc"
+             })
+    {
+        Assert(!AnimeClickClient.TryNormalizeAnimeClickId(hostile, out _),
+            $"\"{hostile}\" must be rejected after decoding.");
+    }
+}
+
+    [Xunit.Fact(DisplayName = "Extra rows past the declared count stop position being evidence")]
+    public void TestSeasonPageWithMoreRowsThanDeclaredNeedsCorroboration()
+{
+    // Reproduces kimi-ni-todoke-ii-tv: a sequel page with 13 rows while AnimeClick declares 12,
+    // the extra one first, so ordinal 1 is not the library's E01. Before the guard the matcher
+    // accepted this at score 120 and mis-titled the whole season one episode early.
+    var html = """
+        <table class="table"><tbody>
+        <tr><td>Ep. 01</td><td><a href="/episodio/9001/extra">Riga in più</a></td><td>23'</td></tr>
+        <tr><td>Ep. 02</td><td><a href="/episodio/9002/vero-primo">Vero primo</a></td><td>23'</td></tr>
+        <tr><td>Ep. 03</td><td><a href="/episodio/9003/vero-secondo">Vero secondo</a></td><td>23'</td></tr>
+        </tbody></table>
+        """;
+    var rows = new AnimeClickHtmlParser().ParseEpisodesPage(html, "https://www.animeclick.it");
+
+    var unguarded = AnimeClickEpisodeMatcher.Match(
+        rows,
+        new AnimeClickEpisodeMatchContext(1, 1) { IsSeasonSpecificPage = true });
+    Assert(unguarded.Success && unguarded.Strategy == "seasonPageOrdinal",
+        "Without a declared count the sequel-page mapping must stay available as before.");
+
+    var guarded = AnimeClickEpisodeMatcher.Match(
+        rows,
+        new AnimeClickEpisodeMatchContext(1, 1)
+        {
+            IsSeasonSpecificPage = true,
+            DeclaredEpisodeCount = 2
+        });
+    Assert(!guarded.Success,
+        $"3 rows against 2 declared must not be accepted on position alone, got \"{guarded.Episode?.Title}\".");
+
+    // The file's own title is corroboration, so the mapping is still usable when it agrees.
+    var corroborated = AnimeClickEpisodeMatcher.Match(
+        rows,
+        new AnimeClickEpisodeMatchContext(1, 1)
+        {
+            IsSeasonSpecificPage = true,
+            DeclaredEpisodeCount = 2,
+            JellyfinTitle = "Riga in più"
+        });
+    Assert(corroborated.Success && corroborated.Episode?.Title == "Riga in più",
+        "A matching file title must still corroborate the mapping.");
+
+    // Counts that agree must behave exactly as before the guard.
+    var consistent = AnimeClickEpisodeMatcher.Match(
+        rows,
+        new AnimeClickEpisodeMatchContext(1, 2)
+        {
+            IsSeasonSpecificPage = true,
+            DeclaredEpisodeCount = 3
+        });
+    Assert(consistent.Success && consistent.Strategy == "seasonPageOrdinal",
+        "When the counts agree the sequel-page mapping must be unaffected.");
+}
+
     private static void Assert(bool condition, string message)
 {
     if (!condition)

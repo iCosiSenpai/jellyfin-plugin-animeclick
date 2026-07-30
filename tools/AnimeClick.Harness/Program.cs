@@ -677,7 +677,8 @@ internal static class Program
                         .ConfigureAwait(false);
                     if (rows.Count > 0)
                     {
-                        source = new LibraryDiff.SeasonSource(rows, page.SeasonsCount, seasonSpecific, animeClickId);
+                        source = new LibraryDiff.SeasonSource(
+                            rows, page.SeasonsCount, page.EpisodeCount, seasonSpecific, animeClickId);
                     }
                 }
 

@@ -371,6 +371,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             DeclaredSeasonsCount = catalog.DeclaredSeasonsCount > 0
                 ? catalog.DeclaredSeasonsCount
                 : null,
+            DeclaredEpisodeCount = catalog.DeclaredEpisodeCount,
             IsSeasonSpecificPage = isSeasonSpecificPage
         };
         var episodeMatch = AnimeClickEpisodeMatcher.Match(catalog.Episodes, context);

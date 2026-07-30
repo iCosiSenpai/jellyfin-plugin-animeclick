@@ -9,6 +9,12 @@ namespace AnimeClick.Plugin.Services;
 
 public static class AnimeClickEpisodeMatcher
 {
+    /// <summary>
+    /// Score a candidate is held to when the AnimeClick table contradicts itself: below the
+    /// acceptance threshold of 70, but close enough that title evidence can still lift it over.
+    /// </summary>
+    private const int UncorroboratedScoreCap = 55;
+
     public static AnimeClickEpisodeMatch Match(
         IReadOnlyCollection<AnimeClickEpisode> episodes,
         int? jellyfinSeasonNumber,
@@ -224,6 +230,36 @@ public static class AnimeClickEpisodeMatcher
                          && episode.RawEpisodeNumber == context.JellyfinEpisodeNumber))
             {
                 AddCandidate(candidates, episode, 78, "same-page", "unseasoned AnimeClick row number");
+            }
+        }
+
+        // A table carrying more regular rows than the episode count AnimeClick itself declares is
+        // internally inconsistent, and the surplus row is often the first one: on
+        // kimi-ni-todoke-ii-tv there are 13 rows against 12 declared, so both the printed numbers
+        // and the row positions sit one step ahead of the library and every title lands on the
+        // previous episode. That used to be accepted at 0.96 confidence — which is how an entire
+        // season gets silently mis-titled, with each episode carrying a plausible wrong name.
+        //
+        // In that state neither position nor AnimeClick's own numbering is evidence, so every
+        // candidate is capped below the acceptance threshold. Capping instead of discarding keeps
+        // the mapping usable when the file's own title corroborates it, and leaves the episode
+        // untouched when nothing does: no metadata beats confidently wrong metadata. The
+        // provider-ID anchor above is unaffected, because identity is not a positional guess.
+        var regularRowCount = ordered.Count(episode => !episode.IsSpecial);
+        if (context.DeclaredEpisodeCount is > 0
+            && regularRowCount > context.DeclaredEpisodeCount.Value)
+        {
+            foreach (var episode in candidates.Keys.ToList())
+            {
+                var candidate = candidates[episode];
+                if (candidate.Score > UncorroboratedScoreCap)
+                {
+                    candidates[episode] = candidate with
+                    {
+                        Score = UncorroboratedScoreCap,
+                        Reason = "table carries more rows than AnimeClick declares; needs corroboration"
+                    };
+                }
             }
         }
 
@@ -561,6 +597,12 @@ public sealed class AnimeClickEpisodeMatchContext
     public AnimeClickEpisodeLayoutOverride? LayoutOverride { get; init; }
 
     public int? DeclaredSeasonsCount { get; init; }
+
+    /// <summary>
+    /// Episode count AnimeClick declares for the page the rows came from, when known. Compared
+    /// against the rows actually parsed to detect a table that carries more than it counts.
+    /// </summary>
+    public int? DeclaredEpisodeCount { get; init; }
 
     public bool IsSeasonSpecificPage { get; init; }
 }
