@@ -58,6 +58,49 @@ internal static class TestFixtures
 """;
 
     /// <summary>
+    /// Mimics AnimeClick's real /staff page for "You and I are Polar Opposites": the sigle are
+    /// role sections like any other credit, and its /multimedia page carries no OP/ED block at
+    /// all, so this page is the only place they appear.
+    /// </summary>
+    public const string StaffWithThemeSongsHtml = """
+<html><body>
+<h4>Regia</h4>
+<div class="well">
+  <div class="media">
+    <h4 class="media-heading"><a href="/autore/1/takakazu-nagatomo">Takakazu Nagatomo</a></h4>
+  </div>
+</div>
+<h4>Character Design</h4>
+<div class="well">
+  <div class="media">
+    <h4 class="media-heading"><a href="/autore/2/mako-miyako">Mako Miyako</a></h4>
+  </div>
+</div>
+<h4>Opening - Megane o hazushite</h4>
+<div class="well">
+  <div class="media">
+    <h4 class="media-heading"><a href="/autore/3/noa">Noa</a></h4>
+  </div>
+</div>
+<h4>Ending - Pure</h4>
+<div class="well">
+  <div class="media">
+    <h4 class="media-heading"><a href="/autore/4/eriko-hashimoto">Eriko Hashimoto</a></h4>
+  </div>
+  <div class="media">
+    <h4 class="media-heading"><a href="/autore/5/pas-tasta">PAS TASTA</a></h4>
+  </div>
+</div>
+<h4>Opening 2 - nekojarashi</h4>
+<div class="well">
+  <div class="media">
+    <h4 class="media-heading"><a href="/autore/6/7co">7co</a></h4>
+  </div>
+</div>
+</body></html>
+""";
+
+    /// <summary>
     /// Mimics AnimeClick's real /episodi page for "The Asterisk War" (24 episodes listed
     /// as a continuous block with NO "S1/S2 Ep." row prefixes — only "Ep. NN").
     /// The companion detail page declares 2 stagioni (Autunno 2015 / Primavera 2016),
@@ -103,6 +146,82 @@ internal static class TestFixtures
 <table class="table"><tbody>
 <tr><td>Ep. 01</td><td><a href="/episodio/1/a">A</a></td><td>23'</td></tr>
 <tr><td>Ep. 24</td><td><a href="/episodio/24/z">Z</a></td><td>23'</td></tr>
+</tbody></table>
+</body></html>
+""";
+    /// <summary>
+    /// Builds a flat /episodi table of <paramref name="count"/> rows, every one declaring the
+    /// same duration. Used to reproduce a short-form broadcast documented on AnimeClick against
+    /// a library that holds the full length recut of the same episodes.
+    /// </summary>
+    public static string BuildFlatEpisodesHtml(int count, int durationMinutes, bool realTitles)
+    {
+        var rows = new System.Text.StringBuilder();
+        for (var number = 1; number <= count; number++)
+        {
+            var title = realTitles
+                ? System.FormattableString.Invariant($"Titolo vero {number}")
+                : System.FormattableString.Invariant($"Episodio {number:00}");
+            rows.Append(System.FormattableString.Invariant(
+                $"<tr><td>Ep. {number:00}</td><td><a href=\"/episodio/{9000 + number}/riga-{number}\">{title}</a></td><td>{durationMinutes}'</td></tr>\n"));
+        }
+
+        return "<html><body>\n<table class=\"table\"><tbody>\n" + rows + "</tbody></table>\n</body></html>";
+    }
+
+    /// <summary>
+    /// A season that opens with a prologue numbered zero, the way AnimeClick prints it: the row
+    /// sits in the same table as the regular episodes but its number is not positive, so the
+    /// parser files it among the specials.
+    /// </summary>
+    public const string EpisodeZeroPrologueHtml = """
+<html><body>
+<table class="table"><tbody>
+<tr><td>Ep. 00</td><td><a href="/episodio/8000/prologo">Prologo</a></td><td>24'</td></tr>
+<tr><td>Ep. 01</td><td><a href="/episodio/8001/il-primo-giorno">Il primo giorno</a></td><td>24'</td></tr>
+<tr><td>Ep. 02</td><td><a href="/episodio/8002/il-secondo-giorno">Il secondo giorno</a></td><td>24'</td></tr>
+<tr><td>Ep. 03</td><td><a href="/episodio/8003/il-terzo-giorno">Il terzo giorno</a></td><td>24'</td></tr>
+</tbody></table>
+</body></html>
+""";
+
+    /// <summary>
+    /// Two characters voiced by the same seiyuu, the shape that costs a credit on save: Jellyfin
+    /// keeps one row per name and kind, so the second character has to be merged into the first
+    /// credit or it disappears.
+    /// </summary>
+    public const string DoubleRoleCharactersHtml = """
+<html><body>
+<div class="media thumbnail thumbnail-personaggio">
+  <span itemprop="character"><span itemprop="name">Rikako Honda</span></span>
+  <span itemprop="actor"><a itemprop="url" href="/autore/100/tomori-kusunoki"></a><span itemprop="name">Tomori Kusunoki</span></span>
+</div>
+<div class="media thumbnail thumbnail-personaggio">
+  <span itemprop="character"><span itemprop="name">Yeti</span></span>
+  <span itemprop="actor"><a itemprop="url" href="/autore/100/tomori-kusunoki"></a><span itemprop="name">Tomori Kusunoki</span></span>
+</div>
+<div class="media thumbnail thumbnail-personaggio">
+  <span itemprop="character"><span itemprop="name">Miyu Suzuki</span></span>
+  <span itemprop="actor"><a itemprop="url" href="/autore/101/sayumi-suzushiro"></a><span itemprop="name">Sayumi Suzushiro</span></span>
+</div>
+</body></html>
+""";
+
+    /// <summary>
+    /// A card that lists a numbered spin-off inside the episode table: K-On!!'s own episodes and
+    /// then the "Ura-On!!" shorts, whose numbers collide with the first ones.
+    /// </summary>
+    public const string SpinOffInsideTableHtml = """
+<html><body>
+<table class="table"><tbody>
+<tr><td>Ep. 01</td><td><a href="/episodio/7001/terzo-anno">Terzo Anno!</a></td><td>24'</td></tr>
+<tr><td>Ep. 02</td><td><a href="/episodio/7002/pulizie">Pulizie!</a></td><td>24'</td></tr>
+<tr><td>Ep. 03</td><td><a href="/episodio/7003/batterista">Batterista!</a></td><td>24'</td></tr>
+<tr><td>Ep. 04</td><td><a href="/episodio/7004/gita">Gita scolastica!</a></td><td>24'</td></tr>
+<tr><td>Ep. 25 (extra)</td><td><a href="/episodio/7025/pianificazione">Pianificazione!</a></td><td>24'</td></tr>
+<tr><td>Ura-On!! 01</td><td><a href="/episodio/7101/destino">Lettura del destino per tutti</a></td><td>3'</td></tr>
+<tr><td>Ura-On!! 02</td><td><a href="/episodio/7102/souvenir">Storie di Souvenir</a></td><td>3'</td></tr>
+<tr><td>Ura-On!! 03</td><td><a href="/episodio/7103/fratellino">Voglio un fratellino!</a></td><td>3'</td></tr>
 </tbody></table>
 </body></html>
 """;

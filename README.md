@@ -20,8 +20,9 @@ Il plugin segue una regola semplice: **usa AnimeClick quando possiede un dato it
 - Generi, tag, cast, staff, nazionalità, trailer e sigle quando disponibili.
 - Titoli italiani degli episodi.
 - Sinossi italiane degli episodi, cercate prima su AnimeClick.
-- Fonti di riserva opzionali: TheTVDB, TMDB e traduzione con Ollama Cloud.
+- Fonti di riserva opzionali: TheTVDB, TMDB e traduzione AI (Ollama, OpenAI, Claude, Gemini, Mistral, Groq, DeepSeek, OpenRouter e altri).
 - Gestione prudente di stagioni, special, OVA e numerazioni insolite.
+- Una scheda **Libreria** che analizza la copertura dei titoli e spiega, serie per serie, perché ne manca uno.
 - Locandina AnimeClick come alternativa quando i provider di immagini non trovano un poster migliore.
 
 Non è necessario configurare API key per usare i dati disponibili direttamente su AnimeClick.
@@ -33,7 +34,7 @@ Non è necessario configurare API key per usare i dati disponibili direttamente 
 3. Metti **AnimeClick per primo tra i provider dei metadati**.
 4. Per le immagini, lascia prima i provider con poster ad alta risoluzione e metti **AnimeClick per ultimo**.
 5. Aggiorna i metadati della serie.
-6. Se vuoi più sinossi episodio, apri la scheda **Sinossi episodi** del plugin e aggiungi facoltativamente TheTVDB, TMDB o Ollama.
+6. Se vuoi più sinossi episodio, apri la scheda **Sinossi episodi** del plugin e aggiungi facoltativamente TheTVDB, TMDB o un servizio AI.
 
 Per la maggior parte delle serie non servono altre impostazioni.
 
@@ -67,9 +68,9 @@ Quando attivi **Sinossi episodi**, il plugin prova nell'ordine:
 | 3 | TMDB `it-IT` | Sinossi italiana già pronta |
 | 4 | TMDB `en-US` | Sinossi inglese da tradurre |
 | 5 | TheTVDB `eng` | Seconda possibilità in inglese |
-| 6 | Ollama Cloud | Traduce in italiano il testo inglese trovato |
+| 6 | Traduzione AI | Traduce in italiano il testo inglese trovato |
 
-Quindi sì: **le sinossi inglesi arrivano prima da TMDB e, se mancano, da TheTVDB**. Ollama non cerca informazioni e non inventa una trama; traduce soltanto una sinossi inglese già esistente.
+Quindi sì: **le sinossi inglesi arrivano prima da TMDB e, se mancano, da TheTVDB**. L'AI non cerca informazioni e non inventa una trama; traduce soltanto una sinossi inglese già esistente.
 
 Se AnimeClick possiede già la sinossi, le altre fonti non vengono contattate per quella puntata. Se nessuna fonte produce un testo valido, il campo rimane invariato.
 
@@ -146,50 +147,81 @@ In questa modalità il plugin usa soltanto AnimeClick.
 
 Puoi aggiungere una o più fonti:
 
-- **TheTVDB**: cerca prima il testo italiano `ita` e, se serve Ollama, anche quello inglese `eng`;
+- **TheTVDB**: cerca prima il testo italiano `ita` e, se serve una traduzione, anche quello inglese `eng`;
 - **TMDB**: cerca il testo italiano `it-IT` e poi quello inglese `en-US`;
-- **Ollama Cloud**: traduce in italiano il testo inglese trovato su TMDB o TheTVDB.
+- **Traduzione AI**: traduce in italiano il testo inglese trovato su TMDB o TheTVDB.
 
 Le fonti sono facoltative. Puoi usare AnimeClick da solo, AnimeClick con una sola API esterna oppure la catena completa.
 
-## Tutorial Ollama Cloud
+## Traduzione AI
 
 ### Che cos'è e perché può servire
 
-[Ollama](https://ollama.com/) permette di usare modelli linguistici. Questo plugin utilizza **Ollama Cloud** soltanto come traduttore, quando AnimeClick, TheTVDB e TMDB non hanno una sinossi italiana ma TMDB o TheTVDB ne possiedono una inglese.
+Il plugin può tradurre in italiano una sinossi che esiste **soltanto in inglese**, quando AnimeClick, TheTVDB e TMDB non ne hanno una italiana ma TMDB o TheTVDB ne possiedono una inglese.
 
-Ollama:
+La traduzione AI:
 
 - non traduce i titoli degli episodi;
 - non crea trame dal nulla;
-- non viene chiamato se è già disponibile una sinossi italiana;
-- non richiede una GPU o l'installazione di Ollama sul server Jellyfin.
+- non viene chiamata se è già disponibile una sinossi italiana;
+- costa una richiesta per sinossi, una volta sola: il risultato resta in cache.
+
+### Quale servizio scegliere
+
+Il servizio si sceglie da un menu nella scheda **Sinossi episodi**. Sono già configurati:
+
+| Servizio | Chiave | Note |
+|---|---|---|
+| Ollama Cloud | sì | Modelli con suffisso `-cloud`; un modello per volta sul piano gratuito |
+| Ollama in casa | no | Nessuna quota; se il demone ha già fatto `ollama signin` usa lui l'abbonamento |
+| OpenAI | sì | Chiave della piattaforma API, a consumo |
+| Anthropic Claude | sì | Chiave della console, a consumo |
+| Google Gemini | sì | Endpoint compatibile OpenAI ufficiale, con piano gratuito a limiti |
+| Mistral | sì | Buona resa sulle lingue europee |
+| Groq | sì | Molto rapido quando le sinossi da tradurre sono tante |
+| DeepSeek | sì | Tra i più economici sui testi brevi |
+| OpenRouter | sì | Una sola chiave per i modelli di molti fornitori |
+| Together AI | sì | Modelli aperti ospitati |
+| xAI Grok | sì | Chiave della console xAI |
+| LM Studio in casa | no | Server locale di LM Studio |
+| Personalizzato | opzionale | Qualunque servizio compatibile OpenAI: LiteLLM, vLLM, llama.cpp, un proxy aziendale |
+
+Il **nome del modello non ha un valore predefinito**, ed è voluto: i fornitori ritirano e rinominano i modelli continuamente, quindi il plugin chiede l'elenco al servizio. Premi **Elenca modelli** e scegli dal campo.
+
+### Perché non c'è il "login con ChatGPT" o "login con Claude"
+
+Sarebbe comodo usare un abbonamento già pagato, ma non è permesso:
+
+- l'abbonamento ChatGPT [non include l'accesso all'API](https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus), che è fatturato a parte; «Sign in with ChatGPT» esiste ma copre i client Codex, non chiamate API di altri programmi;
+- Anthropic ha [chiarito nei termini di servizio](https://www.theregister.com/2026/02/20/anthropic_clarifies_ban_third_party_claude_access/) che i token OAuth dei piani Free, Pro e Max valgono solo per Claude Code e Claude.ai: usarli altrove viola le condizioni d'uso.
+
+Esistono progetti che aggirano il vincolo riusando le credenziali dei client ufficiali. Questo plugin non lo fa: metterebbe a rischio l'account di chi lo installa e si romperebbe al primo cambiamento lato fornitore.
+
+L'unico modo legittimo per non mettere una chiave in Jellyfin è far tenere le credenziali a un servizio in casa — Ollama con `ollama signin`, o un gateway come LiteLLM — e puntare il plugin a quello.
 
 ### Cosa serve
 
-- Un account [Ollama](https://ollama.com/).
-- Una [API key Ollama](https://ollama.com/settings/keys).
-- Una API key [TMDB](https://developer.themoviedb.org/docs/getting-started) oppure [TheTVDB](https://thetvdb.com/dashboard), perché Ollama ha bisogno di una sinossi inglese da tradurre.
+- Una chiave del servizio scelto (non serve per un servizio in casa).
+- Una API key [TMDB](https://developer.themoviedb.org/docs/getting-started) oppure [TheTVDB](https://thetvdb.com/dashboard), perché la traduzione ha bisogno di una sinossi inglese da tradurre.
 
-Disponibilità dei modelli, limiti ed eventuali costi dipendono dal piano Ollama e possono cambiare: controlla sempre il tuo account.
+Disponibilità dei modelli, limiti ed eventuali costi dipendono dal servizio e cambiano nel tempo: controlla sempre il tuo account.
 
 ### Configurazione passo per passo
 
-1. Accedi a [ollama.com](https://ollama.com/).
-2. Apri la pagina delle [API key](https://ollama.com/settings/keys), crea una nuova chiave e conservala in modo sicuro.
-3. In Jellyfin apri **Dashboard → Plugin → AnimeClick Plugin → Sinossi episodi**.
-4. Attiva **Sinossi degli episodi**.
-5. Configura TMDB, TheTVDB oppure entrambi.
-6. Inserisci nella sezione Ollama:
-   - **Endpoint:** `https://ollama.com/api/chat`
-   - **Modello:** `gemma4:31b-cloud`
-   - **API key:** la chiave appena creata
+1. In Jellyfin apri **Dashboard → Plugin → AnimeClick Plugin → Sinossi episodi**.
+2. Attiva **Sinossi degli episodi**.
+3. Configura TMDB, TheTVDB oppure entrambi.
+4. Scegli il **Servizio AI** dal menu: endpoint ed eventuale link per creare la chiave vengono compilati da soli.
+5. Incolla la **API key** del servizio, se ne richiede una.
+6. Premi **Elenca modelli** e scrivi nel campo **Modello** per scegliere.
 7. Salva.
-8. Usa i pulsanti di verifica per controllare prima TMDB o TheTVDB e poi Ollama.
+8. Usa i pulsanti di verifica: prima TMDB o TheTVDB, poi **Verifica AI**.
 9. Prova una breve traduzione nella sezione di anteprima.
 10. Aggiorna i metadati di un episodio.
 
-Le guide ufficiali sono disponibili nelle pagine [Ollama Cloud](https://docs.ollama.com/cloud) e [autenticazione API](https://docs.ollama.com/api/authentication).
+### Un servizio in casa
+
+Un endpoint sulla tua rete è ammesso anche in HTTP semplice — `http://ollama:11434/api/chat`, `http://nas.local:11434/api/chat`, un indirizzo privato della LAN — perché pretendere TLS avrebbe significato un certificato per un indirizzo di rete locale. Verso un host pubblico l'HTTPS resta obbligatorio, e **la chiave non viene mai inviata su una connessione in chiaro**: se ne hai configurata una e l'endpoint è HTTP, viene scartata con un avviso nel log.
 
 ### Perché a volte servono due aggiornamenti
 
@@ -203,9 +235,27 @@ Se la sinossi non compare subito, attendi qualche momento e aggiorna nuovamente 
 
 ### Privacy
 
-Quando usi Ollama, il plugin invia tramite HTTPS la sinossi inglese, le istruzioni di traduzione e il nome del modello. Non invia video, file della libreria o credenziali Jellyfin.
+Quando usi la traduzione AI, il plugin invia al servizio scelto la sinossi inglese, le istruzioni di traduzione e il nome del modello. Non invia video, file della libreria o credenziali Jellyfin.
 
-La chiave Ollama viene salvata nella configurazione di Jellyfin: proteggi la cartella di configurazione e i relativi backup.
+La chiave del servizio AI viene salvata nella configurazione di Jellyfin: proteggi la cartella di configurazione e i relativi backup.
+
+## Perché mancano dei titoli: la scheda Libreria
+
+Un titolo assente sembra identico qualunque ne sia la causa, ma le cause chiedono reazioni opposte. La scheda **Libreria** le distingue leggendo soltanto le schede già in cache, quindi l'analisi non produce richieste ad AnimeClick.
+
+| Diagnosi | Che cosa significa | Cosa fare |
+|---|---|---|
+| Completa | Tutti gli episodi hanno un titolo | Niente |
+| Basta un ricontrollo | Il titolo c'è già su AnimeClick, Jellyfin non l'ha ancora scritto | **Esegui ora il ricontrollo** |
+| Titolo non pubblicato | Episodio abbinato, ma la scheda non ha ancora il titolo italiano | Attendere: il ricontrollo settimanale lo prenderà |
+| Scheda senza titoli | AnimeClick elenca gli episodi senza titolo | Nulla è recuperabile |
+| Numerazione ripetuta | La scheda ripete gli stessi numeri, di solito uno spin-off nella stessa tabella | Segnalare la serie |
+| Riga scomparsa | L'identità salvata punta a una riga che la scheda non contiene più | **Svuota cache** su quella serie |
+| Scheda di stagione da indicare | La stagione sta su un'altra scheda e la traversata non riesce a dimostrare quale | Scrivere l'ID di quel cour nel campo AnimeClick della stagione |
+| Nessuna identità | Nessun abbinamento scritto su quell'episodio | **Esegui ora il ricontrollo**; se resiste, segnalare |
+| Non identificata | La serie non ha un ID AnimeClick | Identificarla |
+
+Per ogni serie ci sono tre azioni: **Analizza** rilegge la scheda dal sito e rifà la traversata delle stagioni per dare un verdetto definitivo, **Svuota cache** invalida le schede memorizzate di quella serie, e per una serie non identificata un pulsante porta l'ID nella scheda Strumenti.
 
 ## Numerazioni gestite
 
@@ -234,14 +284,14 @@ Special e OVA non fanno slittare i titoli delle puntate normali. Se una serie ha
 
 ### Il titolo di un episodio rimane vuoto
 
-AnimeClick potrebbe mostrare soltanto un titolo generico, oppure la numerazione potrebbe essere ambigua. In entrambi i casi il plugin lascia intenzionalmente il campo invariato per evitare un titolo errato.
+Apri la scheda **Libreria** e premi **Analizza la libreria**: ti dice quale delle cause è in gioco, senza indovinare. Le più comuni sono una scheda AnimeClick che elenca gli episodi senza titolo — e allora non c'è nulla da recuperare — oppure una numerazione ambigua, davanti alla quale il plugin lascia intenzionalmente il campo invariato per evitare un titolo errato.
 
 ### La sinossi non compare
 
 1. Controlla che **Sinossi episodi** sia attivo.
 2. Prova la funzione **Pipeline reale** nella pagina del plugin.
 3. Se usi servizi esterni, esegui i relativi pulsanti di verifica.
-4. Se la fonte è inglese e usi Ollama, attendi e aggiorna una seconda volta.
+4. Se la fonte è inglese e usi la traduzione AI, attendi e aggiorna una seconda volta.
 5. Ricorda che alcune puntate non hanno una sinossi in nessuna fonte.
 
 ### I titoli sono spostati
@@ -281,7 +331,7 @@ Se modifichi o riutilizzi il progetto, mantieni queste protezioni e rispetta le 
 | [AnimeClick.it](https://www.animeclick.it/) | Fonte italiana principale, comprese le sinossi episodio quando presenti |
 | [TheTVDB](https://thetvdb.com/) | Sinossi episodio italiane e inglesi opzionali |
 | [TMDB](https://www.themoviedb.org/) | Sinossi episodio italiane e inglesi opzionali |
-| [Ollama](https://ollama.com/) | Traduzione cloud opzionale dall'inglese all'italiano |
+| [Ollama](https://ollama.com/) e gli altri servizi AI | Traduzione opzionale dall'inglese all'italiano |
 
 **TheTVDB:** Metadata provided by TheTVDB. Please consider adding missing information or [subscribing](https://thetvdb.com/subscribe).
 

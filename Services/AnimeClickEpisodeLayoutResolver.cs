@@ -10,9 +10,10 @@ using Microsoft.Extensions.Logging;
 namespace AnimeClick.Plugin.Services;
 
 /// <summary>
-/// Reads the destination numbering from Jellyfin. AnimeClick labels are evidence, not
-/// authority: when Jellyfin has a reliable 13+11 layout, that boundary wins over a
-/// synthetic equal split.
+/// Reads what Jellyfin already knows about the destination file: the numbering of the season it
+/// sits in, and its runtime. AnimeClick labels are evidence, not authority: when Jellyfin has a
+/// reliable 13+11 layout, that boundary wins over a synthetic equal split, and when it has a
+/// probed runtime, a row that declares an incompatible length cannot be that file.
 /// </summary>
 public sealed class AnimeClickEpisodeLayoutResolver
 {
@@ -81,12 +82,22 @@ public sealed class AnimeClickEpisodeLayoutResolver
                 var firstRegular = numbers.Min == 0 ? 0 : 1;
                 var contiguous = startsAtOne
                     && Enumerable.Range(firstRegular, max - firstRegular + 1).All(numbers.Contains);
+
+                // The year the season actually aired, straight from the files Jellyfin already
+                // dated. It is what lets the sequel traversal tell a 2011 continuation from a 2024
+                // one on a page that declares neither.
+                var airYears = group
+                    .Select(episode => episode.PremiereDate?.Year)
+                    .Where(year => year is > 1900)
+                    .Select(year => year!.Value)
+                    .ToList();
                 seasons[group.Key] = new AnimeClickEpisodeSeasonLayout(
                     group.Key,
                     max,
                     numbers.Count,
                     startsAtOne,
-                    contiguous);
+                    contiguous,
+                    airYears.Count > 0 ? airYears.Min() : null);
             }
 
             return seasons.Count == 0
@@ -99,6 +110,31 @@ public sealed class AnimeClickEpisodeLayoutResolver
             return null;
         }
     }
+
+    /// <summary>
+    /// Returns the runtime in minutes Jellyfin already probed for an episode file, when it has
+    /// one. Unlike the layout this is read for every match, season-specific pages included,
+    /// because it is the one piece of evidence that does not depend on how the seasons are cut.
+    /// </summary>
+    public double? GetKnownRuntimeMinutes(string? episodePath)
+    {
+        if (string.IsNullOrWhiteSpace(episodePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var episode = _libraryManager.FindByPath(episodePath, isFolder: false) as Episode;
+            var ticks = episode?.RunTimeTicks;
+            return ticks is > 0 ? TimeSpan.FromTicks(ticks.Value).TotalMinutes : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "AnimeClick: unable to read the Jellyfin runtime for {Path}", episodePath);
+            return null;
+        }
+    }
 }
 
 public sealed record AnimeClickEpisodeSeasonLayout(
@@ -106,7 +142,8 @@ public sealed record AnimeClickEpisodeSeasonLayout(
     int MaximumEpisodeNumber,
     int KnownEpisodeCount,
     bool StartsAtOne,
-    bool IsContiguous);
+    bool IsContiguous,
+    int? FirstAirYear = null);
 
 public sealed class AnimeClickEpisodeLibraryLayout
 {
@@ -159,6 +196,43 @@ public sealed class AnimeClickEpisodeLibraryLayout
         "+",
         Seasons.OrderBy(pair => pair.Key).Select(pair =>
             $"S{pair.Key}:{pair.Value.MaximumEpisodeNumber}"));
+
+    /// <summary>
+    /// The year each season aired, for the seasons the library has dated. This is the evidence the
+    /// sequel traversal needs on the AnimeClick pages that declare no relation type at all.
+    /// </summary>
+    /// <returns>Season number to first air year, skipping the seasons with no dates.</returns>
+    public IReadOnlyDictionary<int, int> GetSeasonAirYears()
+        => Seasons
+            .Where(pair => pair.Value.FirstAirYear is > 1900)
+            .ToDictionary(pair => pair.Key, pair => pair.Value.FirstAirYear!.Value);
+
+    /// <summary>
+    /// True when the library holds a single season, numbered above one, whose episodes the card
+    /// accounts for exactly.
+    /// <para>
+    /// This is the shape of a standalone work filed under a later season number because the rest
+    /// of its franchise lives in other folders — "D4DJ All Mix" sits in Season 02 with its own
+    /// twelve episodes and its own AnimeClick card. There is no season one to measure an offset
+    /// against, so the only sane reading is the flat one. The exact count is what makes it safe:
+    /// were the card a longer timeline, row one would belong to a cour the library does not hold.
+    /// </para>
+    /// </summary>
+    /// <param name="seasonNumber">The season the file sits in.</param>
+    /// <param name="regularRowCount">Regular, non-special rows the AnimeClick card lists.</param>
+    /// <returns>True when the card can be read as that season, numbered from one.</returns>
+    public bool IsStandaloneSeason(int seasonNumber, int regularRowCount)
+    {
+        if (seasonNumber <= 1 || regularRowCount <= 0 || Seasons.Count != 1)
+        {
+            return false;
+        }
+
+        return Seasons.TryGetValue(seasonNumber, out var only)
+            && only.StartsAtOne
+            && only.IsContiguous
+            && only.KnownEpisodeCount == regularRowCount;
+    }
 }
 
 public enum AnimeClickEpisodeLayoutMode

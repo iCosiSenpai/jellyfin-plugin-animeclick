@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -12,15 +15,16 @@ using Microsoft.Extensions.Logging;
 namespace AnimeClick.Plugin.Services;
 
 /// <summary>
-/// Translates English episode synopses to Italian via Ollama Cloud
-/// (POST {endpoint} with Authorization: Bearer {apiKey}, model = OllamaCloudModel).
-///
-/// Best-effort: returns null on any failure so the metadata pipeline never crashes.
-/// Results are cached via <see cref="AnimeClickCacheService"/> per episode+model.
-/// All network-free helpers (<see cref="StripHtml"/>, <see cref="BuildRequestBody"/>,
-/// <see cref="ParseTranslatedContent"/>) are static/internal so they can be unit-tested.
+/// Translates English metadata into Italian through whichever AI service the user configured —
+/// a cloud vendor with an API key, or a server on their own machine.
+/// <para>
+/// Best-effort by design: it returns null on any failure so the metadata pipeline never breaks over
+/// a translation. Results are cached per source text, field, model and endpoint, so a synopsis is
+/// translated once and not once per refresh. Every network-free helper is static and internal so the
+/// prompt, the request shape and the reply parsing can be tested without a provider.
+/// </para>
 /// </summary>
-public class AnimeClickOllamaTranslator
+public class AnimeClickAiTranslator
 {
     internal const string SystemPrompt =
         "Sei un traduttore professionista da inglese a italiano specializzato in sinossi di anime. "
@@ -35,18 +39,19 @@ public class AnimeClickOllamaTranslator
 
     private const long MaximumResponseBytes = 4 * 1024 * 1024;
 
-    // Ollama Free allows one cloud model at a time. A process-wide gate prevents
-    // scans and diagnostics from competing for the same account slot.
+    // Some services allow one model at a time on their free tier — Ollama Cloud is one — and a
+    // library scan competing with the diagnostics page for that slot fails both. A process-wide
+    // gate serialises every call, whoever makes it.
     private static readonly SemaphoreSlim TranslationGate = new(1, 1);
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
-    private readonly ILogger<AnimeClickOllamaTranslator> _logger;
+    private readonly ILogger<AnimeClickAiTranslator> _logger;
 
-    public AnimeClickOllamaTranslator(
+    public AnimeClickAiTranslator(
         IHttpClientFactory httpClientFactory,
         AnimeClickCacheService cache,
-        ILogger<AnimeClickOllamaTranslator> logger)
+        ILogger<AnimeClickAiTranslator> logger)
     {
         _httpClientFactory = httpClientFactory;
         _cache = cache;
@@ -128,9 +133,7 @@ public class AnimeClickOllamaTranslator
         bool publishToCache,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(configuration.OllamaCloudApiKey)
-            || string.IsNullOrWhiteSpace(configuration.OllamaCloudModel)
-            || string.IsNullOrWhiteSpace(configuration.OllamaCloudEndpoint)
+        if (!IsConfigured(configuration, out _)
             || string.IsNullOrWhiteSpace(sourceText))
         {
             return null;
@@ -147,20 +150,23 @@ public class AnimeClickOllamaTranslator
         }
 
         if (string.IsNullOrWhiteSpace(plain)
-            || !TryNormalizeCloudEndpoint(configuration.OllamaCloudEndpoint, out var endpointUri))
+            || !IsConfigured(configuration, out var endpointUri))
         {
             return null;
         }
 
+        var dialect = AnimeClickAiProviders.ResolveDialect(configuration.AiProvider, configuration.AiEndpoint);
+        var model = configuration.AiModel.Trim();
+        var apiKey = configuration.AiApiKey?.Trim() ?? string.Empty;
         var cacheKey = BuildTranslationCacheKey(
             cacheScope,
             sourceIdentity,
             fieldName,
             sourceLanguage,
             targetLanguage,
-            configuration.OllamaCloudModel,
+            model,
             endpointUri.AbsoluteUri,
-            configuration.OllamaCloudApiKey,
+            apiKey,
             plain);
         var cacheHours = configuration.TranslationCacheHours <= 0
             ? int.MaxValue
@@ -185,7 +191,7 @@ public class AnimeClickOllamaTranslator
                 return cached;
             }
 
-            var body = BuildRequestBody(configuration.OllamaCloudModel, SystemPrompt, plain);
+            var body = AnimeClickAiProviders.BuildRequestBody(dialect, model, SystemPrompt, plain);
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(
                 Math.Clamp(configuration.EpisodeTranslationTimeoutSec, 5, 120));
@@ -195,7 +201,8 @@ public class AnimeClickOllamaTranslator
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             };
-            request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + configuration.OllamaCloudApiKey);
+
+            ApplyAuthHeaders(request, dialect, apiKey, endpointUri);
 
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -203,15 +210,15 @@ public class AnimeClickOllamaTranslator
                 // Wrong key, exhausted quota or an unknown model all land here, and at Debug
                 // they were indistinguishable from "this episode has no synopsis".
                 _logger.LogWarning(
-                    "OllamaTranslator: endpoint returned {Status} for field={Field} model={Model}",
+                    "AiTranslator: endpoint returned {Status} for field={Field} model={Model}",
                     response.StatusCode,
                     fieldName,
-                    configuration.OllamaCloudModel);
+                    model);
                 return null;
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            var translated = ParseTranslatedContent(json)?.Trim();
+            var translated = ParseTranslatedContent(json, AnimeClickAiProviders.ResolveReplyMarker(dialect))?.Trim();
             if (string.IsNullOrWhiteSpace(translated))
             {
                 return null;
@@ -232,7 +239,7 @@ public class AnimeClickOllamaTranslator
         {
             _logger.LogWarning(
                 ex,
-                "OllamaTranslator: translation failed for field={Field} source={Source}",
+                "AiTranslator: translation failed for field={Field} source={Source}",
                 fieldName,
                 sourceIdentity);
             return null;
@@ -244,14 +251,17 @@ public class AnimeClickOllamaTranslator
     }
 
     /// <summary>
-    /// Accepts only absolute HTTPS endpoints without embedded credentials, query
-    /// parameters or fragments. Custom cloud hosts remain possible, but a key can
-    /// never be hidden in the destination URL.
+    /// Accepts an absolute endpoint with no embedded credentials, query or fragment. HTTPS is
+    /// required for anything reachable from the internet; plain HTTP is allowed only towards a
+    /// machine on the user's own network, which is the whole point of running Ollama locally —
+    /// `http://ollama:11434/api/chat` in a compose stack, or a NAS on 192.168.x.x. Demanding TLS
+    /// there would have meant either a certificate for a LAN address or no local option at all.
     /// </summary>
-    internal static bool TryNormalizeCloudEndpoint(string? endpoint, out Uri endpointUri)
+    internal static bool TryNormalizeEndpoint(string? endpoint, out Uri endpointUri)
     {
         if (Uri.TryCreate(endpoint?.Trim(), UriKind.Absolute, out var parsed)
-            && parsed.Scheme == Uri.UriSchemeHttps
+            && (parsed.Scheme == Uri.UriSchemeHttps
+                || (parsed.Scheme == Uri.UriSchemeHttp && IsPrivateDestination(parsed)))
             && !string.IsNullOrWhiteSpace(parsed.Host)
             && string.IsNullOrEmpty(parsed.UserInfo)
             && string.IsNullOrEmpty(parsed.Query)
@@ -263,6 +273,101 @@ public class AnimeClickOllamaTranslator
 
         endpointUri = null!;
         return false;
+    }
+
+    /// <summary>
+    /// True for a host that cannot be reached from outside the user's network: loopback, an
+    /// RFC1918 or link-local address, or a name with no dot in it — a container or LAN hostname.
+    /// A public name always needs TLS.
+    /// </summary>
+    internal static bool IsPrivateDestination(Uri endpoint)
+    {
+        if (endpoint.IsLoopback)
+        {
+            return true;
+        }
+
+        if (IPAddress.TryParse(endpoint.IdnHost, out var address))
+        {
+            if (address.IsIPv6LinkLocal || address.IsIPv6UniqueLocal)
+            {
+                return true;
+            }
+
+            if (address.AddressFamily != AddressFamily.InterNetwork)
+            {
+                return false;
+            }
+
+            var octets = address.GetAddressBytes();
+            return octets[0] switch
+            {
+                10 => true,
+                127 => true,
+                169 => octets[1] == 254,
+                172 => octets[1] is >= 16 and <= 31,
+                192 => octets[1] == 168,
+                _ => false
+            };
+        }
+
+        var host = endpoint.IdnHost;
+        return !host.Contains('.', StringComparison.Ordinal)
+            || host.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".lan", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".home.arpa", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// True when the configuration describes a destination that can actually be called: a model, a
+    /// valid endpoint, and — for a service that authenticates — a key. A server on the user's own
+    /// machine authenticates nothing, so requiring a key there would disable the one option with no
+    /// quota and no cloud latency.
+    /// </summary>
+    internal static bool IsConfigured(PluginConfiguration configuration, out Uri endpointUri)
+    {
+        endpointUri = null!;
+        if (configuration is null
+            || string.IsNullOrWhiteSpace(configuration.AiModel)
+            || !TryNormalizeEndpoint(configuration.AiEndpoint, out endpointUri))
+        {
+            return false;
+        }
+
+        var preset = AnimeClickAiProviders.Resolve(configuration.AiProvider);
+        return !preset.RequiresApiKey
+            || !string.IsNullOrWhiteSpace(configuration.AiApiKey);
+    }
+
+    /// <summary>
+    /// Attaches the credential in the shape the destination expects, and never over plain HTTP: a
+    /// token on an unencrypted connection is readable by anything on the same network, and a local
+    /// server does not want one anyway.
+    /// </summary>
+    private void ApplyAuthHeaders(
+        HttpRequestMessage request,
+        AnimeClickAiDialect dialect,
+        string? apiKey,
+        Uri endpointUri)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return;
+        }
+
+        if (endpointUri.Scheme != Uri.UriSchemeHttps)
+        {
+            _logger.LogWarning(
+                "AiTranslator: the API key was not sent because {Host} is contacted over plain HTTP",
+                endpointUri.Host);
+            return;
+        }
+
+        foreach (var header in AnimeClickAiProviders.BuildAuthHeaders(dialect, apiKey))
+        {
+            request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
     }
 
     internal static string BuildTranslationCacheKey(
@@ -283,36 +388,34 @@ public class AnimeClickOllamaTranslator
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..24];
 
     /// <summary>
-    /// Diagnostics-only: validates the Ollama Cloud profile with a trivial
-    /// prompt and returns only sanitized status and model information.
+    /// Diagnostics-only: sends a trivial prompt to the given profile and reports the sanitized
+    /// outcome, so the configuration page can tell "wrong key" from "unknown model" from
+    /// "unreachable" without the user reading server logs.
     /// </summary>
-    public async Task<OllamaTestResult> TestConnectionAsync(
+    public async Task<AnimeClickAiTestResult> TestConnectionAsync(
         string endpoint,
         string apiKey,
         string model,
         int timeoutSec,
+        AnimeClickAiDialect dialect,
         CancellationToken cancellationToken)
     {
-        var result = new OllamaTestResult
+        var result = new AnimeClickAiTestResult
         {
             Model = model
         };
 
-        if (!TryNormalizeCloudEndpoint(endpoint, out var endpointUri))
+        if (!TryNormalizeEndpoint(endpoint, out var endpointUri))
         {
-            result.ErrorMessage = "Ollama endpoint must be an absolute HTTPS URL without credentials, query or fragment.";
-            return result;
-        }
-
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            result.ErrorMessage = "Ollama API key is empty.";
+            result.ErrorMessage =
+                "L'endpoint deve essere HTTPS — oppure HTTP verso un indirizzo della tua rete — "
+                + "senza credenziali, query o frammenti.";
             return result;
         }
 
         if (string.IsNullOrWhiteSpace(model))
         {
-            result.ErrorMessage = "Ollama model is empty.";
+            result.ErrorMessage = "Nessun modello indicato: usa «Elenca modelli» e scegline uno.";
             return result;
         }
 
@@ -322,15 +425,15 @@ public class AnimeClickOllamaTranslator
         await TranslationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var body = BuildRequestBody(model, testSystemPrompt, testUserContent);
+            var body = AnimeClickAiProviders.BuildRequestBody(dialect, model, testSystemPrompt, testUserContent);
             var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec <= 0 ? 30 : timeoutSec, 5, 120));
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec <= 0 ? 90 : timeoutSec, 5, 120));
 
             using var request = new HttpRequestMessage(HttpMethod.Post, endpointUri)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
             };
-            request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + apiKey);
+            ApplyAuthHeaders(request, dialect, apiKey, endpointUri);
 
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -339,11 +442,11 @@ public class AnimeClickOllamaTranslator
 
             if (!response.IsSuccessStatusCode)
             {
-                result.ErrorMessage = $"Request failed: HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
+                result.ErrorMessage = $"Richiesta non riuscita: HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
                 return result;
             }
 
-            result.Reply = ParseTranslatedContent(responseBody);
+            result.Reply = ParseTranslatedContent(responseBody, AnimeClickAiProviders.ResolveReplyMarker(dialect));
             result.Success = !string.IsNullOrWhiteSpace(result.Reply);
 
             if (!result.Success)
@@ -359,13 +462,110 @@ public class AnimeClickOllamaTranslator
         }
         catch (Exception ex)
         {
-            result.ErrorMessage = $"Connection test failed ({ex.GetType().Name}).";
+            result.ErrorMessage = $"Prova di connessione non riuscita ({ex.GetType().Name}).";
             return result;
         }
         finally
         {
             TranslationGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Asks the service which models the account can actually use.
+    /// <para>
+    /// This exists because hardcoding model names does not survive contact with reality: vendors
+    /// retire and rename them between one release of this plugin and the next, and a stale default
+    /// turns into "translation silently stopped working". Asking costs one request and the answer is
+    /// always current.
+    /// </para>
+    /// </summary>
+    public async Task<AnimeClickAiModelsResult> ListModelsAsync(
+        string modelsEndpoint,
+        string apiKey,
+        AnimeClickAiDialect dialect,
+        int timeoutSec,
+        CancellationToken cancellationToken)
+    {
+        var result = new AnimeClickAiModelsResult();
+        if (!TryNormalizeEndpoint(modelsEndpoint, out var endpointUri))
+        {
+            result.ErrorMessage =
+                "Questo servizio non espone un elenco di modelli: scrivi il nome del modello a mano.";
+            return result;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec <= 0 ? 30 : timeoutSec, 5, 120));
+            client.MaxResponseContentBufferSize = MaximumResponseBytes;
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, endpointUri);
+            ApplyAuthHeaders(request, dialect, apiKey, endpointUri);
+
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            result.StatusCode = (int)response.StatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                result.ErrorMessage = $"Elenco non disponibile: HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
+                return result;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            result.Models = ExtractModelNames(json, AnimeClickAiProviders.ResolveModelNameMarker(dialect));
+            result.Success = result.Models.Count > 0;
+            if (!result.Success)
+            {
+                result.ErrorMessage = "Il servizio ha risposto senza elencare modelli.";
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            result.ErrorMessage = $"Lettura dell'elenco non riuscita ({ex.GetType().Name}).";
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// Collects every string value stored under the given key, in order, without duplicates. Kept to
+    /// deliberate substring scanning like the reply parser, to avoid deserializing with a
+    /// System.Text.Json version that may differ from the host's.
+    /// </summary>
+    internal static List<string> ExtractModelNames(string json, string marker)
+    {
+        var names = new List<string>();
+        if (string.IsNullOrEmpty(json))
+        {
+            return names;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var index = 0;
+        while (index < json.Length)
+        {
+            var found = json.IndexOf(marker, index, StringComparison.Ordinal);
+            if (found < 0)
+            {
+                break;
+            }
+
+            index = found + marker.Length;
+            var value = ReadJsonString(json, index);
+            if (!string.IsNullOrWhiteSpace(value) && seen.Add(value))
+            {
+                names.Add(value);
+            }
+        }
+
+        names.Sort(StringComparer.OrdinalIgnoreCase);
+        return names;
     }
 
     /// <summary>
@@ -405,38 +605,25 @@ public class AnimeClickOllamaTranslator
     }
 
     /// <summary>
-    /// Builds the Ollama /api/chat JSON request body (model, stream:false, system+user messages).
+    /// Extracts the reply from a response, given the JSON key that holds it: "content" for the
+    /// OpenAI and Ollama shapes, "text" for Anthropic's. Deliberately substring-based rather than
+    /// deserialized, to avoid pulling in a System.Text.Json version that may conflict with the
+    /// host's.
     /// </summary>
-    internal static string BuildRequestBody(string model, string systemPrompt, string userContent)
+    internal static string? ParseTranslatedContent(string json, string marker = "\"content\":")
     {
-        var payload = new
-        {
-            model,
-            stream = false,
-            think = false,
-            messages = new[]
-            {
-                new { role = "system", content = systemPrompt },
-                new { role = "user", content = userContent }
-            }
-        };
-        return JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var idx = json.IndexOf(marker, StringComparison.Ordinal);
+        return idx < 0 ? null : ReadJsonString(json, idx + marker.Length);
     }
 
     /// <summary>
-    /// Parses the Ollama /api/chat response and extracts message.content. Dependency-free
-    /// substring extraction (avoids conflicting System.Text.Json versions with the host).
+    /// Reads one JSON string starting at <paramref name="start"/>, honouring the escapes a model
+    /// reply actually contains — including surrogate pairs, because an emoji or a Japanese title in
+    /// a synopsis arrives as \uD83D\uDE00.
     /// </summary>
-    internal static string? ParseTranslatedContent(string json)
+    private static string? ReadJsonString(string json, int start)
     {
-        const string contentMarker = "\"content\":";
-        var idx = json.IndexOf(contentMarker, StringComparison.Ordinal);
-        if (idx < 0)
-        {
-            return null;
-        }
-
-        var i = idx + contentMarker.Length;
+        var i = start;
         while (i < json.Length && (json[i] == ' ' || json[i] == '\t' || json[i] == '\n' || json[i] == '\r'))
         {
             i++;
@@ -539,12 +726,21 @@ public class AnimeClickOllamaTranslator
     }
 }
 
-/// <summary>Detailed result of an Ollama Cloud connection test (used by the diagnostics UI).</summary>
-public sealed class OllamaTestResult
+/// <summary>Sanitized outcome of a connection test, shown by the configuration page.</summary>
+public sealed class AnimeClickAiTestResult
 {
     public bool Success { get; set; }
     public string Model { get; set; } = string.Empty;
     public int StatusCode { get; set; }
     public string? ErrorMessage { get; set; }
     public string? Reply { get; set; }
+}
+
+/// <summary>The models a service reports for the configured credential.</summary>
+public sealed class AnimeClickAiModelsResult
+{
+    public bool Success { get; set; }
+    public int StatusCode { get; set; }
+    public string? ErrorMessage { get; set; }
+    public List<string> Models { get; set; } = [];
 }

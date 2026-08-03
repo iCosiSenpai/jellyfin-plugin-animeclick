@@ -59,6 +59,17 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
     public string Name => "AnimeClick";
 
+    /// <summary>
+    /// The cache key of a raw episode catalog. The declared counts are part of the identity: a
+    /// detail page that changes from 1x24 to two cours must not reuse the older snapshot. Shared
+    /// with the library audit so a read-only inspection looks exactly where the provider writes.
+    /// </summary>
+    internal static string BuildCatalogCacheKey(
+        string animeClickId,
+        int? declaredEpisodeCount,
+        int declaredSeasonsCount)
+        => $"episodes:raw:v5::{animeClickId}::{declaredEpisodeCount.GetValueOrDefault()}:{declaredSeasonsCount}";
+
     public int Order => 0;
 
     public async Task<MetadataResult<Episode>> GetMetadata(EpisodeInfo info, CancellationToken cancellationToken)
@@ -72,9 +83,9 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
         var seriesAnimeClickId = info.SeriesProviderIds?.GetValueOrDefault("AnimeClick");
         var seasonAnimeClickId = info.SeasonProviderIds?.GetValueOrDefault("AnimeClick");
-        var identityIsSeasonSpecific = string.IsNullOrWhiteSpace(seriesAnimeClickId)
-            && !string.IsNullOrWhiteSpace(seasonAnimeClickId);
-        var mainAnimeClickId = identityIsSeasonSpecific ? seasonAnimeClickId : seriesAnimeClickId;
+        var identity = AnimeClickEpisodeIdentity.Resolve(seriesAnimeClickId, seasonAnimeClickId);
+        var identityIsSeasonSpecific = identity.IsSeasonSpecific;
+        var mainAnimeClickId = identity.MatchingId;
 
         _logger.LogInformation(
             "AnimeClick EpisodeProvider.GetMetadata called: name=\"{Name}\" S{Season}E{Episode} seriesProviderId={SeriesProviderId} seasonProviderId={SeasonProviderId} path={Path}",
@@ -95,14 +106,26 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
         var seasonNumber = info.ParentIndexNumber;
         var episodeNumber = info.IndexNumber;
-        if (!episodeNumber.HasValue
-            || episodeNumber.Value < 0
-            || (episodeNumber.Value == 0 && seasonNumber is not 0))
+        if (!episodeNumber.HasValue || episodeNumber.Value < 0)
         {
+            // Episode zero of a regular season is a real shape — a prologue or a recap that the
+            // library stores as S01E00 — and AnimeClick files those rows among the specials, so
+            // the matcher routes them there. Refusing them here left them without metadata for
+            // good.
             return result;
         }
 
         mainAnimeClickId = normalizedMainId;
+
+        // Only a series-level identity can walk the sequel chain: it is the card the relations
+        // hang off. Normalised here so it hits the same season-map cache keys as before.
+        string? traversalRootId = null;
+        if (!string.IsNullOrWhiteSpace(seriesAnimeClickId)
+            && AnimeClickClient.TryNormalizeAnimeClickId(seriesAnimeClickId, out var normalizedSeriesId))
+        {
+            traversalRootId = normalizedSeriesId;
+        }
+
         if (!configuration.EnableEpisodeTitles
             && !configuration.EnableEpisodeSynopsisTranslation
             && !string.IsNullOrWhiteSpace(existingEpisodeId))
@@ -113,9 +136,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         AnimeClickEpisode? matchedEpisode = null;
         var episodeMatchCompleted = false;
         var needsEpisodeMatch = configuration.EnableEpisodeTitles
-            || (configuration.EnableEpisodeSynopsisTranslation
-                && seasonNumber.HasValue
-                && episodeNumber.Value > 0);
+            || (configuration.EnableEpisodeSynopsisTranslation && seasonNumber.HasValue);
         if (needsEpisodeMatch)
         {
             try
@@ -124,6 +145,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                         result,
                         mainAnimeClickId,
                         identityIsSeasonSpecific,
+                        traversalRootId,
                         seasonNumber,
                         episodeNumber.Value,
                         info.IndexNumberEnd,
@@ -158,13 +180,14 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             }
         }
 
-        if (configuration.EnableEpisodeSynopsisTranslation
-            && seasonNumber.HasValue
-            && episodeNumber.Value > 0)
+        if (configuration.EnableEpisodeSynopsisTranslation && seasonNumber.HasValue)
         {
             try
             {
-                var fallbackSeasonNumber = identityIsSeasonSpecific ? 1 : seasonNumber.Value;
+                // Season 1 only when the season card is the only identity we have: then the
+                // external IDs were resolved from that card and its own numbering applies.
+                var fallbackSeasonNumber = identity.ExternalNumbersRestartAtOne ? 1 : seasonNumber.Value;
+                var fallbackAnimeClickId = identity.ExternalSourceId ?? mainAnimeClickId;
                 var episodeAnimeClickId = matchedEpisode?.ProviderId;
                 if (!episodeMatchCompleted && string.IsNullOrWhiteSpace(episodeAnimeClickId))
                 {
@@ -174,7 +197,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 }
 
                 var fallback = await _fallbackService.ResolveEpisodeOverviewAsync(
-                        mainAnimeClickId,
+                        fallbackAnimeClickId,
                         fallbackSeasonNumber,
                         episodeNumber.Value,
                         episodeAnimeClickId,
@@ -195,10 +218,10 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
                     result.HasMetadata = true;
                     _logger.LogInformation(
-                        "AnimeClick: episode overview source={Source} sourceLanguage={Language} ollama={UsedOllama} S{Season}E{Episode}",
+                        "AnimeClick: episode overview source={Source} sourceLanguage={Language} ai={UsedAi} S{Season}E{Episode}",
                         fallback.Source,
                         fallback.SourceLanguage,
-                        fallback.UsedOllama,
+                        fallback.UsedAi,
                         fallbackSeasonNumber,
                         episodeNumber.Value);
                 }
@@ -219,6 +242,9 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
         if (result.HasMetadata)
         {
+            // Must happen for every published result: Jellyfin would otherwise overwrite the
+            // episode numbering with the nulls of this bare item. See AnimeClickNumberingGuard.
+            AnimeClickNumberingGuard.Preserve(result.Item, info);
             authorityLease.Capture(result.Item);
         }
 
@@ -247,6 +273,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         MetadataResult<Episode> result,
         string mainAnimeClickId,
         bool identityIsSeasonSpecific,
+        string? traversalRootId,
         int? seasonNumber,
         int episodeNumber,
         int? episodeNumberEnd,
@@ -265,14 +292,38 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             return null;
         }
 
+        // Resolved before the traversal, because the years it carries are what lets the traversal
+        // choose on the AnimeClick pages that declare no relation type.
+        var libraryLayout = _layoutResolver.Resolve(episodePath);
+
+        // The traversal from the series card always gets the first word when the series has an ID
+        // of its own: it is held to today's safety rules, while an ID sitting on the season may
+        // have been written by an older and laxer version of this plugin. The stored season ID is
+        // then the fallback for exactly the case it exists for — a chain the traversal cannot
+        // prove, like a franchise whose relations are ambiguous even with the year in hand.
         string? resolvedAnimeClickId = null;
-        var isSeasonSpecificPage = identityIsSeasonSpecific;
-        if (!identityIsSeasonSpecific)
+        var isSeasonSpecificPage = false;
+        if (!string.IsNullOrWhiteSpace(traversalRootId))
         {
             resolvedAnimeClickId = await _seasonResolver
-                .ResolveAsync(mainAnimeClickId, seasonNumber, configuration, cancellationToken)
+                .ResolveAsync(
+                    traversalRootId,
+                    seasonNumber,
+                    configuration,
+                    cancellationToken,
+                    libraryLayout?.GetSeasonAirYears())
                 .ConfigureAwait(false);
             isSeasonSpecificPage = resolvedAnimeClickId is not null;
+        }
+
+        if (resolvedAnimeClickId is null && identityIsSeasonSpecific)
+        {
+            resolvedAnimeClickId = mainAnimeClickId;
+            isSeasonSpecificPage = true;
+            _logger.LogDebug(
+                "AnimeClick: S{Season} uses the ID stored on the season ({Id}); the sequel traversal had no answer",
+                seasonNumber,
+                mainAnimeClickId);
         }
 
         var animeClickId = resolvedAnimeClickId ?? mainAnimeClickId;
@@ -299,7 +350,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
         // Counts are part of the raw cache identity. A refreshed detail page that changes
         // from 1x24 to 2 cours cannot reuse a snapshot created under the old declaration.
-        var cacheKey = $"episodes:raw:v5::{animeClickId}::{declaredEpisodes.GetValueOrDefault()}:{declaredSeasons}";
+        var cacheKey = BuildCatalogCacheKey(animeClickId, declaredEpisodes, declaredSeasons);
         var catalog = await _cache
             .GetAsync<AnimeClickEpisodeCatalog>(cacheKey, configuration.CacheHours, cancellationToken)
             .ConfigureAwait(false);
@@ -351,10 +402,33 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             }
         }
 
+        // A resolved season card numbers its own episodes from one, so the library boundaries stop
+        // being the reference for this match.
+        if (isSeasonSpecificPage)
+        {
+            libraryLayout = null;
+        }
+
+        // The library may number a standalone work as a later season because the rest of its
+        // franchise sits in other folders. When the card accounts for exactly that one season,
+        // read it flat instead of looking for an offset that has nothing to measure against.
+        if (!isSeasonSpecificPage
+            && seasonNumber.HasValue
+            && libraryLayout is not null
+            && libraryLayout.IsStandaloneSeason(
+                seasonNumber.Value,
+                catalog.Episodes.Count(episode => !episode.IsSpecial)))
+        {
+            _logger.LogInformation(
+                "AnimeClick: {Id} read as a standalone season: the library holds only S{Season} and the card lists exactly its episodes",
+                animeClickId,
+                seasonNumber.Value);
+            isSeasonSpecificPage = true;
+            libraryLayout = null;
+        }
+
         var pageSeason = isSeasonSpecificPage ? 1 : seasonNumber;
-        var libraryLayout = isSeasonSpecificPage
-            ? null
-            : _layoutResolver.Resolve(episodePath);
+        var libraryRuntimeMinutes = _layoutResolver.GetKnownRuntimeMinutes(episodePath);
         var layoutOverride = AnimeClickEpisodeLayoutOverrideParser.ParseFor(
                                  configuration.EpisodeLayoutOverrides,
                                  animeClickId)
@@ -372,6 +446,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 ? catalog.DeclaredSeasonsCount
                 : null,
             DeclaredEpisodeCount = catalog.DeclaredEpisodeCount,
+            LibraryRuntimeMinutes = libraryRuntimeMinutes,
             IsSeasonSpecificPage = isSeasonSpecificPage
         };
         var episodeMatch = AnimeClickEpisodeMatcher.Match(catalog.Episodes, context);
@@ -421,8 +496,16 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
             if (match.DurationMinutes.HasValue)
             {
-                result.Item.RunTimeTicks = TimeSpan.FromMinutes(match.DurationMinutes.Value).Ticks;
-                wroteMetadata = true;
+                // Deliberately not written to the item. Jellyfin has already probed the file, and
+                // its exact runtime beats a figure rounded to whole minutes on a web page — the
+                // 24.1' of a real episode became 24'. When the two disagree by more than rounding
+                // the row is not this file at all, which the matcher now treats as missing
+                // corroboration; overwriting the runtime on top of that used to turn a 24 minute
+                // episode into a 5 minute one and made Jellyfin mark it watched after four.
+                _logger.LogDebug(
+                    "AnimeClick: row declares {Duration}' for episode {Num}; Jellyfin's own runtime is kept",
+                    match.DurationMinutes.Value,
+                    episodeNumber);
             }
 
             result.HasMetadata |= wroteMetadata;

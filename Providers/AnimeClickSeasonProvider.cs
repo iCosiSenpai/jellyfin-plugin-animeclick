@@ -79,6 +79,10 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
         if (!string.IsNullOrWhiteSpace(resolvedId))
         {
             result.Item.SetProviderId("AnimeClick", resolvedId);
+
+            // A published result without the season number would erase it. See
+            // AnimeClickNumberingGuard.
+            AnimeClickNumberingGuard.Preserve(result.Item, info);
             result.HasMetadata = true;
             _logger.LogInformation(
                 "AnimeClick: Season {Season} provider ID set → {Id}",

@@ -10,7 +10,7 @@ namespace AnimeClick.Plugin.Services;
 
 /// <summary>
 /// Resolves episode overviews through a strict language-aware chain. AnimeClick's
-/// native Italian description is tried first; uncached Ollama work is queued so a
+/// native Italian description is tried first; uncached AI work is queued so a
 /// library refresh never waits for cloud model inference.
 /// </summary>
 public sealed class AnimeClickMetadataFallbackService
@@ -20,7 +20,7 @@ public sealed class AnimeClickMetadataFallbackService
     private readonly AnimeClickHtmlParser _parser;
     private readonly AnimeClickTmdbClient _tmdbClient;
     private readonly AnimeClickTvdbClient _tvdbClient;
-    private readonly AnimeClickOllamaTranslator _translator;
+    private readonly AnimeClickAiTranslator _translator;
     private readonly AnimeClickTranslationQueue _translationQueue;
     private readonly ILogger<AnimeClickMetadataFallbackService> _logger;
 
@@ -30,7 +30,7 @@ public sealed class AnimeClickMetadataFallbackService
         AnimeClickHtmlParser parser,
         AnimeClickTmdbClient tmdbClient,
         AnimeClickTvdbClient tvdbClient,
-        AnimeClickOllamaTranslator translator,
+        AnimeClickAiTranslator translator,
         AnimeClickTranslationQueue translationQueue,
         ILogger<AnimeClickMetadataFallbackService> logger)
     {
@@ -102,7 +102,7 @@ public sealed class AnimeClickMetadataFallbackService
     {
         if (!configuration.EnableEpisodeSynopsisTranslation
             || season < 0
-            || episode <= 0
+            || episode < 0
             || !AnimeClickClient.TryNormalizeAnimeClickId(animeClickId, out var normalizedId))
         {
             return null;
@@ -320,7 +320,7 @@ public sealed class AnimeClickMetadataFallbackService
             englishMs = stage.ElapsedMilliseconds;
             if (string.IsNullOrWhiteSpace(english)
                 || string.IsNullOrWhiteSpace(sourceIdentity)
-                || string.IsNullOrWhiteSpace(configuration.OllamaCloudApiKey))
+                || !AnimeClickAiTranslator.IsConfigured(configuration, out _))
             {
                 return Finish(null, "no-english-source");
             }
@@ -345,8 +345,8 @@ public sealed class AnimeClickMetadataFallbackService
                     AnimeClickFallbackResult.Translated(
                         translated,
                         sourceName ?? "external",
-                        configuration.OllamaCloudModel),
-                    "ollama-cache");
+                        configuration.AiModel),
+                    "ai-cache");
             }
 
             // Diagnostics may explicitly request an end-to-end synchronous probe.
@@ -366,13 +366,13 @@ public sealed class AnimeClickMetadataFallbackService
                 stage.Stop();
                 translationMs += stage.ElapsedMilliseconds;
                 return string.IsNullOrWhiteSpace(translated)
-                    ? Finish(null, "ollama-synchronous-miss")
+                    ? Finish(null, "ai-synchronous-miss")
                     : Finish(
                         AnimeClickFallbackResult.Translated(
                             translated,
                             sourceName ?? "external",
-                            configuration.OllamaCloudModel),
-                        "ollama-synchronous");
+                            configuration.AiModel),
+                        "ai-synchronous");
             }
 
             // Normal library refreshes never wait for uncached cloud inference.
@@ -409,13 +409,13 @@ public sealed class AnimeClickMetadataFallbackService
                         AnimeClickFallbackResult.Translated(
                             translated,
                             sourceName ?? "external",
-                            configuration.OllamaCloudModel),
-                        "ollama-cache-race",
+                            configuration.AiModel),
+                        "ai-cache-race",
                         queueState);
                 }
             }
 
-            return Finish(null, "ollama-deferred", queueState);
+            return Finish(null, "ai-deferred", queueState);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -522,7 +522,7 @@ public sealed record AnimeClickFallbackResult(
     string Value,
     string Source,
     string SourceLanguage,
-    bool UsedOllama,
+    bool UsedAi,
     string? Model)
 {
     public static AnimeClickFallbackResult NativeItalian(string value, string source)

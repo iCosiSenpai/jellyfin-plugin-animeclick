@@ -19,8 +19,8 @@ namespace AnimeClick.Plugin.Services;
 /// language. Production deliberately requests <c>ita</c> first and <c>eng</c>
 /// only as an English fallback. TheTVDB exposes per-episode translations via
 /// <c>GET /series/{id}/episodes/default/{lang}</c>, so when an Italian translation
-/// exists we can fill the synopsis <b>without</b> Ollama (zero compute on the NAS). When TVDB has no translation for an episode, the caller falls back
-/// to the TMDB EN + Ollama IT pipeline.
+/// exists we can fill the synopsis <b>without</b> any AI call (zero compute, zero cost). When TVDB has no translation for an episode, the caller falls back
+/// to the TMDB EN + AI translation pipeline.
 ///
 /// All metadata-path methods are best-effort: they return null on any failure
 /// (network, non-2xx, parse error, 404) so the metadata pipeline is never crashed.
@@ -650,7 +650,7 @@ public class AnimeClickTvdbClient
         var client = _httpClientFactory.CreateClient();
 
         // Deliberately not EpisodeTranslationTimeoutSec: that setting is the budget for one
-        // Ollama translation call, and using it here meant a user who raised it for a slow
+        // AI translation call, and using it here meant a user who raised it for a slow
         // model also allowed a single TVDB request to hang for up to two minutes. TVDB is a
         // plain JSON API; 30 s matches that setting's own default, so behaviour is unchanged
         // for anyone who left it alone.

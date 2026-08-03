@@ -259,8 +259,13 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             var staff = _parser.ParseStaffPage(staffHtml, baseUrl);
             anime.People.AddRange(staff);
 
-            _logger.LogInformation("AnimeClick cast: {Actors} doppiatori, {Staff} staff per {Title}",
-                actors.Count, staff.Count, anime.Title);
+            // The sigle are role sections of this same page. Reading them here costs no extra
+            // request and covers the titles whose /multimedia page has no OP/ED block.
+            var staffSongs = _parser.ParseStaffThemeSongs(staffHtml);
+            anime.AddThemeSongs(staffSongs);
+
+            _logger.LogInformation("AnimeClick cast: {Actors} doppiatori, {Staff} staff, {Songs} sigle da /staff per {Title}",
+                actors.Count, staff.Count, staffSongs.Count, anime.Title);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -283,7 +288,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         {
             var html = await _client.GetStringAsync(animeUrl + "/multimedia", configuration, cancellationToken);
             var diagnostics = _parser.ParseMultimediaDiagnostics(html);
-            anime.ThemeSongs.AddRange(diagnostics.Songs);
+            anime.AddThemeSongs(diagnostics.Songs);
             anime.Trailers.AddRange(diagnostics.Trailers);
             anime.MultimediaLoaded = true;
 
@@ -393,17 +398,5 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         }
     }
 
-    private static PersonKind MapPersonType(string type) => type switch
-    {
-        "Director" => PersonKind.Director,
-        "Writer" => PersonKind.Writer,
-        "Composer" => PersonKind.Composer,
-        "Producer" => PersonKind.Producer,
-        "Artist" => PersonKind.Artist,
-        "Editor" => PersonKind.Editor,
-        "Colorist" => PersonKind.Colorist,
-        "Engineer" => PersonKind.Engineer,
-        "Actor" => PersonKind.Actor,
-        _ => PersonKind.Unknown
-    };
+    private static PersonKind MapPersonType(string type) => AnimeClickPersonKinds.Map(type);
 }
