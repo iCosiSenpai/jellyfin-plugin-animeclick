@@ -7,9 +7,15 @@
 
   # AnimeClick Metadata Plugin for Jellyfin
 
-  [![GitHub Release](https://img.shields.io/github/v/release/iCosiSenpai/jellyfin-plugin-animeclick?style=flat-square&color=blue)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest)
-  [![Jellyfin](https://img.shields.io/badge/Jellyfin-plugin-7b68ee?style=flat-square)](https://jellyfin.org/)
-  [![License](https://img.shields.io/github/license/iCosiSenpai/jellyfin-plugin-animeclick?style=flat-square)](LICENSE)
+  [![Release](https://img.shields.io/github/v/release/iCosiSenpai/jellyfin-plugin-animeclick?style=flat-square&color=blue&label=release)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest)
+  [![Nel catalogo](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FiCosiSenpai%2FiCosiSenpai-Plugins%2Fmain%2Fmanifest.json&query=%24%5B0%5D.versions%5B0%5D.version&style=flat-square&label=nel%20catalogo&color=blue)](https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json)
+  [![Jellyfin ABI](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FiCosiSenpai%2FiCosiSenpai-Plugins%2Fmain%2Fmanifest.json&query=%24%5B0%5D.versions%5B0%5D.targetAbi&style=flat-square&label=Jellyfin%20ABI&color=7b68ee)](https://jellyfin.org/)
+  [![Build](https://img.shields.io/github/actions/workflow/status/iCosiSenpai/jellyfin-plugin-animeclick/build.yml?branch=main&style=flat-square&label=build)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/actions/workflows/build.yml)
+
+  [![Download](https://img.shields.io/github/downloads/iCosiSenpai/jellyfin-plugin-animeclick/total?style=flat-square&label=download&color=success)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases)
+  [![Ultimo rilascio](https://img.shields.io/github/release-date/iCosiSenpai/jellyfin-plugin-animeclick?style=flat-square&label=ultimo%20rilascio&color=informational)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest)
+  [![.NET](https://img.shields.io/badge/.NET-9.0-512bd4?style=flat-square)](https://dotnet.microsoft.com/)
+  [![Licenza](https://img.shields.io/github/license/iCosiSenpai/jellyfin-plugin-animeclick?style=flat-square&label=licenza)](LICENSE)
 </div>
 
 Porta in Jellyfin i metadati italiani degli anime presenti su [AnimeClick.it](https://www.animeclick.it/): titoli, trame, generi, cast, staff e informazioni sugli episodi.
@@ -18,13 +24,23 @@ Il plugin segue una regola semplice: **usa AnimeClick quando possiede un dato it
 
 > **Nota**: Questo plugin utilizza scraping etico del sito AnimeClick, autorizzato dallo staff. Tutte le richieste sono rate-limited e i dati vengono cacheati localmente.
 
+<details>
+<summary><b>In English</b></summary>
+
+A Jellyfin metadata provider that fills Italian titles, plots, genres, cast, staff and episode information for anime from [AnimeClick.it](https://www.animeclick.it/), with optional TheTVDB, TMDB and AI translation as fallbacks for episode synopses. It writes a field only when the match is provable, and leaves the episode untouched otherwise — no metadata beats plausible wrong metadata.
+
+The documentation below is in Italian, like the metadata the plugin produces. Scraping is authorised by the AnimeClick staff for non-commercial use, rate-limited and cached locally.
+
+</details>
+
+
 ## Indice
 
 - [Cosa fa](#cosa-fa) · [Requisiti](#requisiti) · [Installazione](#installazione) · [Configurazione](#configurazione)
 - [Episodi: titoli, sinossi e numerazioni](#episodi-titoli-sinossi-e-numerazioni)
 - [Traduzione AI, opzionale](#traduzione-ai-opzionale)
 - [Manutenzione: la scheda Libreria](#manutenzione-la-scheda-libreria)
-- [Strumenti e diagnostica](#strumenti-e-diagnostica) · [Risoluzione dei problemi](#risoluzione-dei-problemi)
+- [Strumenti e diagnostica](#strumenti-e-diagnostica) · [Sviluppo](#sviluppo) · [Risoluzione dei problemi](#risoluzione-dei-problemi)
 - [Scraping autorizzato e uso corretto](#scraping-autorizzato-e-uso-corretto) · [Fonti](#fonti-e-riconoscimenti) · [Licenza](#licenza)
 
 ## Cosa fa
@@ -55,7 +71,7 @@ Le voci principali si possono spegnere una per una nella scheda **Metadati**, se
 
 ## Requisiti
 
-- Jellyfin **10.11.x** (ABI 10.11.8.0).
+- Jellyfin **10.11.x**. La versione pubblicata nel catalogo e l'ABI su cui è compilata sono i due badge in cima a questa pagina: vengono letti in diretta dal manifest, quindi non possono restare indietro rispetto alla realtà.
 - Nessuna API key per i dati che stanno su AnimeClick.
 - Facoltativo, solo per allargare la copertura delle sinossi episodio: una chiave [TMDB](https://developer.themoviedb.org/docs/getting-started), una [TheTVDB](https://thetvdb.com/dashboard), un [servizio AI](#traduzione-ai-opzionale).
 
@@ -269,6 +285,51 @@ Nella scheda **Strumenti**:
 - **Ricerca, rete e compatibilità** — numero di risultati, durata della cache, pausa fra le richieste, URL base, User-Agent.
 
 Le verifiche di connessione di TMDB, TheTVDB e del servizio AI, l'anteprima di traduzione e la prova della catena completa su un episodio reale stanno nelle rispettive schede. Tutte richiedono un account amministratore.
+
+### API di diagnostica
+
+Gli stessi strumenti sono raggiungibili via HTTP, se preferisci gli script all'interfaccia. Tutti gli endpoint richiedono un token di amministratore (`Authorization: MediaBrowser Token="…"`) e vivono sotto `/Plugins/AnimeClick`.
+
+| Metodo | Endpoint | A cosa serve |
+|---|---|---|
+| `GET` | `TestLookup?name=&year=` | Cosa risponde la ricerca per un titolo |
+| `GET` | `TestEpisodes?animeClickId=&season=&episode=` | La tabella episodi come la legge il plugin, con la strategia di abbinamento usata |
+| `GET` | `LibraryAudit` | Analisi della copertura dei titoli, solo da cache |
+| `POST` | `LibraryAuditSeries` | Rilettura e verdetto definitivo per una serie |
+| `POST` | `RunMissingTitlesTask` | Avvia subito il ricontrollo dei titoli |
+| `GET` | `AiProviders` | I servizi AI selezionabili |
+| `POST` | `AiModels` | I modelli che la tua chiave può usare |
+| `POST` | `TestAi` · `TestTmdb` · `TestTvdb` | Prova di connessione, senza mai restituire le credenziali |
+| `POST` | `PreviewTranslation` | Traduce un testo con il profilo corrente |
+| `POST` | `PreviewEpisodeFallback` | Esegue la catena reale su un episodio e dice quale fonte ha vinto |
+| `POST` | `IdentifyAndRefresh` | Associa un ID AnimeClick a un elemento e lo aggiorna |
+| `POST` | `ClearCache` | Tutta la cache, o solo una serie con `{"animeClickId":"…"}` |
+
+## Sviluppo
+
+```bash
+git clone https://github.com/iCosiSenpai/jellyfin-plugin-animeclick.git
+cd jellyfin-plugin-animeclick
+dotnet build AnimeClick.Plugin.csproj -c Release
+dotnet test AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release
+```
+
+Serve l'SDK .NET 9. La build non deve produrre warning e la suite non deve avere test rossi: la CI verifica entrambe le cose, più che ogni numero di versione scritto a mano nel progetto coincida con `<Version>`.
+
+| Cartella | Contenuto |
+|---|---|
+| `Providers/` | I provider Jellyfin per serie, stagioni, episodi, film, immagini e ID esterni |
+| `Services/` | Scraping, parsing, abbinamento episodi, cache, client TMDB/TheTVDB, traduzione AI |
+| `Api/` | Gli endpoint di diagnostica e di identificazione |
+| `Tasks/` | L'attività pianificata di ricontrollo dei titoli |
+| `Configuration/`, `Web/` | La pagina di configurazione: HTML, CSS e JavaScript |
+| `tools/AnimeClick.Harness/` | Strumento offline: confronta la libreria Jellyfin con ciò che il plugin scriverebbe, senza toccarla |
+
+L'harness è il modo più efficace per trovare difetti reali: legge la libreria in sola lettura, esegue la stessa logica di abbinamento e produce un referto delle differenze. Diversi difetti chiusi nelle ultime versioni sono stati trovati così, non leggendo il codice.
+
+### Segnalazioni
+
+Un caso reale vale più di una descrizione generica. Nella [segnalazione](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues) indica l'indirizzo AnimeClick della serie, stagione ed episodio come li mostra Jellyfin, il nome del file senza percorsi personali, il risultato atteso e i log ripuliti dai dati sensibili.
 
 ## Risoluzione dei problemi
 
