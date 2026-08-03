@@ -1,3 +1,7 @@
+<!-- Nota per chi manutiene: qui non si scrivono numeri di versione. Il badge in cima legge
+     l'ultima release e i link puntano a /releases/latest, quindi il README va aggiornato quando
+     cambiano funzioni, requisiti o procedure, non a ogni rilascio. -->
+
 <div align="center">
   <img src="assets/banner.png" alt="Banner AnimeClick Metadata Plugin per Jellyfin" width="100%" />
 
@@ -14,69 +18,50 @@ Il plugin segue una regola semplice: **usa AnimeClick quando possiede un dato it
 
 > **Nota**: Questo plugin utilizza scraping etico del sito AnimeClick, autorizzato dallo staff. Tutte le richieste sono rate-limited e i dati vengono cacheati localmente.
 
-## Cosa ottieni
+## Indice
 
-- Titolo e trama italiani di serie e film.
-- Generi, tag, cast, staff, nazionalità, trailer e sigle quando disponibili.
-- Titoli italiani degli episodi.
-- Sinossi italiane degli episodi, cercate prima su AnimeClick.
-- Fonti di riserva opzionali: TheTVDB, TMDB e traduzione AI (Ollama, OpenAI, Claude, Gemini, Mistral, Groq, DeepSeek, OpenRouter e altri).
-- Gestione prudente di stagioni, special, OVA e numerazioni insolite.
-- Una scheda **Libreria** che analizza la copertura dei titoli e spiega, serie per serie, perché ne manca uno.
-- Locandina AnimeClick come alternativa quando i provider di immagini non trovano un poster migliore.
+- [Cosa fa](#cosa-fa) · [Requisiti](#requisiti) · [Installazione](#installazione) · [Configurazione](#configurazione)
+- [Episodi: titoli, sinossi e numerazioni](#episodi-titoli-sinossi-e-numerazioni)
+- [Traduzione AI, opzionale](#traduzione-ai-opzionale)
+- [Manutenzione: la scheda Libreria](#manutenzione-la-scheda-libreria)
+- [Strumenti e diagnostica](#strumenti-e-diagnostica) · [Risoluzione dei problemi](#risoluzione-dei-problemi)
+- [Scraping autorizzato e uso corretto](#scraping-autorizzato-e-uso-corretto) · [Fonti](#fonti-e-riconoscimenti) · [Licenza](#licenza)
 
-Non è necessario configurare API key per usare i dati disponibili direttamente su AnimeClick.
+## Cosa fa
 
-## Avvio rapido
+Il plugin si registra su serie, stagioni, episodi, film e persone, e riempie questi campi:
 
-1. [Installa il plugin](#installazione) e riavvia Jellyfin.
-2. Abilita AnimeClick nella libreria che contiene gli anime.
-3. Metti **AnimeClick per primo tra i provider dei metadati**.
-4. Per le immagini, lascia prima i provider con poster ad alta risoluzione e metti **AnimeClick per ultimo**.
-5. Aggiorna i metadati della serie.
-6. Se vuoi più sinossi episodio, apri la scheda **Sinossi episodi** del plugin e aggiungi facoltativamente TheTVDB, TMDB o un servizio AI.
+| Campo | Fonte | Note |
+|---|---|---|
+| Titolo italiano | AnimeClick | Il titolo originale viene conservato nel campo *Titolo originale* |
+| Trama | AnimeClick | |
+| Generi, tag, origine, nazionalità | AnimeClick | |
+| Cast e staff | AnimeClick | Con le immagini delle persone quando esistono |
+| Studi, valutazione, collezioni | AnimeClick | |
+| Trailer e PV | AnimeClick | |
+| Sigle | AnimeClick | Aggiunte come tag `OP1: …`, `ED1: …` con l'interprete |
+| Titoli degli episodi | AnimeClick | |
+| Sinossi degli episodi | AnimeClick, poi TheTVDB e TMDB | Le fonti esterne sono opzionali, vedi [la catena](#lordine-delle-fonti) |
+| Locandina | AnimeClick | Solo come riserva, vedi [l'ordine dei provider](#lordine-dei-provider-conta) |
 
-Per la maggior parte delle serie non servono altre impostazioni.
+Le voci principali si possono spegnere una per una nella scheda **Metadati**, se preferisci che un campo lo riempia un altro provider.
 
-## Titoli e sinossi degli episodi
+### Cosa non tocca, di proposito
 
-Titolo e sinossi sono due dati indipendenti.
+- **La durata degli episodi**: quella misurata da Jellyfin sul file è più precisa di quella dichiarata da una scheda, e sovrascriverla peggiorerebbe il dato.
+- **I campi bloccati**: un lock in Jellyfin viene sempre rispettato.
+- **I commenti degli utenti**: non diventano mai una sinossi.
+- **Gli episodi con un abbinamento incerto**: restano intatti. Nessun metadato è preferibile a un metadato plausibile e sbagliato.
 
-### Titolo episodio
+## Requisiti
 
-Il titolo viene letto dalla lista episodi di AnimeClick. Se AnimeClick mostra soltanto un nome generico come `Episodio 12`, `Episode 12` o `Ep. 12`, il plugin lo ignora e lascia il campo disponibile agli altri provider.
-
-### Sinossi episodio
-
-La sinossi viene letta dalla pagina della singola puntata. Il plugin usa soltanto la descrizione editoriale dell'episodio:
-
-- una descrizione italiana reale viene importata;
-- un campo vuoto viene ignorato;
-- un segnaposto completo come `Episodio 12` viene ignorato;
-- i commenti degli utenti presenti più in basso nella pagina non vengono mai usati come sinossi.
-
-Una frase reale non viene scartata soltanto perché contiene la parola “episodio”: il filtro interviene quando tutto il testo è un semplice segnaposto.
-
-### Ordine esatto delle fonti
-
-Quando attivi **Sinossi episodi**, il plugin prova nell'ordine:
-
-| Priorità | Fonte | Cosa cerca |
-|---:|---|---|
-| 1 | AnimeClick | Sinossi italiana della pagina episodio |
-| 2 | TheTVDB `ita` | Sinossi italiana già pronta |
-| 3 | TMDB `it-IT` | Sinossi italiana già pronta |
-| 4 | TMDB `en-US` | Sinossi inglese da tradurre |
-| 5 | TheTVDB `eng` | Seconda possibilità in inglese |
-| 6 | Traduzione AI | Traduce in italiano il testo inglese trovato |
-
-Quindi sì: **le sinossi inglesi arrivano prima da TMDB e, se mancano, da TheTVDB**. L'AI non cerca informazioni e non inventa una trama; traduce soltanto una sinossi inglese già esistente.
-
-Se AnimeClick possiede già la sinossi, le altre fonti non vengono contattate per quella puntata. Se nessuna fonte produce un testo valido, il campo rimane invariato.
+- Jellyfin **10.11.x** (ABI 10.11.8.0).
+- Nessuna API key per i dati che stanno su AnimeClick.
+- Facoltativo, solo per allargare la copertura delle sinossi episodio: una chiave [TMDB](https://developer.themoviedb.org/docs/getting-started), una [TheTVDB](https://thetvdb.com/dashboard), un [servizio AI](#traduzione-ai-opzionale).
 
 ## Installazione
 
-### Metodo consigliato: catalogo Jellyfin
+### Dal catalogo (consigliato)
 
 1. In Jellyfin apri **Dashboard → Plugin → Repository**.
 2. Aggiungi questo indirizzo:
@@ -85,179 +70,79 @@ Se AnimeClick possiede già la sinossi, le altre fonti non vengono contattate pe
    https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json
    ```
 
-3. Apri il catalogo dei plugin.
-4. Cerca **AnimeClick Metadata** e installalo.
-5. Riavvia Jellyfin.
+3. Apri il catalogo, cerca **AnimeClick Metadata** e installalo.
+4. Riavvia Jellyfin.
 
-La pagina della [release più recente](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest) indica la compatibilità e le eventuali note importanti.
+Gli aggiornamenti successivi compaiono in **Dashboard → Plugin**. Le impostazioni salvate, comprese le API key, sopravvivono all'aggiornamento: sono conservate fuori dalla cartella del plugin.
 
-### Installazione manuale
+### Manuale
 
-Usa questo metodo soltanto se il catalogo non è disponibile.
+Serve solo se il catalogo non è raggiungibile.
 
 1. Scarica `AnimeClick.Plugin.zip` dalla [release più recente](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest).
 2. Ferma Jellyfin.
-3. Crea nella cartella dei plugin una nuova directory chiamata `AnimeClick Metadata_<VERSIONE>`.
-4. Estrai al suo interno i file contenuti nello ZIP.
-5. Avvia nuovamente Jellyfin.
+3. Crea nella cartella dei plugin una directory `AnimeClick Metadata_<VERSIONE>` ed estraici il contenuto dello ZIP.
+4. Riavvia Jellyfin e controlla la versione nella pagina del plugin.
 
-Percorsi comuni della cartella plugin:
+Percorsi comuni: `/config/plugins/` (Docker), `~/.local/share/jellyfin/plugins/` (Linux), `%APPDATA%\jellyfin\plugins\` (Windows).
 
-- Docker: `/config/plugins/`
-- Linux: `~/.local/share/jellyfin/plugins/`
-- Windows: `%APPDATA%\jellyfin\plugins\`
+> **Una versione per volta.** Due cartelle `AnimeClick Metadata_*` contemporaneamente entrano in conflitto: sposta la vecchia fuori dalla directory dei plugin, non lasciarla accanto alla nuova.
 
-Non lasciare due versioni di AnimeClick contemporaneamente nella cartella dei plugin.
+Per tornare indietro: ferma Jellyfin, rimuovi la cartella nuova, rimetti quella precedente, riavvia. Le differenze fra le versioni sono nelle [release](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases).
 
-## Aggiornamento e ritorno alla versione precedente
+## Configurazione
 
-### Installazione dal catalogo
+### L'ordine dei provider conta
 
-1. Apri **Dashboard → Plugin**.
-2. Installa l'aggiornamento quando viene proposto.
-3. Riavvia Jellyfin.
-4. Controlla la versione nella pagina del plugin.
+Nelle impostazioni della libreria anime (**Dashboard → Librerie → la tua libreria → Gestisci**):
 
-Le impostazioni salvate, comprese le API key, normalmente restano disponibili dopo l'aggiornamento.
+- **Metadati: AnimeClick per primo.** È la fonte italiana, e i valori che produce vengono riapplicati dopo la fusione dei provider, così un provider successivo non li sovrascrive con l'inglese.
+- **Immagini: AnimeClick per ultimo.** Le locandine di AnimeClick sono più piccole di quelle di TMDB o Fanart: servono come riserva quando gli altri non trovano niente.
 
-### Installazione manuale
+La scheda **Panoramica** del plugin mostra, libreria per libreria, in che posizione si trova davvero: è il modo più rapido per accorgersi che l'ordine non è quello che si crede.
 
-1. Scarica il nuovo ZIP.
-2. Ferma Jellyfin.
-3. Conserva temporaneamente la vecchia cartella del plugin.
-4. Estrai la nuova versione in una cartella separata `AnimeClick Metadata_<NUOVA_VERSIONE>`.
-5. Sposta la vecchia cartella fuori dalla directory dei plugin.
-6. Riavvia Jellyfin e controlla che il plugin venga caricato.
+### Le schede della pagina di configurazione
 
-Se qualcosa non funziona, ferma Jellyfin, rimuovi la cartella nuova, rimetti quella precedente e riavvia. Le modifiche specifiche di ogni versione sono elencate nelle [GitHub Releases](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases).
+| Scheda | A cosa serve |
+|---|---|
+| **Panoramica** | Stato dei provider, delle chiavi e dell'ordine effettivo in ogni libreria |
+| **Metadati** | Quali campi AnimeClick può scrivere, e la locandina di riserva |
+| **Sinossi episodi** | La catena delle sinossi, le chiavi esterne e il [servizio AI](#traduzione-ai-opzionale) |
+| **Libreria** | [Analisi della copertura dei titoli](#manutenzione-la-scheda-libreria) e ricontrollo immediato |
+| **Strumenti** | [Identificazione manuale, cache, override e diagnostica](#strumenti-e-diagnostica) |
 
-## Configurazione consigliata
+### Uso minimo
 
-### Uso semplice, senza servizi esterni
+Installare, mettere AnimeClick per primo, aggiornare i metadati. Nient'altro: senza alcuna chiave il plugin usa solo AnimeClick, e per la maggior parte delle serie è già tutto quello che serve. Attiva **Sinossi episodi** se vuoi anche le descrizioni delle singole puntate.
 
-È sufficiente:
+## Episodi: titoli, sinossi e numerazioni
 
-- lasciare attivi i metadati AnimeClick desiderati;
-- attivare **Sinossi episodi** se vuoi usare anche le descrizioni presenti nelle pagine episodio;
-- non inserire alcuna API key.
+Titolo e sinossi sono due dati indipendenti, con fonti e regole diverse.
 
-In questa modalità il plugin usa soltanto AnimeClick.
+### Il titolo
 
-### Più copertura per le sinossi
+Viene letto dalla lista episodi di AnimeClick. Un nome generico — `Episodio 12`, `Episode 12`, `Ep. 12`, `Puntata 5` — non è un titolo: il plugin lo ignora e lascia il campo agli altri provider, invece di scrivere un numero travestito da titolo.
 
-Puoi aggiungere una o più fonti:
+### La sinossi
 
-- **TheTVDB**: cerca prima il testo italiano `ita` e, se serve una traduzione, anche quello inglese `eng`;
-- **TMDB**: cerca il testo italiano `it-IT` e poi quello inglese `en-US`;
-- **Traduzione AI**: traduce in italiano il testo inglese trovato su TMDB o TheTVDB.
+Viene letta dalla pagina della singola puntata, e solo dalla descrizione editoriale: un campo vuoto o un segnaposto vengono ignorati, i commenti degli utenti non vengono mai usati. Una frase reale non viene scartata solo perché contiene la parola «episodio»: il filtro scatta quando *tutto* il testo è un segnaposto.
 
-Le fonti sono facoltative. Puoi usare AnimeClick da solo, AnimeClick con una sola API esterna oppure la catena completa.
+#### L'ordine delle fonti
 
-## Traduzione AI
+Con **Sinossi episodi** attivo, il plugin prova nell'ordine e si ferma al primo risultato valido:
 
-### Che cos'è e perché può servire
+| # | Fonte | Cosa cerca | Serve una chiave |
+|---:|---|---|---|
+| 1 | AnimeClick | Sinossi italiana della pagina episodio | no |
+| 2 | TheTVDB `ita` | Sinossi italiana già pronta | TheTVDB |
+| 3 | TMDB `it-IT` | Sinossi italiana già pronta | TMDB |
+| 4 | TMDB `en-US` | Sinossi inglese da tradurre | TMDB |
+| 5 | TheTVDB `eng` | Seconda possibilità in inglese | TheTVDB |
+| 6 | Traduzione AI | Traduce in italiano il testo trovato ai punti 4 e 5 | [servizio AI](#traduzione-ai-opzionale) |
 
-Il plugin può tradurre in italiano una sinossi che esiste **soltanto in inglese**, quando AnimeClick, TheTVDB e TMDB non ne hanno una italiana ma TMDB o TheTVDB ne possiedono una inglese.
+Le sinossi italiane già scritte da un essere umano vengono prima di qualunque traduzione automatica. Se nessuna fonte produce un testo valido, il campo resta invariato.
 
-La traduzione AI:
-
-- non traduce i titoli degli episodi;
-- non crea trame dal nulla;
-- non viene chiamata se è già disponibile una sinossi italiana;
-- costa una richiesta per sinossi, una volta sola: il risultato resta in cache.
-
-### Quale servizio scegliere
-
-Il servizio si sceglie da un menu nella scheda **Sinossi episodi**. Sono già configurati:
-
-| Servizio | Chiave | Note |
-|---|---|---|
-| Ollama Cloud | sì | Modelli con suffisso `-cloud`; un modello per volta sul piano gratuito |
-| Ollama in casa | no | Nessuna quota; se il demone ha già fatto `ollama signin` usa lui l'abbonamento |
-| OpenAI | sì | Chiave della piattaforma API, a consumo |
-| Anthropic Claude | sì | Chiave della console, a consumo |
-| Google Gemini | sì | Endpoint compatibile OpenAI ufficiale, con piano gratuito a limiti |
-| Mistral | sì | Buona resa sulle lingue europee |
-| Groq | sì | Molto rapido quando le sinossi da tradurre sono tante |
-| DeepSeek | sì | Tra i più economici sui testi brevi |
-| OpenRouter | sì | Una sola chiave per i modelli di molti fornitori |
-| Together AI | sì | Modelli aperti ospitati |
-| xAI Grok | sì | Chiave della console xAI |
-| LM Studio in casa | no | Server locale di LM Studio |
-| Personalizzato | opzionale | Qualunque servizio compatibile OpenAI: LiteLLM, vLLM, llama.cpp, un proxy aziendale |
-
-Il **nome del modello non ha un valore predefinito**, ed è voluto: i fornitori ritirano e rinominano i modelli continuamente, quindi il plugin chiede l'elenco al servizio. Premi **Elenca modelli** e scegli dal campo.
-
-### Perché non c'è il "login con ChatGPT" o "login con Claude"
-
-Sarebbe comodo usare un abbonamento già pagato, ma non è permesso:
-
-- l'abbonamento ChatGPT [non include l'accesso all'API](https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus), che è fatturato a parte; «Sign in with ChatGPT» esiste ma copre i client Codex, non chiamate API di altri programmi;
-- Anthropic ha [chiarito nei termini di servizio](https://www.theregister.com/2026/02/20/anthropic_clarifies_ban_third_party_claude_access/) che i token OAuth dei piani Free, Pro e Max valgono solo per Claude Code e Claude.ai: usarli altrove viola le condizioni d'uso.
-
-Esistono progetti che aggirano il vincolo riusando le credenziali dei client ufficiali. Questo plugin non lo fa: metterebbe a rischio l'account di chi lo installa e si romperebbe al primo cambiamento lato fornitore.
-
-L'unico modo legittimo per non mettere una chiave in Jellyfin è far tenere le credenziali a un servizio in casa — Ollama con `ollama signin`, o un gateway come LiteLLM — e puntare il plugin a quello.
-
-### Cosa serve
-
-- Una chiave del servizio scelto (non serve per un servizio in casa).
-- Una API key [TMDB](https://developer.themoviedb.org/docs/getting-started) oppure [TheTVDB](https://thetvdb.com/dashboard), perché la traduzione ha bisogno di una sinossi inglese da tradurre.
-
-Disponibilità dei modelli, limiti ed eventuali costi dipendono dal servizio e cambiano nel tempo: controlla sempre il tuo account.
-
-### Configurazione passo per passo
-
-1. In Jellyfin apri **Dashboard → Plugin → AnimeClick Plugin → Sinossi episodi**.
-2. Attiva **Sinossi degli episodi**.
-3. Configura TMDB, TheTVDB oppure entrambi.
-4. Scegli il **Servizio AI** dal menu: endpoint ed eventuale link per creare la chiave vengono compilati da soli.
-5. Incolla la **API key** del servizio, se ne richiede una.
-6. Premi **Elenca modelli** e scrivi nel campo **Modello** per scegliere.
-7. Salva.
-8. Usa i pulsanti di verifica: prima TMDB o TheTVDB, poi **Verifica AI**.
-9. Prova una breve traduzione nella sezione di anteprima.
-10. Aggiorna i metadati di un episodio.
-
-### Un servizio in casa
-
-Un endpoint sulla tua rete è ammesso anche in HTTP semplice — `http://ollama:11434/api/chat`, `http://nas.local:11434/api/chat`, un indirizzo privato della LAN — perché pretendere TLS avrebbe significato un certificato per un indirizzo di rete locale. Verso un host pubblico l'HTTPS resta obbligatorio, e **la chiave non viene mai inviata su una connessione in chiaro**: se ne hai configurata una e l'endpoint è HTTP, viene scartata con un avviso nel log.
-
-### Perché a volte servono due aggiornamenti
-
-La traduzione viene eseguita senza bloccare la scansione della libreria:
-
-1. il primo aggiornamento trova il testo inglese e avvia la traduzione;
-2. la traduzione viene salvata;
-3. un aggiornamento successivo applica la sinossi italiana.
-
-Se la sinossi non compare subito, attendi qualche momento e aggiorna nuovamente i metadati dell'episodio.
-
-### Privacy
-
-Quando usi la traduzione AI, il plugin invia al servizio scelto la sinossi inglese, le istruzioni di traduzione e il nome del modello. Non invia video, file della libreria o credenziali Jellyfin.
-
-La chiave del servizio AI viene salvata nella configurazione di Jellyfin: proteggi la cartella di configurazione e i relativi backup.
-
-## Perché mancano dei titoli: la scheda Libreria
-
-Un titolo assente sembra identico qualunque ne sia la causa, ma le cause chiedono reazioni opposte. La scheda **Libreria** le distingue leggendo soltanto le schede già in cache, quindi l'analisi non produce richieste ad AnimeClick.
-
-| Diagnosi | Che cosa significa | Cosa fare |
-|---|---|---|
-| Completa | Tutti gli episodi hanno un titolo | Niente |
-| Basta un ricontrollo | Il titolo c'è già su AnimeClick, Jellyfin non l'ha ancora scritto | **Esegui ora il ricontrollo** |
-| Titolo non pubblicato | Episodio abbinato, ma la scheda non ha ancora il titolo italiano | Attendere: il ricontrollo settimanale lo prenderà |
-| Scheda senza titoli | AnimeClick elenca gli episodi senza titolo | Nulla è recuperabile |
-| Numerazione ripetuta | La scheda ripete gli stessi numeri, di solito uno spin-off nella stessa tabella | Segnalare la serie |
-| Riga scomparsa | L'identità salvata punta a una riga che la scheda non contiene più | **Svuota cache** su quella serie |
-| Scheda di stagione da indicare | La stagione sta su un'altra scheda e la traversata non riesce a dimostrare quale | Scrivere l'ID di quel cour nel campo AnimeClick della stagione |
-| Nessuna identità | Nessun abbinamento scritto su quell'episodio | **Esegui ora il ricontrollo**; se resiste, segnalare |
-| Non identificata | La serie non ha un ID AnimeClick | Identificarla |
-
-Per ogni serie ci sono tre azioni: **Analizza** rilegge la scheda dal sito e rifà la traversata delle stagioni per dare un verdetto definitivo, **Svuota cache** invalida le schede memorizzate di quella serie, e per una serie non identificata un pulsante porta l'ID nella scheda Strumenti.
-
-## Numerazioni gestite
+### Numerazioni gestite
 
 Le pagine AnimeClick e le cartelle Jellyfin non dividono sempre una serie nello stesso modo. Il plugin confronta le informazioni disponibili e gestisce, tra gli altri, questi casi:
 
@@ -265,48 +150,137 @@ Le pagine AnimeClick e le cartelle Jellyfin non dividono sempre una serie nello 
 |---|---|
 | Una lista continua di episodi | Ricostruisce l'ordine senza supporre stagioni inesistenti |
 | Stagioni separate o numerazione che riparte da 1 | Abbina la puntata alla stagione corretta |
-| Stagioni di lunghezza diversa, ad esempio 13 + 11 | Usa i confini reali quando sono disponibili |
-| Una sola stagione Jellyfin che unisce più gruppi AnimeClick | Può seguire l'ordine completo verificato |
-| Episodio 0, OVA, OAV, OAD, ONA, special, recap, bonus ed extra | Li mantiene separati dagli episodi normali |
-| Numeri come `12.5`, `12A` o `12B` | Richiede informazioni sufficienti e non li forza su E12 |
+| Stagioni di lunghezza diversa, ad esempio 13 + 11 | Usa i confini reali della libreria quando sono disponibili |
+| Una sola stagione Jellyfin che unisce più gruppi AnimeClick | Segue l'ordine complessivo quando i numeri lo confermano |
+| Episodio 0, OVA, OAV, OAD, ONA, special, recap, bonus, extra | Li tiene separati dagli episodi normali |
+| Extra numerati dopo la fine della serie (`Ep. 25 (extra)`) | Li abbina ai file che la libreria tiene come episodi 25 e 26 |
+| Uno spin-off elencato nella stessa tabella | Lo riconosce dall'etichetta e non gli lascia rubare la numerazione |
+| Numeri come `12.5`, `12A`, `12B` | Non li forza su E12 senza prove sufficienti |
 | Un file che contiene E01-E02 | Lo abbina soltanto a un intervallo compatibile |
-| Numeri duplicati o dati contraddittori | Non modifica l'episodio finché il match non è sicuro |
+| Numeri duplicati o dati contraddittori | Lascia l'episodio intatto finché il match non è sicuro |
 
-Special e OVA non fanno slittare i titoli delle puntate normali. Se una serie ha una struttura eccezionale, nella scheda **Strumenti** è disponibile un override avanzato; usalo soltanto dopo aver verificato il caso o chiesto supporto.
+Special e OVA non fanno slittare i titoli delle puntate normali.
+
+### Quando una stagione sta su un'altra scheda
+
+AnimeClick pubblica quasi ogni franchise come **una scheda per cour**: la seconda stagione di una serie è spesso una pagina separata, con i suoi episodi numerati da 1. Il plugin risale la catena dei sequel da sé, e nella maggior parte dei casi la trova.
+
+Quando la catena non è dimostrabile — relazioni ambigue, remake con lo stesso titolo, anni che non tornano — preferisce non indovinare. In quel caso apri la stagione in Jellyfin e scrivi l'ID AnimeClick di quel cour nel campo **AnimeClick** della stagione: ha la precedenza sulla serie per il riconoscimento degli episodi, mentre le sinossi continuano a seguire la serie. La scheda **Libreria** ti dice esattamente per quali stagioni serve.
+
+## Traduzione AI, opzionale
+
+### Come funziona
+
+Se una sinossi esiste **soltanto in inglese**, il plugin può tradurla. Non fa altro:
+
+- non traduce i titoli degli episodi;
+- non inventa trame;
+- non viene chiamata se una sinossi italiana esiste già;
+- costa una richiesta per sinossi, una volta sola nella vita: il risultato resta in cache per anni, e viene invalidato solo se cambia il testo di partenza, il modello o l'endpoint.
+
+La traduzione non blocca la scansione della libreria, e questo ha una conseguenza visibile: **il primo aggiornamento avvia la traduzione, un aggiornamento successivo la applica.** Se la sinossi non compare subito, attendi e aggiorna di nuovo quell'episodio.
+
+### Servizi disponibili
+
+Si scelgono da un menu nella scheda **Sinossi episodi**.
+
+| Servizio | Chiave | Note |
+|---|---|---|
+| Ollama Cloud | sì | Modelli con suffisso `-cloud`; uno per volta sul piano gratuito |
+| Ollama in casa | no | Nessuna quota; se il demone ha già fatto `ollama signin`, l'abbonamento lo usa lui |
+| OpenAI | sì | Chiave della piattaforma API, a consumo |
+| Anthropic Claude | sì | Chiave della console, a consumo |
+| Google Gemini | sì | Endpoint compatibile OpenAI ufficiale, con un piano gratuito a limiti |
+| Mistral | sì | Buona resa sulle lingue europee |
+| Groq | sì | Molto rapido quando le sinossi da tradurre sono tante |
+| DeepSeek | sì | Tra i più economici sui testi brevi |
+| OpenRouter | sì | Una sola chiave per i modelli di molti fornitori |
+| Together AI | sì | Modelli aperti ospitati |
+| xAI Grok | sì | Chiave della console xAI |
+| LM Studio in casa | no | Server locale di LM Studio |
+| Personalizzato | opzionale | Qualunque endpoint compatibile OpenAI: LiteLLM, vLLM, llama.cpp, un proxy aziendale |
+
+Il **modello non ha un valore predefinito**, ed è voluto: i fornitori ritirano e rinominano i modelli continuamente, e un default scaduto diventa «la traduzione ha smesso di funzionare senza dire niente». Il pulsante **Elenca modelli** chiede la lista al servizio con la tua chiave, così è sempre quella vera.
+
+### Configurazione
+
+1. **Dashboard → Plugin → AnimeClick Plugin → Sinossi episodi**.
+2. Attiva **Sinossi degli episodi** e configura TMDB, TheTVDB o entrambi: senza una fonte inglese non c'è niente da tradurre.
+3. Scegli il **Servizio AI**. Endpoint e link per creare la chiave si compilano da sé.
+4. Incolla la **API key**, se il servizio ne richiede una.
+5. Premi **Elenca modelli** e scegli il **Modello**.
+6. Salva, poi verifica: prima TMDB o TheTVDB, quindi **Verifica AI**.
+7. Prova una traduzione nell'anteprima e aggiorna un episodio.
+
+### Un servizio in casa
+
+Un endpoint sulla tua rete è ammesso anche in HTTP semplice — `http://ollama:11434/api/chat`, `http://nas.local:11434/api/chat`, un indirizzo privato della LAN — perché pretendere TLS avrebbe voluto dire un certificato per un indirizzo di rete locale, cioè nessuna opzione locale.
+
+Verso un host pubblico l'HTTPS resta obbligatorio, e **la chiave non viaggia mai in chiaro**: se ne hai configurata una e l'endpoint è HTTP, viene scartata con un avviso nel log invece di essere spedita.
+
+### Perché non c'è il «login con ChatGPT» o «login con Claude»
+
+Usare un abbonamento già pagato sarebbe comodo, ma non è permesso:
+
+- l'abbonamento ChatGPT [non include l'accesso all'API](https://help.openai.com/en/articles/6950777-what-is-chatgpt-plus), fatturata a parte. «Sign in with ChatGPT» esiste, ma copre i client Codex, non le chiamate API di altri programmi;
+- Anthropic ha [chiarito nei termini di servizio](https://www.theregister.com/2026/02/20/anthropic_clarifies_ban_third_party_claude_access/) che i token OAuth dei piani Free, Pro e Max valgono solo per Claude Code e Claude.ai: usarli altrove viola le condizioni d'uso.
+
+Esistono progetti che aggirano il vincolo riusando le credenziali dei client ufficiali. Questo plugin non lo fa: metterebbe a rischio l'account di chi lo installa e si romperebbe al primo cambiamento lato fornitore.
+
+L'unico modo legittimo per non tenere una chiave dentro Jellyfin è far custodire le credenziali a un servizio in casa — Ollama con `ollama signin`, o un gateway come LiteLLM — e puntare il plugin a quello.
+
+### Privacy e costi
+
+Al servizio scelto vengono inviati la sinossi inglese, le istruzioni di traduzione e il nome del modello. Non vengono inviati video, file della libreria o credenziali Jellyfin.
+
+La chiave è salvata nella configurazione di Jellyfin: proteggi quella cartella e i suoi backup. Disponibilità dei modelli, limiti e costi dipendono dal servizio e cambiano nel tempo: controlla il tuo account.
+
+## Manutenzione: la scheda Libreria
+
+Un titolo assente sembra identico qualunque ne sia la causa, ma le cause chiedono reazioni opposte: una si risolve con un pulsante, una si sistemerà da sé, una è una lacuna della fonte che nessun aggiornamento colmerà. La scheda **Libreria** le distingue leggendo soltanto le schede già in cache, quindi **l'analisi non produce nessuna richiesta ad AnimeClick**.
+
+| Diagnosi | Che cosa significa | Cosa fare |
+|---|---|---|
+| Completa | Ogni episodio ha un titolo | Niente |
+| Basta un ricontrollo | Il titolo è già su AnimeClick, Jellyfin non l'ha ancora scritto | **Esegui ora il ricontrollo** |
+| Titolo non pubblicato | Episodio abbinato, titolo italiano non ancora uscito | Attendere: ci pensa il ricontrollo settimanale |
+| Scheda senza titoli | AnimeClick elenca gli episodi senza titolo | Nulla da recuperare, non è un difetto del plugin |
+| Numerazione ripetuta | La scheda ripete gli stessi numeri | Segnalare la serie |
+| Riga scomparsa | L'identità salvata punta a una riga che non c'è più | **Svuota cache** su quella serie |
+| Scheda di stagione da indicare | La stagione sta su un'altra scheda e la catena non è dimostrabile | [Scrivere l'ID nella stagione](#quando-una-stagione-sta-su-unaltra-scheda) |
+| Nessuna identità | Nessun abbinamento scritto su quell'episodio | **Esegui ora il ricontrollo**; se resiste, segnalare |
+| Non identificata | La serie non ha un ID AnimeClick | Identificarla |
+
+Per ogni serie: **Analizza** rilegge la scheda dal sito e rifà la ricerca della stagione, per un verdetto definitivo; **Svuota cache** invalida solo le schede di quella serie; per una serie non identificata un pulsante ne porta l'ID nella scheda Strumenti.
+
+### Il ricontrollo dei titoli
+
+AnimeClick pubblica la riga di un episodio il giorno in cui va in onda e ne aggiunge il titolo italiano dopo. Jellyfin, però, rinfresca un episodio solo quando ne cambia il file: il titolo pubblicato tre giorni più tardi non arriverebbe mai.
+
+Se ne occupa l'attività pianificata **«AnimeClick: ricontrolla i titoli episodio mancanti»**, che gira ogni sette giorni e accoda fino a duecento episodi per volta, scegliendo quelli che un ricontrollo può davvero sistemare e saltando le schede che non pubblicano titoli. Puoi lanciarla subito dalla scheda **Libreria** o da **Dashboard → Attività pianificate**.
+
+## Strumenti e diagnostica
+
+Nella scheda **Strumenti**:
+
+- **Identifica e aggiorna** — associa un elemento Jellyfin a un ID AnimeClick e lancia il refresh.
+- **Svuota la cache** — tutta, o solo quella di una serie dalla scheda Libreria. Serve quando AnimeClick corregge una pagina e vuoi rileggerla prima della scadenza naturale.
+- **Override del layout episodi** — un fail-safe per serie con una struttura eccezionale (`ID=flat`, `ID=explicit`, `ID=13,24`). Da usare solo dopo aver verificato il caso: un override sbagliato impedisce un abbinamento che il riconoscimento automatico avrebbe risolto.
+- **Ricerca, rete e compatibilità** — numero di risultati, durata della cache, pausa fra le richieste, URL base, User-Agent.
+
+Le verifiche di connessione di TMDB, TheTVDB e del servizio AI, l'anteprima di traduzione e la prova della catena completa su un episodio reale stanno nelle rispettive schede. Tutte richiedono un account amministratore.
 
 ## Risoluzione dei problemi
 
-### La serie non viene trovata
+**La serie non viene trovata.** Controlla che AnimeClick sia abilitato in quella libreria e che Jellyfin raggiunga `animeclick.it`. Se il titolo è insolito, cerca la serie su AnimeClick e identificala a mano con il numero che compare nel suo indirizzo.
 
-- Controlla che AnimeClick sia abilitato nella libreria anime.
-- Cerca la serie su AnimeClick e usa il numero presente nel suo indirizzo per l'identificazione manuale.
-- Verifica che Jellyfin possa raggiungere `animeclick.it`.
+**Il titolo di un episodio resta vuoto.** Apri **Libreria → Analizza la libreria**: dice quale causa è in gioco invece di farti indovinare. Le più frequenti sono una scheda che elenca gli episodi senza titolo — e allora non c'è niente da recuperare — o una numerazione ambigua, davanti alla quale il plugin lascia il campo invariato di proposito.
 
-### Il titolo di un episodio rimane vuoto
+**La sinossi non compare.** Controlla che **Sinossi episodi** sia attivo, esegui le verifiche delle chiavi che usi, e prova la catena completa dalla scheda Sinossi episodi. Se la fonte è inglese e usi la traduzione AI, aggiorna una seconda volta. Alcune puntate non hanno una sinossi in nessuna fonte.
 
-Apri la scheda **Libreria** e premi **Analizza la libreria**: ti dice quale delle cause è in gioco, senza indovinare. Le più comuni sono una scheda AnimeClick che elenca gli episodi senza titolo — e allora non c'è nulla da recuperare — oppure una numerazione ambigua, davanti alla quale il plugin lascia intenzionalmente il campo invariato per evitare un titolo errato.
+**I titoli sono spostati.** Non forzare subito un override: apri una [segnalazione](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues) con l'indirizzo AnimeClick della serie, stagione ed episodio mostrati da Jellyfin, il nome del file senza percorsi personali, il risultato atteso e i log utili ripuliti dai dati sensibili.
 
-### La sinossi non compare
-
-1. Controlla che **Sinossi episodi** sia attivo.
-2. Prova la funzione **Pipeline reale** nella pagina del plugin.
-3. Se usi servizi esterni, esegui i relativi pulsanti di verifica.
-4. Se la fonte è inglese e usi la traduzione AI, attendi e aggiorna una seconda volta.
-5. Ricorda che alcune puntate non hanno una sinossi in nessuna fonte.
-
-### I titoli sono spostati
-
-Non forzare subito un override. Apri una [segnalazione](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues) indicando:
-
-- indirizzo della serie AnimeClick;
-- stagione ed episodio mostrati da Jellyfin;
-- nome del file, senza percorsi personali;
-- risultato atteso;
-- log utili dopo aver rimosso dati sensibili.
-
-### Il poster AnimeClick non viene usato
-
-È normale se un provider precedente ha già trovato un'immagine migliore. AnimeClick è pensato come fonte di riserva per le immagini.
+**La locandina AnimeClick non viene usata.** È il comportamento previsto quando un provider precedente ha già trovato un'immagine migliore: AnimeClick è la riserva per le immagini.
 
 ## Scraping autorizzato e uso corretto
 
@@ -329,19 +303,13 @@ Se modifichi o riutilizzi il progetto, mantieni queste protezioni e rispetta le 
 | Servizio | Ruolo nel plugin |
 |---|---|
 | [AnimeClick.it](https://www.animeclick.it/) | Fonte italiana principale, comprese le sinossi episodio quando presenti |
-| [TheTVDB](https://thetvdb.com/) | Sinossi episodio italiane e inglesi opzionali |
-| [TMDB](https://www.themoviedb.org/) | Sinossi episodio italiane e inglesi opzionali |
-| [Ollama](https://ollama.com/) e gli altri servizi AI | Traduzione opzionale dall'inglese all'italiano |
+| [TheTVDB](https://thetvdb.com/) | Sinossi episodio italiane e inglesi, opzionale |
+| [TMDB](https://www.themoviedb.org/) | Sinossi episodio italiane e inglesi, opzionale |
+| [Ollama](https://ollama.com/) e gli altri servizi AI | Traduzione dall'inglese all'italiano, opzionale |
 
 **TheTVDB:** Metadata provided by TheTVDB. Please consider adding missing information or [subscribing](https://thetvdb.com/subscribe).
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.
-
-## Versioni del README
-
-Il badge **GitHub Release** in cima alla pagina mostra automaticamente la versione pubblica più recente. **Non è necessario cambiare il numero nel README a ogni release**: qui vengono usati il link `/releases/latest` e il segnaposto `<VERSIONE>`.
-
-Il README va aggiornato quando cambiano funzioni, requisiti, compatibilità o procedura di installazione. Il numero reale della release viene gestito nei file tecnici del progetto, nel catalogo e nel tag Git.
 
 ## Supporto e progetto
 
