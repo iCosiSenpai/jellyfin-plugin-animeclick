@@ -1,0 +1,89 @@
+AnimeClick Metadata Plugin for Jellyfin
+Copyright (C) 2026 Alessio Cosi (iCosiSenpai)
+
+================================================================================
+1. LICENZA DEL SOFTWARE
+================================================================================
+
+Questo programma è software libero: puoi ridistribuirlo e/o modificarlo secondo
+i termini della GNU General Public License versione 3, come pubblicata dalla
+Free Software Foundation.
+
+Questo programma è distribuito nella speranza che sia utile, ma SENZA ALCUNA
+GARANZIA; senza nemmeno la garanzia implicita di COMMERCIABILITÀ o IDONEITÀ PER
+UN PARTICOLARE SCOPO. Consulta la GNU General Public License per i dettagli.
+
+Il testo completo della licenza si trova nel file LICENSE, oppure su
+<https://www.gnu.org/licenses/gpl-3.0.html>.
+
+La licenza è GPLv3 e non può essere resa più restrittiva: il plugin è costruito
+sulle librerie Jellyfin.Controller e Jellyfin.Model, distribuite come
+GPL-3.0-only, e ne implementa le interfacce.
+
+================================================================================
+2. NOME E LOGO — DIRITTI NON CONCESSI (GPLv3 sezione 7, lettera e)
+================================================================================
+
+La GPL riguarda il codice, non il marchio. Ai sensi della sezione 7, lettera e)
+della GPLv3, che consente di «rifiutare la concessione di diritti in materia di
+marchi», NON vengono concessi diritti sull'uso dei seguenti segni distintivi:
+
+  - il nome «AnimeClick Metadata Plugin» e la sua forma abbreviata
+    «AnimeClick Plugin»;
+  - il logo e il banner del progetto (assets/logo.png, assets/banner.png,
+    assets/logo ALT.png, assets/banner-alt.png, assets/banner-plugin-interno.png);
+  - il nome utente e l'identità «iCosiSenpai».
+
+Che cosa significa in pratica. I file immagine restano parte del programma e si
+ridistribuiscono con esso secondo la GPL: la licenza del software non viene
+limitata in alcun modo, come la GPL stessa richiede. Ciò che non è concesso è
+l'uso di quei segni per **identificare o promuovere** un'opera diversa da
+questa. Chi pubblica una versione modificata deve quindi presentarla con un
+proprio nome e una propria identità visiva, e non può far credere che si tratti
+di questo progetto o che ne sia approvata.
+
+Restano naturalmente lecite le citazioni descrittive e veritiere, per esempio
+«basato su AnimeClick Metadata Plugin».
+
+«AnimeClick» nel nome è un riferimento descrittivo alla fonte dei dati: il
+marchio AnimeClick.it appartiene ai suoi titolari, vedi il punto 4.
+
+================================================================================
+3. AUTORIZZAZIONE ALLO SCRAPING — PERSONALE E NON TRASFERIBILE
+================================================================================
+
+Lo staff di AnimeClick.it ha autorizzato **questo progetto** a eseguire scraping
+del sito per uso non commerciale. L'autorizzazione è stata concessa all'autore
+del plugin e non è un diritto trasferibile.
+
+Il codice è libero e chiunque può forkarlo, ma **il fork non eredita
+l'autorizzazione**. Chi distribuisce o utilizza un'opera derivata è responsabile
+di ottenere il proprio consenso dai titolari del sito e di rispettarne le
+condizioni d'uso. Le protezioni tecniche descritte nel README — passo minimo fra
+le richieste, cache locale, nessuna importazione dei commenti come contenuto
+editoriale, nessun uso massivo o commerciale — vanno mantenute in qualunque
+opera derivata.
+
+================================================================================
+4. COMPONENTI E FONTI DI TERZI
+================================================================================
+
+Il plugin usa questi componenti, ciascuno con la propria licenza:
+
+  - Jellyfin.Controller, Jellyfin.Model .......... GPL-3.0-only
+    Copyright (C) Jellyfin Contributors
+  - HtmlAgilityPack .............................. MIT
+  - Microsoft.Extensions.* ....................... MIT
+
+Le fonti dei dati restano dei rispettivi titolari e il plugin non rivendica
+alcun diritto su di esse:
+
+  - AnimeClick.it — Associazione NewType Media. Fonte italiana principale.
+    Marchio e contenuti appartengono ai titolari del sito.
+  - TheTVDB — Metadata provided by TheTVDB. Please consider adding missing
+    information or subscribing: <https://thetvdb.com/subscribe>.
+  - TMDB — This product uses the TMDB API but is not endorsed or certified
+    by TMDB.
+
+I servizi AI eventualmente configurati dall'utente sono soggetti ai propri
+termini: le chiavi API e i relativi costi sono responsabilità di chi li usa.

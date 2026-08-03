@@ -13,6 +13,9 @@
     <InformationalVersion>$(Version)</InformationalVersion>
     <PackageId>AnimeClick.Plugin</PackageId>
     <Authors>Alessio Cosi</Authors>
+    <Copyright>Copyright (C) 2026 Alessio Cosi (iCosiSenpai)</Copyright>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/iCosiSenpai/jellyfin-plugin-animeclick</PackageProjectUrl>
     <Description>AnimeClick-first Italian anime metadata provider for Jellyfin with native episode synopses and optional cloud translation fallback.</Description>
   </PropertyGroup>
 

@@ -381,4 +381,11 @@ This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 ## Licenza
 
-[GNU GPL v3](LICENSE)
+Il codice è **[GNU GPL v3](LICENSE)**, e non può essere reso più restrittivo: il plugin è costruito sulle librerie `Jellyfin.Controller` e `Jellyfin.Model`, distribuite come GPL-3.0-only, e ne implementa le interfacce. Chi lo modifica e lo distribuisce deve pubblicare i sorgenti sotto la stessa licenza.
+
+Attorno al codice ci sono due cose che la GPL non copre, descritte nel file **[NOTICE](NOTICE)**:
+
+- **Nome e logo non sono concessi in licenza.** La GPL riguarda il codice, non il marchio, e la sua sezione 7(e) consente esattamente questa riserva. I file immagine restano parte del programma e si ridistribuiscono con esso; quello che non è concesso è usare nome, logo o banner per identificare un'opera diversa da questa. Un fork deve presentarsi con un proprio nome.
+- **L'autorizzazione allo scraping non è trasferibile.** Lo staff di AnimeClick.it l'ha concessa a questo progetto per uso non commerciale: il codice è libero, ma un fork non eredita il permesso e deve ottenere il proprio.
+
+Copyright (C) 2026 Alessio Cosi (iCosiSenpai)
