@@ -13,7 +13,7 @@
                     <!-- hero -->
                     <div class="ac-hero ac-reveal">
                         <img class="ac-hero-art"
-                             src="configurationpage?name=AnimeClickBanner&amp;v=0.4.5.0"
+                             src="configurationpage?name=AnimeClickBanner&amp;v=0.5.0.0"
                              alt=""
                              aria-hidden="true"
                              decoding="async" />
@@ -21,7 +21,7 @@
                         <div class="ac-hero-content">
                             <div class="ac-row ac-hero-head">
                                 <div class="ac-brand">
-                                    <img src="configurationpage?name=AnimeClickLogo&amp;v=0.4.5.0"
+                                    <img src="configurationpage?name=AnimeClickLogo&amp;v=0.5.0.0"
                                          class="ac-logo"
                                          alt="Logo AnimeClick Plugin"
                                          decoding="async"
@@ -33,7 +33,7 @@
                                 </div>
                                 <span class="ac-row ac-version-state">
                                     <span class="ac-live-dot is-idle" id="acLiveDot"></span>
-                                    <span class="ac-version" id="acVersion">v0.4.5.0</span>
+                                    <span class="ac-version" id="acVersion">v0.5.0.0</span>
                                 </span>
                             </div>
                             <div class="ac-stack ac-hero-copy">
@@ -54,6 +54,7 @@
                         <button type="button" class="ac-tab" id="acTabOverview" role="tab" data-panel="overview" aria-controls="acPanelOverview" aria-selected="true" tabindex="0">Panoramica</button>
                         <button type="button" class="ac-tab" id="acTabMetadati" role="tab" data-panel="metadati" aria-controls="acPanelMetadati" aria-selected="false" tabindex="-1">Metadati</button>
                         <button type="button" class="ac-tab" id="acTabSinossi" role="tab" data-panel="sinossi" aria-controls="acPanelSinossi" aria-selected="false" tabindex="-1">Sinossi episodi</button>
+                        <button type="button" class="ac-tab" id="acTabLibreria" role="tab" data-panel="libreria" aria-controls="acPanelLibreria" aria-selected="false" tabindex="-1">Libreria</button>
                         <button type="button" class="ac-tab" id="acTabStrumenti" role="tab" data-panel="strumenti" aria-controls="acPanelStrumenti" aria-selected="false" tabindex="-1">Strumenti</button>
                     </nav>
 
@@ -61,6 +62,7 @@
                     <div class="ac-panel active" data-panel="overview" id="acPanelOverview" role="tabpanel" aria-labelledby="acTabOverview"></div>
                     <div class="ac-panel" data-panel="metadati" id="acPanelMetadati" role="tabpanel" aria-labelledby="acTabMetadati"></div>
                     <div class="ac-panel" data-panel="sinossi" id="acPanelSinossi" role="tabpanel" aria-labelledby="acTabSinossi"></div>
+                    <div class="ac-panel" data-panel="libreria" id="acPanelLibreria" role="tabpanel" aria-labelledby="acTabLibreria"></div>
                     <div class="ac-panel" data-panel="strumenti" id="acPanelStrumenti" role="tabpanel" aria-labelledby="acTabStrumenti"></div>
 
                     <!-- sticky save bar -->
@@ -95,7 +97,7 @@
                                 <span>Donazione PayPal</span>
                             </a>
                             <a class="ac-support-btn ac-support-repo" href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick" target="_blank" rel="noopener noreferrer" aria-label="Apri la repository GitHub di AnimeClick Plugin">
-                                <img src="configurationpage?name=AnimeClickBanner&amp;v=0.4.5.0"
+                                <img src="configurationpage?name=AnimeClickBanner&amp;v=0.5.0.0"
                                      alt="Banner della repository AnimeClick Plugin"
                                      loading="lazy"
                                      decoding="async" />
@@ -109,7 +111,7 @@
         </div>
         <script>
         (function () {
-            var V = '0.4.5.0';
+            var V = '0.5.0.0';
             function asset(name) { return 'configurationpage?name=' + name + '&v=' + V; }
             function ensureCss() {
                 var id = 'ac-css-' + V;

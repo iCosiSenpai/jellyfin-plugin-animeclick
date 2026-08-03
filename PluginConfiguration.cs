@@ -74,8 +74,8 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Sinossi episodi IT (AnimeClick + TVDB/TMDB + Ollama Cloud) ──
     /// <summary>
     /// Abilita la catena per le sinossi episodi: AnimeClick → TheTVDB ita →
-    /// TMDB it-IT → TMDB en-US → TheTVDB eng → Ollama Cloud EN→IT.
-    /// AnimeClick non richiede API key; Ollama traduce soltanto una sinossi inglese
+    /// TMDB it-IT → TMDB en-US → TheTVDB eng → traduzione AI EN→IT.
+    /// AnimeClick non richiede API key; l'AI traduce soltanto una sinossi inglese
     /// ottenuta da TMDB o TheTVDB. In caso di errore il campo resta invariato.
     /// </summary>
     public bool EnableEpisodeSynopsisTranslation { get; set; } = false;
@@ -83,13 +83,38 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>API key TMDB (themoviedb.org/settings/api). Lascia vuoto per disabilitare TMDB.</summary>
     public string TmdbApiKey { get; set; } = string.Empty;
 
-    /// <summary>API key Ollama Cloud (ollama.com/settings/keys). Lascia vuoto per disabilitare la traduzione.</summary>
+    // ── Traduzione AI ──
+    /// <summary>
+    /// Identificativo del servizio AI scelto, fra quelli di <see cref="Services.AnimeClickAiProviders"/>.
+    /// Vuoto significa «non ancora scelto» e viene risolto dalla migrazione.
+    /// </summary>
+    public string AiProvider { get; set; } = string.Empty;
+
+    /// <summary>Endpoint di chat del servizio AI. Precompilato scegliendo un provider.</summary>
+    public string AiEndpoint { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Modello da usare. Deliberatamente senza valore predefinito: i fornitori ritirano e
+    /// rinominano i modelli, quindi l'elenco si chiede al servizio invece di indovinarlo.
+    /// </summary>
+    public string AiModel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Chiave API del servizio AI. Vuota per un servizio in casa, che non autentica nulla:
+    /// la chiave non viene mai inviata in chiaro.
+    /// </summary>
+    public string AiApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Endpoint Ollama storico. Conservato perché una configurazione salvata da una versione
+    /// precedente lo contiene: viene travasato in <see cref="AiEndpoint"/> una volta sola.
+    /// </summary>
     public string OllamaCloudApiKey { get; set; } = string.Empty;
 
-    /// <summary>Endpoint chat Ollama Cloud.</summary>
+    /// <summary>Endpoint storico, vedi <see cref="OllamaCloudApiKey"/>.</summary>
     public string OllamaCloudEndpoint { get; set; } = "https://ollama.com/api/chat";
 
-    /// <summary>Modello cloud Ollama predefinito per traduzioni brevi EN→IT.</summary>
+    /// <summary>Modello storico, vedi <see cref="OllamaCloudApiKey"/>.</summary>
     public string OllamaCloudModel { get; set; } = "gpt-oss:20b-cloud";
 
     /// <summary>
@@ -98,8 +123,11 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public int TranslationCacheHours { get; set; } = 87600;
 
-    /// <summary>Timeout in secondi per una singola chiamata di traduzione Ollama.</summary>
-    public int EpisodeTranslationTimeoutSec { get; set; } = 30;
+    /// <summary>
+    /// Timeout in secondi per una singola chiamata di traduzione. È un tetto, non un'attesa:
+    /// una risposta rapida non ci arriva nemmeno vicino.
+    /// </summary>
+    public int EpisodeTranslationTimeoutSec { get; set; } = 90;
 
     // ── TVDB (sinossi episodi IT dirette, senza traduzione) ──
     /// <summary>
@@ -137,7 +165,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.4.5.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.5.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Applies narrow, idempotent upgrades to persisted settings. User-provided
@@ -145,16 +173,48 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     internal bool ApplyMigrations()
     {
+        var changed = false;
+
         // Move installs still on a previously shipped default to the current default.
         // Custom model names (anything the user typed) are deliberately left untouched.
         if (string.Equals(OllamaCloudModel, "gemma4:cloud", System.StringComparison.Ordinal)
             || string.Equals(OllamaCloudModel, "gemma4:31b-cloud", System.StringComparison.Ordinal))
         {
             OllamaCloudModel = "gpt-oss:20b-cloud";
-            return true;
+            changed = true;
         }
 
-        return false;
+        // The shipped default used to be 30 seconds, which measurement showed was cutting healthy
+        // requests: on a real library the slowest successful translation came back 120 ms under the
+        // deadline, and every failure sat exactly on it. A longer budget costs nothing when the
+        // model is quick — it is a ceiling, not a delay — so installs still on the old default are
+        // moved up. A value the user chose is left alone.
+        if (EpisodeTranslationTimeoutSec == 30)
+        {
+            EpisodeTranslationTimeoutSec = 90;
+            changed = true;
+        }
+
+        // Translation used to be Ollama and nothing else, so the three settings that described it
+        // were named after it. They are now one provider among many and the generic fields are what
+        // the plugin reads — but a configuration saved by an earlier version only has the old ones,
+        // and silently starting from blank would switch off translation on upgrade. Carry them
+        // across once, choosing the preset the stored endpoint actually points at.
+        if (string.IsNullOrWhiteSpace(AiProvider))
+        {
+            var endpoint = OllamaCloudEndpoint?.Trim() ?? string.Empty;
+            AiProvider = endpoint.Contains("ollama.com", System.StringComparison.OrdinalIgnoreCase)
+                ? "ollama-cloud"
+                : endpoint.Contains("/api/chat", System.StringComparison.OrdinalIgnoreCase)
+                    ? "ollama-local"
+                    : Services.AnimeClickAiProviders.CustomId;
+            AiEndpoint = endpoint;
+            AiModel = OllamaCloudModel?.Trim() ?? string.Empty;
+            AiApiKey = OllamaCloudApiKey ?? string.Empty;
+            changed = true;
+        }
+
+        return changed;
     }
 
     /// <summary>

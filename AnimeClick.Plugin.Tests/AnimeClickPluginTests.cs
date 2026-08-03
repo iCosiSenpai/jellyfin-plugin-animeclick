@@ -5,6 +5,9 @@ using AnimeClick.Plugin.Configuration;
 using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
+using Jellyfin.Data.Enums;
+using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Controller.Providers;
 
 // Suite di regressione di AnimeClick.Plugin.
 //
@@ -138,25 +141,29 @@ public class AnimeClickPluginTests
         "ParseEpisodeOverview must return null when overview is absent.");
 }
 
-    [Xunit.Fact(DisplayName = "Ollama translator HTML stripping")]
-    public void TestOllamaTranslatorStripHtml()
+    [Xunit.Fact(DisplayName = "AI translator HTML stripping")]
+    public void TestAiTranslatorStripHtml()
 {
-    Assert(AnimeClickOllamaTranslator.StripHtml("<i>Hello</i> <b>world</b>") == "Hello world",
+    Assert(AnimeClickAiTranslator.StripHtml("<i>Hello</i> <b>world</b>") == "Hello world",
         "StripHtml must remove <i>/<b> tags.");
-    Assert(AnimeClickOllamaTranslator.StripHtml("Line1<br>Line2") == "Line1\nLine2",
+    Assert(AnimeClickAiTranslator.StripHtml("Line1<br>Line2") == "Line1\nLine2",
         "StripHtml must convert <br> to newline.");
-    Assert(AnimeClickOllamaTranslator.StripHtml("A &amp; B &quot;q&quot; &#39;s") == "A & B \"q\" 's",
+    Assert(AnimeClickAiTranslator.StripHtml("A &amp; B &quot;q&quot; &#39;s") == "A & B \"q\" 's",
         "StripHtml must decode common HTML entities.");
-    Assert(AnimeClickOllamaTranslator.StripHtml("   ") == "",
+    Assert(AnimeClickAiTranslator.StripHtml("   ") == "",
         "StripHtml must return empty for whitespace-only input.");
-    Assert(AnimeClickOllamaTranslator.StripHtml("") == "",
+    Assert(AnimeClickAiTranslator.StripHtml("") == "",
         "StripHtml must return empty for empty input.");
 }
 
-    [Xunit.Fact(DisplayName = "Ollama translator request body + response parsing")]
-    public void TestOllamaTranslatorRequestAndResponse()
+    [Xunit.Fact(DisplayName = "AI translator request body + response parsing")]
+    public void TestAiTranslatorRequestAndResponse()
 {
-    var body = AnimeClickOllamaTranslator.BuildRequestBody("gemma4:31b-cloud", "sys-prompt", "Translate this.");
+    var body = AnimeClickAiProviders.BuildRequestBody(
+        AnimeClickAiDialect.Ollama,
+        "gemma4:31b-cloud",
+        "sys-prompt",
+        "Translate this.");
     Assert(body.Contains("\"model\":\"gemma4:31b-cloud\"", StringComparison.OrdinalIgnoreCase),
         "BuildRequestBody must include the model.");
     Assert(body.Contains("\"stream\":false", StringComparison.OrdinalIgnoreCase),
@@ -167,47 +174,47 @@ public class AnimeClickPluginTests
     Assert(body.Contains("Translate this."), "BuildRequestBody must include the user content.");
 
     var response = "{\"message\":{\"role\":\"assistant\",\"content\":\"Ichika va al festival con i suoi amici.\"}}";
-    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent(response) == "Ichika va al festival con i suoi amici.",
+    Assert(AnimeClickAiTranslator.ParseTranslatedContent(response) == "Ichika va al festival con i suoi amici.",
         "ParseTranslatedContent must extract message.content.");
 
     var escaped = "{\"message\":{\"content\":\"Line1\\nLine2 \\\"quoted\\\" and back\\\\slash\"}}";
-    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent(escaped) == "Line1\nLine2 \"quoted\" and back\\slash",
+    Assert(AnimeClickAiTranslator.ParseTranslatedContent(escaped) == "Line1\nLine2 \"quoted\" and back\\slash",
         "ParseTranslatedContent must decode \\n, \\\" and \\\\ escapes.");
 
-    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent("{\"message\":{\"content\":\"\"}}") == null,
+    Assert(AnimeClickAiTranslator.ParseTranslatedContent("{\"message\":{\"content\":\"\"}}") == null,
         "ParseTranslatedContent must return null for empty content.");
-    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent("{}") == null,
+    Assert(AnimeClickAiTranslator.ParseTranslatedContent("{}") == null,
         "ParseTranslatedContent must return null when content is absent.");
 }
 
-    [Xunit.Fact(DisplayName = "Ollama translator \\uXXXX unicode escapes")]
-    public void TestOllamaTranslatorUnicodeEscapes()
+    [Xunit.Fact(DisplayName = "AI translator \\uXXXX unicode escapes")]
+    public void TestAiTranslatorUnicodeEscapes()
 {
-    // \uXXXX escapes — Italian accented chars from Ollama models that emit JSON-escaped text.
+    // \uXXXX escapes — Italian accented chars from models that emit JSON-escaped text.
     var accentJson = "{\"message\":{\"content\":\"Caff\\u00E8 vicino\\u00E0\"}}";
-    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent(accentJson) == "Caffè vicinoà",
+    Assert(AnimeClickAiTranslator.ParseTranslatedContent(accentJson) == "Caffè vicinoà",
         "ParseTranslatedContent must decode \\uXXXX escapes (è, à).");
 
     var allAccents = "{\"message\":{\"content\":\"\\u00E0 \\u00E8 \\u00E9 \\u00EC \\u00F2 \\u00F9\"}}";
-    var decoded = AnimeClickOllamaTranslator.ParseTranslatedContent(allAccents);
+    var decoded = AnimeClickAiTranslator.ParseTranslatedContent(allAccents);
     Assert(decoded == "à è é ì ò ù",
         "ParseTranslatedContent must decode all Italian accented chars: à è é ì ò ù. Got: " + decoded);
 
     // Surrogate pair — an emoji encoded as \UXXXXXXXX (non-standard but some models emit it).
     // Use \uD83D\uDE00 (😀) — even if not handled as surrogate, must not crash.
     var surrogate = "{\"message\":{\"content\":\"smile \\uD83D\\uDE00 end\"}}";
-    var decodedSurrogate = AnimeClickOllamaTranslator.ParseTranslatedContent(surrogate);
+    var decodedSurrogate = AnimeClickAiTranslator.ParseTranslatedContent(surrogate);
     Assert(decodedSurrogate != null && decodedSurrogate.StartsWith("smile", StringComparison.Ordinal) && decodedSurrogate.EndsWith("end", StringComparison.Ordinal),
         "ParseTranslatedContent must handle \\uXXXX surrogate pairs without crashing. Got: " + decodedSurrogate);
 
     // Mixed escapes in one message
     var mixed = "{\"message\":{\"content\":\"Line1\\ncaf\\u00E9\\nLine3\"}}";
-    Assert(AnimeClickOllamaTranslator.ParseTranslatedContent(mixed) == "Line1\ncafé\nLine3",
+    Assert(AnimeClickAiTranslator.ParseTranslatedContent(mixed) == "Line1\ncafé\nLine3",
         "ParseTranslatedContent must mix \\n and \\uXXXX escapes correctly.");
 
     // \u followed by non-hex must not corrupt content (falls back to original handling)
     var badEscape = "{\"message\":{\"content\":\"raw \\u stuff\"}}";
-    var badDecoded = AnimeClickOllamaTranslator.ParseTranslatedContent(badEscape);
+    var badDecoded = AnimeClickAiTranslator.ParseTranslatedContent(badEscape);
     Assert(badDecoded != null && badDecoded.Contains("raw", StringComparison.Ordinal),
         "ParseTranslatedContent must gracefully handle malformed \\u sequences without crashing.");
 }
@@ -1302,6 +1309,759 @@ public class AnimeClickPluginTests
     Assert(!RequestThrottle.IsRateLimited(HttpStatusCode.NotFound)
            && !RequestThrottle.IsRateLimited(HttpStatusCode.Unauthorized),
         "404 and 401 are not throttling and must not trigger a pause.");
+}
+
+    [Xunit.Fact(DisplayName = "Published results carry back the numbering Jellyfin parsed")]
+    public void TestProviderResultsPreserveJellyfinNumbering()
+{
+    // Jellyfin copies IndexNumber from the provider result unconditionally when it merges with
+    // replaceData, and a "replace all metadata" refresh does not fold the stored values back in
+    // first. A result that omits the numbering therefore erases it: S02E02..E05 of a real
+    // library lost their episode numbers this way, which then made the season non-contiguous
+    // and cost the following episodes their Italian titles.
+    var episode = new Episode();
+    var episodeInfo = new EpisodeInfo
+    {
+        IndexNumber = 3,
+        ParentIndexNumber = 2,
+        IndexNumberEnd = 4
+    };
+
+    AnimeClickNumberingGuard.Preserve(episode, episodeInfo);
+
+    Assert(episode.IndexNumber == 3, "The episode number must survive the merge.");
+    Assert(episode.ParentIndexNumber == 2, "The season number must survive the merge.");
+    Assert(episode.IndexNumberEnd == 4, "A double episode must keep its end number.");
+
+    var season = new Season();
+    AnimeClickNumberingGuard.Preserve(season, new SeasonInfo { IndexNumber = 2 });
+    Assert(season.IndexNumber == 2, "The season item must keep its own number too.");
+}
+
+    [Xunit.Fact(DisplayName = "Staff kinds Jellyfin refuses to store are not emitted")]
+    public void TestStaffPersonKindsAreStorable()
+{
+    // Jellyfin's people repository drops PersonKind.Artist and AlbumArtist before inserting,
+    // so every role mapped to Artist (character design, art direction, OP/ED performers) was
+    // sent on each refresh and never stored.
+    Assert(AnimeClickPersonKinds.Map("Artist") == PersonKind.Unknown,
+        "Artist must be mapped to a kind Jellyfin actually persists.");
+    Assert(AnimeClickPersonKinds.Map("Actor") == PersonKind.Actor,
+        "Voice actors must stay actors.");
+    Assert(AnimeClickPersonKinds.Map("Director") == PersonKind.Director,
+        "Directors must stay directors.");
+    Assert(AnimeClickPersonKinds.Map("Ruolo che AnimeClick inventa domani")
+           == PersonKind.Unknown,
+        "An unknown role group must fall back to Unknown.");
+
+    var parser = new AnimeClickHtmlParser();
+    var staff = parser.ParseStaffPage(TestFixtures.StaffWithThemeSongsHtml, "https://www.animeclick.it");
+    var performer = staff.Find(person => person.Name == "Noa");
+    Assert(performer is not null, "The opening performer must be parsed from the staff page.");
+    Assert(AnimeClickPersonKinds.Map(performer!.Type) != PersonKind.Artist,
+        "No staff row may reach Jellyfin as Artist.");
+    Assert(performer.Role == "Opening - Megane o hazushite",
+        "The Italian role text must still carry the precise credit.");
+}
+
+    [Xunit.Fact(DisplayName = "Theme songs are read from the staff page when multimedia has none")]
+    public void TestThemeSongsFromStaffPage()
+{
+    var parser = new AnimeClickHtmlParser();
+    var songs = parser.ParseStaffThemeSongs(TestFixtures.StaffWithThemeSongsHtml);
+
+    Assert(songs.Count == 3, $"Expected three sigle from the staff page, got {songs.Count}.");
+
+    var op1 = songs.Find(song => song.Type == "Opening" && song.Number == 1);
+    Assert(op1?.Title == "Megane o hazushite", "OP1 title mismatch.");
+    Assert(op1?.Artist == "Noa", "OP1 performer mismatch.");
+    Assert(op1?.DisplayName == "OP1: Megane o hazushite (Noa)", "OP1 tag text mismatch.");
+
+    var op2 = songs.Find(song => song.Type == "Opening" && song.Number == 2);
+    Assert(op2?.Title == "nekojarashi", "A numbered heading must keep its own slot.");
+
+    var ed1 = songs.Find(song => song.Type == "Ending" && song.Number == 1);
+    Assert(ed1?.Artist == "Eriko Hashimoto, PAS TASTA",
+        "Every performer credited under one sigla must be listed.");
+
+    // The staff page is not a video page: no role heading may be mistaken for a song.
+    Assert(!songs.Exists(song => song.Title.Contains("Regia", StringComparison.OrdinalIgnoreCase)),
+        "Ordinary staff roles must not become theme songs.");
+
+    // Both sources feed the same list, and neither may duplicate a slot the other filled.
+    var anime = new AnimeClickAnime();
+    anime.AddThemeSongs(songs);
+    anime.AddThemeSongs(songs);
+    anime.AddThemeSongs([new AnimeClickThemeSong { Type = "Opening", Number = 1, Title = "Megane o hazushite", Artist = "Noa" }]);
+    Assert(anime.ThemeSongs.Count == 3, "Merging the same sigle twice must not duplicate them.");
+}
+
+    [Xunit.Fact(DisplayName = "A Japanese PV label is recognised as a trailer")]
+    public void TestJapanesePvLabelIsATrailer()
+{
+    var html = """
+        <html><body>
+        <iframe src="https://www.youtube.com/embed/pv1dan00000" title="TVアニメ「正反対な君と僕」PV第1弾"></iframe>
+        <iframe src="https://www.youtube.com/embed/yokoku00002" title="第2弾予告"></iframe>
+        <iframe src="https://www.youtube.com/embed/sigla000op1" title="Sigla iniziale completa"></iframe>
+        <iframe src="https://www.youtube.com/embed/intervista1" title="Intervista al regista"></iframe>
+        </body></html>
+        """;
+
+    var parser = new AnimeClickHtmlParser();
+    var diagnostics = parser.ParseMultimediaDiagnostics(html);
+
+    Assert(diagnostics.Trailers.Count == 2,
+        $"Expected the PV and the 予告 to be trailers, got {diagnostics.Trailers.Count}.");
+    Assert(diagnostics.Trailers.Exists(trailer => trailer.Url.Contains("pv1dan00000", StringComparison.Ordinal)),
+        "\"PV第1弾\" must match: an ideograph is a word character, so \\bPV\\b never fired.");
+    Assert(diagnostics.Trailers.Exists(trailer => trailer.Url.Contains("yokoku00002", StringComparison.Ordinal)),
+        "予告 is the Japanese label for a trailer.");
+    Assert(!diagnostics.Trailers.Exists(trailer => trailer.Url.Contains("sigla000op1", StringComparison.Ordinal)),
+        "An opening video must not become a Jellyfin trailer.");
+    Assert(!diagnostics.Trailers.Exists(trailer => trailer.Url.Contains("intervista1", StringComparison.Ordinal)),
+        "An interview must not become a Jellyfin trailer.");
+}
+
+    [Xunit.Fact(DisplayName = "A short-form row cannot claim a full length file")]
+    public void TestRuntimeIncompatibleRowNeedsCorroboration()
+{
+    // AnimeClick documents Saiki K. as 120 rows of 5' — the 2016 short-form broadcast — while the
+    // library holds the 24 Netflix episodes of 24' that were cut from them. Position, numbering
+    // and library boundaries all agree on row 1 for S01E01, so the wrong identity used to be
+    // accepted at full confidence and the runtime came with it: a 24 minute episode became a
+    // 5 minute one, and Jellyfin marks an episode watched at 90% of the runtime it believes in.
+    var parser = new AnimeClickHtmlParser();
+    var shortForm = parser.ParseEpisodesPage(
+        TestFixtures.BuildFlatEpisodesHtml(120, 5, realTitles: false),
+        "https://www.animeclick.it");
+    Assert(shortForm.Count == 120, $"Fixture must parse 120 rows, parsed {shortForm.Count}.");
+
+    var unaware = AnimeClickEpisodeMatcher.Match(shortForm, new AnimeClickEpisodeMatchContext(1, 1));
+    Assert(unaware.Episode is not null, "Without a known runtime the positional match still stands.");
+
+    var guarded = AnimeClickEpisodeMatcher.Match(
+        shortForm,
+        new AnimeClickEpisodeMatchContext(1, 1) { LibraryRuntimeMinutes = 24 });
+    Assert(guarded.Episode is null, "A 5' row must not claim a 24' file.");
+    Assert(guarded.Strategy == "lowConfidence", $"Expected lowConfidence, got {guarded.Strategy}.");
+
+    // Rounding to whole minutes on a web page is not a disagreement.
+    var honest = parser.ParseEpisodesPage(
+        TestFixtures.BuildFlatEpisodesHtml(24, 24, realTitles: true),
+        "https://www.animeclick.it");
+    var accepted = AnimeClickEpisodeMatcher.Match(
+        honest,
+        new AnimeClickEpisodeMatchContext(1, 7) { LibraryRuntimeMinutes = 24.2 });
+    Assert(accepted.Episode?.Title == "Titolo vero 7",
+        "A row whose length matches the file must still be accepted.");
+
+    // Capped, not discarded: the file's own title can still vouch for the row.
+    var corroborated = AnimeClickEpisodeMatcher.Match(
+        parser.ParseEpisodesPage(TestFixtures.BuildFlatEpisodesHtml(12, 5, realTitles: true), "https://www.animeclick.it"),
+        new AnimeClickEpisodeMatchContext(1, 3)
+        {
+            LibraryRuntimeMinutes = 24,
+            JellyfinTitle = "Titolo vero 3"
+        });
+    Assert(corroborated.Episode?.Title == "Titolo vero 3",
+        "An exact title match must lift a runtime-capped candidate back over the threshold.");
+
+    // The absolute floor: two minutes against four is a factor of two, but it is not evidence.
+    var tinyRows = AnimeClickEpisodeMatcher.Match(
+        parser.ParseEpisodesPage(TestFixtures.BuildFlatEpisodesHtml(12, 2, realTitles: true), "https://www.animeclick.it"),
+        new AnimeClickEpisodeMatchContext(1, 5) { LibraryRuntimeMinutes = 4 });
+    Assert(tinyRows.Episode?.Title == "Titolo vero 5",
+        "Short rows within five minutes of the file must not be treated as incompatible.");
+}
+
+    [Xunit.Fact(DisplayName = "A sequel that only adds a subtitle is still the same franchise")]
+    public void TestFranchiseSimilarityAcceptsAddedSubtitles()
+{
+    // These are the real pairs behind thirteen seasons left without Italian titles: a plain
+    // Jaccard gave "Clannad After Story" 1/3 = 0.33 against "Clannad" and refused the traversal.
+    (string Root, string Candidate)[] sequels =
+    [
+        ("Clannad", "Clannad After Story"),
+        ("Kaguya-sama wa Kokurasetai", "Kaguya-sama wa Kokurasetai? Tensai-tachi no Renai Zunousen"),
+        ("Fruits Basket", "Fruits Basket 2nd Season"),
+        ("Kimi ni Todoke: From Me to You", "Kimi ni Todoke 2nd Season"),
+        ("Sword Art Online", "Sword Art Online II"),
+        ("Shingeki no Kyojin", "Shingeki no Kyojin: The Final Season Part 2"),
+        ("Toaru Kagaku no Railgun", "Toaru Kagaku no Railgun S"),
+        ("Working!!", "Working!!!")
+    ];
+    foreach (var (root, candidate) in sequels)
+    {
+        var score = AnimeClickSeasonResolver.FranchiseSimilarity(root, candidate);
+        Assert(score >= 0.50, $"\"{candidate}\" must stay a candidate for \"{root}\" (score {score:F2}).");
+    }
+
+    // And the loosening must not turn a shared franchise word into a sequel.
+    (string Root, string Candidate)[] strangers =
+    [
+        ("Toaru Kagaku no Railgun", "Toaru Majutsu no Index"),
+        ("Fate/Zero", "Fate/kaleid liner Prisma Illya"),
+        ("Kimi ni Todoke", "Kimi no Na wa"),
+        ("Clannad", "Air"),
+        ("Sword Art Online", "Accel World")
+    ];
+    foreach (var (root, candidate) in strangers)
+    {
+        var score = AnimeClickSeasonResolver.FranchiseSimilarity(root, candidate);
+        Assert(score < 0.50, $"\"{candidate}\" must not pass as a sequel of \"{root}\" (score {score:F2}).");
+    }
+}
+
+    [Xunit.Fact(DisplayName = "Episode zero of a regular season is found among the special rows")]
+    public void TestEpisodeZeroOfARegularSeason()
+{
+    // Prologues and recaps stored as S01E00 are a real shape — Kimi ni Todoke S02E00,
+    // Dead Dead Demons S01E00 — and the matcher used to reject the coordinate before any lookup.
+    // AnimeClick files a row whose printed number is not positive among the specials, so that is
+    // where it has to be looked for.
+    var parser = new AnimeClickHtmlParser();
+    var rows = parser.ParseEpisodesPage(TestFixtures.EpisodeZeroPrologueHtml, "https://www.animeclick.it");
+    var prologue = rows.Find(row => row.RawNumberLabel == "Ep. 00");
+    Assert(prologue is not null, "The fixture must expose the Ep. 00 row.");
+    Assert(prologue!.IsSpecial, "AnimeClick rows numbered zero are parsed as specials.");
+
+    var zero = AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(1, 0));
+    Assert(zero.Episode?.Title == "Prologo", $"S01E00 must find the prologue, got {zero.Strategy}.");
+
+    // And it must not have stolen the coordinate of the first regular episode.
+    var first = AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(1, 1));
+    Assert(first.Episode?.Title == "Il primo giorno", "S01E01 must still be the first regular row.");
+
+    // Season zero keeps working exactly as before.
+    var special = AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(0, 1));
+    Assert(special.Episode is not null, "A season-zero request must still reach the special rows.");
+}
+
+    [Xunit.Fact(DisplayName = "A season identity wins for matching but not for the external sources")]
+    public void TestSeasonIdentityPrecedence()
+{
+    // Both IDs: the season card lists the episodes, so it decides the match, while TheTVDB and
+    // TMDB keep following the series and the real season number.
+    var both = AnimeClickEpisodeIdentity.Resolve("1238/clannad", "1239/clannad-after-story");
+    Assert(both.MatchingId == "1239/clannad-after-story", "The season card must decide the match.");
+    Assert(both.IsSeasonSpecific, "A season card numbers its episodes from one.");
+    Assert(both.ExternalSourceId == "1238/clannad", "External IDs must be resolved from the series.");
+    Assert(!both.ExternalNumbersRestartAtOne, "With a series identity the real season number applies.");
+
+    // Series only: today's common case, unchanged.
+    var seriesOnly = AnimeClickEpisodeIdentity.Resolve("59191/you-and-i-are-polar-opposites", null);
+    Assert(seriesOnly.MatchingId == "59191/you-and-i-are-polar-opposites", "The series card decides.");
+    Assert(!seriesOnly.IsSeasonSpecific, "A series card carries the whole timeline.");
+    Assert(!seriesOnly.ExternalNumbersRestartAtOne, "The real season number goes to the external sources.");
+
+    // Season only: the rare configuration that existed before, still behaving the same way.
+    var seasonOnly = AnimeClickEpisodeIdentity.Resolve(null, "22557/saiki-kusuo-no-psi-nan-2");
+    Assert(seasonOnly.MatchingId == "22557/saiki-kusuo-no-psi-nan-2", "The only identity decides.");
+    Assert(seasonOnly.IsSeasonSpecific && seasonOnly.ExternalNumbersRestartAtOne,
+        "Without a series identity the season card answers for everything, numbered from one.");
+
+    var none = AnimeClickEpisodeIdentity.Resolve(null, "   ");
+    Assert(none.MatchingId is null && none.ExternalSourceId is null, "Blank IDs are no identity.");
+}
+
+    [Xunit.Fact(DisplayName = "A seiyuu voicing two characters keeps both credits")]
+    public void TestDoubleRoleVoiceActor()
+{
+    var parser = new AnimeClickHtmlParser();
+    var people = parser.ParseCharactersPage(TestFixtures.DoubleRoleCharactersHtml, "https://www.animeclick.it");
+
+    Assert(people.Count == 2, $"One row per actor, not per character: expected 2, got {people.Count}.");
+    var kusunoki = people.Find(person => person.Name == "Tomori Kusunoki");
+    Assert(kusunoki?.Role == "Rikako Honda, Yeti",
+        $"Both characters must survive in one credit, got \"{kusunoki?.Role}\".");
+    Assert(people.Find(person => person.Name == "Sayumi Suzushiro")?.Role == "Miyu Suzuki",
+        "A single-character actor is unchanged.");
+    Assert(kusunoki?.Id == "/autore/100/tomori-kusunoki", "The merged credit keeps the actor's page.");
+}
+
+    [Xunit.Fact(DisplayName = "The retry task picks exactly the episodes whose title says nothing")]
+    public void TestMissingTitleSelection()
+{
+    // The task exists for the weekly show whose row was published before its Italian title:
+    // identity already stored, title still a placeholder, and nothing in Jellyfin that would ever
+    // look again. It must not touch an episode that already has a real title.
+    static MediaBrowser.Controller.Entities.TV.Episode Ep(string name, string? path = null)
+        => new() { Name = name, Path = path ?? "/media/Anime/Serie/Season 01/Serie - S01E05.mkv" };
+
+    Assert(AnimeClick.Plugin.Tasks.AnimeClickRefreshMissingTitlesTask.NeedsTitle(Ep("Episodio 17")),
+        "A number restated as a title carries no information.");
+    Assert(AnimeClick.Plugin.Tasks.AnimeClickRefreshMissingTitlesTask.NeedsTitle(Ep("Ep. 5")),
+        "The abbreviated form counts too.");
+    Assert(AnimeClick.Plugin.Tasks.AnimeClickRefreshMissingTitlesTask.NeedsTitle(Ep("Serie - S01E05")),
+        "The bare file name is Jellyfin's fallback, not a title.");
+    Assert(AnimeClick.Plugin.Tasks.AnimeClickRefreshMissingTitlesTask.NeedsTitle(Ep(string.Empty)),
+        "An empty name obviously needs one.");
+
+    Assert(!AnimeClick.Plugin.Tasks.AnimeClickRefreshMissingTitlesTask.NeedsTitle(Ep("Vigilia di Natale")),
+        "A real Italian title must be left alone.");
+    Assert(!AnimeClick.Plugin.Tasks.AnimeClickRefreshMissingTitlesTask.NeedsTitle(Ep("Episodio finale")),
+        "A title that merely starts like a placeholder is still a title.");
+}
+
+    [Xunit.Fact(DisplayName = "A standalone work filed under a later season is read flat")]
+    public void TestStandaloneSeasonIsReadFlat()
+{
+    // "D4DJ All Mix" lives in Season 02 because the other D4DJ series have their own folders, and
+    // its AnimeClick card lists exactly its twelve episodes. There is no season one to measure an
+    // offset against, so the flat reading is the only sane one — and the exact count is what makes
+    // it safe: a longer card would mean row one belongs to a cour the library does not hold.
+    static AnimeClickEpisodeLibraryLayout Layout(params (int Season, int Count)[] seasons)
+        => new(
+            System.Guid.NewGuid(),
+            seasons.ToDictionary(
+                s => s.Season,
+                s => new AnimeClickEpisodeSeasonLayout(s.Season, s.Count, s.Count, true, true)));
+
+    Assert(Layout((2, 12)).IsStandaloneSeason(2, 12),
+        "One season numbered two, twelve episodes, twelve rows: read it flat.");
+    Assert(!Layout((2, 12)).IsStandaloneSeason(2, 24),
+        "A longer card may be a full timeline: row one would be the wrong episode.");
+    Assert(!Layout((1, 12), (2, 12)).IsStandaloneSeason(2, 12),
+        "With a season one present the boundaries can be measured, so no reinterpretation.");
+    Assert(!Layout((1, 12)).IsStandaloneSeason(1, 12),
+        "Season one is already the flat case and needs no special rule.");
+
+    var gappy = new AnimeClickEpisodeLibraryLayout(
+        System.Guid.NewGuid(),
+        new System.Collections.Generic.Dictionary<int, AnimeClickEpisodeSeasonLayout>
+        {
+            [2] = new AnimeClickEpisodeSeasonLayout(2, 12, 11, true, false)
+        });
+    Assert(!gappy.IsStandaloneSeason(2, 12), "A season with a hole proves nothing about the count.");
+}
+
+    [Xunit.Fact(DisplayName = "The season the library dated picks the sequel card by itself")]
+    public void TestSequelChosenByAirYear()
+{
+    // The real reason a dozen franchises had no Italian titles: half of AnimeClick's older pages
+    // declare no relation type at all. Clannad lists "After Story" next to the movie and the OVA
+    // saying nothing about which continues the story, and Kimi ni Todoke offers its 2011 and its
+    // 2024 continuation side by side. The year the user's own episodes carry decides, so nobody
+    // has to write an ID by hand.
+    static AnimeClickRelation Rel(string title, int? year)
+        => new() { Title = title, Year = year, Format = "Serie TV", AnimeClickId = title };
+
+    var kimiNiTodoke = new[] { Rel("Kimi ni Todoke 2nd Season", 2011), Rel("Kimi ni Todoke 3rd Season", 2024) };
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear(kimiNiTodoke, 2011, requireYearMatch: true)?.Year == 2011,
+        "Season two aired in 2011 and must pick the 2011 card.");
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear(kimiNiTodoke, 2024, requireYearMatch: true)?.Year == 2024,
+        "The same page serves season three once the library says 2024.");
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear(kimiNiTodoke, null, requireYearMatch: true) is null,
+        "With no declared type and no year there is no evidence at all: refuse.");
+
+    // A cour that straddles new year is filed under either year depending on who counts.
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("Clannad After Story", 2008)], 2009, true)?.Year == 2008,
+        "One year of tolerance must not lose a winter cour.");
+
+    // But the exact year comes first, or two consecutive seasons would cancel each other out.
+    var fruitsBasket = new[] { Rel("Fruits Basket 2nd Season", 2020), Rel("Fruits Basket the Final", 2021) };
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear(fruitsBasket, 2020, true)?.Year == 2020,
+        "Season two aired in 2020: the 2021 finale must not compete with it.");
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear(fruitsBasket, 2021, true)?.Year == 2021,
+        "And the finale is chosen for the season the library dates 2021.");
+
+    // A typed relation keeps working without any year, exactly as before.
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("K-On!!", 2010)], null, requireYearMatch: false) is not null,
+        "A single declared sequel needs no corroboration.");
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("K-On!!", 2010)], 2010, requireYearMatch: false) is not null,
+        "And it is still accepted when the year agrees.");
+
+    // Ambiguity that the year cannot break stays ambiguous.
+    var twins = new[] { Rel("Franchise 2", 2020), Rel("Franchise 3", 2020) };
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear(twins, 2020, requireYearMatch: false) is null,
+        "Two cards in the same year prove nothing: no guessing.");
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([], 2020, false) is null, "No candidates, no answer.");
+
+    // A card with no year of its own cannot be corroborated when nothing else vouches for it.
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("Franchise 2", null)], 2020, requireYearMatch: true) is null,
+        "An untyped candidate without a year is not evidence.");
+
+    // A web release can be the next season, but only when the year matches exactly: that is what
+    // keeps Saiki's 2019 ONA from being read as the 2018 special season beside it.
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("Arrivare a te - Stagione 3", 2024)], 2024, true, exactYearOnly: true) is not null,
+        "A 2024 web season answers for the season the library dates 2024.");
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("Saiki Reawakened", 2019)], 2018, true, exactYearOnly: true) is null,
+        "One year off is not good enough for a web release.");
+}
+
+    // A web release can be the next season, but only when the year matches exactly: that is what
+    // keeps Saiki's 2019 ONA from being read as the 2018 special season beside it.
+    [Xunit.Fact(DisplayName = "A spin-off inside the table no longer poisons the whole card")]
+    public void TestSpinOffBlockDoesNotPoisonTheTimeline()
+{
+    // K-On!!'s card carries its own episodes and then nine "Ura-On!!" shorts numbered from one.
+    // The colliding numbers made every regular row ambiguous, and an ambiguous timeline gets no
+    // canonical coordinates at all: twenty-six perfectly numbered episodes became unmatchable.
+    var parser = new AnimeClickHtmlParser();
+    var rows = parser.ParseEpisodesPage(TestFixtures.SpinOffInsideTableHtml, "https://www.animeclick.it");
+
+    var first = rows.Find(row => row.RawNumberLabel == "Ep. 01");
+    Assert(first?.GlobalOrdinal == 1, $"Ep. 01 must own global ordinal 1, got {first?.GlobalOrdinal}.");
+    Assert(first?.SeasonOrdinalNumber == 1, "And the season ordinal too.");
+    Assert(!first!.NumberIsAmbiguous, "The spin-off must not make the real first episode ambiguous.");
+
+    var spinOff = rows.Find(row => row.RawNumberLabel == "Ura-On!! 01");
+    Assert(spinOff?.IsSpecial == true, "A row labelled with another work belongs to the specials.");
+
+    var fourth = rows.Find(row => row.RawNumberLabel == "Ep. 04");
+    Assert(fourth?.GlobalOrdinal == 4, "The regular timeline stays contiguous.");
+    Assert(AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(1, 3)).Episode?.Title == "Batterista!",
+        "And the season is matchable again.");
+
+    // The escape hatch: without a collision nothing is reclassified, so an unusual but legitimate
+    // label cannot cost an episode its title.
+    var noClash = parser.ParseEpisodesPage(
+        TestFixtures.SpinOffInsideTableHtml.Replace("Ura-On!! 01", "Ura-On!! 51")
+            .Replace("Ura-On!! 02", "Ura-On!! 52")
+            .Replace("Ura-On!! 03", "Ura-On!! 53"),
+        "https://www.animeclick.it");
+    var untouched = noClash.Find(row => row.RawNumberLabel == "Ura-On!! 51");
+    Assert(untouched?.IsSpecial == false,
+        "With no colliding number the row keeps the classification the parser gave it.");
+}
+
+    [Xunit.Fact(DisplayName = "The audit tells apart the four reasons a title can be missing")]
+    public void TestLibraryAuditClassifiesMissingTitles()
+{
+    // A missing title looks the same from the outside whatever the cause, and the causes call for
+    // opposite reactions. Reporting them as one number is what makes a working plugin look broken.
+    var titled = new AnimeClickEpisode { ProviderId = "900", Title = "San Valentino", Number = 5 };
+    var untitled = new AnimeClickEpisode { ProviderId = "901", Title = "Episodio 6", Number = 6 };
+    var catalog = AnimeClickEpisodeCatalog.Create([titled, untitled], 6, 1);
+
+    Assert(
+        AnimeClickLibraryAudit.ClassifyEpisode("900", catalog) == AnimeClickAuditReason.PendingRefresh,
+        "The title is upstream and the identity is written: only a refresh is missing.");
+    Assert(
+        AnimeClickLibraryAudit.ClassifyEpisode("901", catalog) == AnimeClickAuditReason.TitleNotPublished,
+        "The row is matched but upstream still shows a placeholder.");
+    Assert(
+        AnimeClickLibraryAudit.ClassifyEpisode("999", catalog) == AnimeClickAuditReason.RowVanished,
+        "An identity with no row left means the card changed under us.");
+    Assert(
+        AnimeClickLibraryAudit.ClassifyEpisode(null, catalog) == AnimeClickAuditReason.NotMatched,
+        "No identity and no other explanation is a matching failure.");
+    Assert(
+        AnimeClickLibraryAudit.ClassifyEpisode("900", null) == AnimeClickAuditReason.CatalogNotCached,
+        "Without a cached card the audit must not guess.");
+
+    // A card that publishes no titles at all: nothing to recover, so it must never be reported as
+    // a plugin failure.
+    var placeholders = AnimeClickEpisodeCatalog.Create(
+        [
+            new AnimeClickEpisode { ProviderId = "1", Title = "Episodio 1", Number = 1 },
+            new AnimeClickEpisode { ProviderId = "2", Title = "Episodio 2", Number = 2 }
+        ],
+        2,
+        1);
+    Assert(
+        AnimeClickLibraryAudit.ClassifyEpisode(null, placeholders) == AnimeClickAuditReason.CardHasNoTitles,
+        "A card with no titles explains itself, whatever the match did.");
+
+    var colliding = new List<AnimeClickEpisode>
+    {
+        new() { ProviderId = "10", Title = "Vero", Number = 1, RawEpisodeNumber = 1 },
+        new() { ProviderId = "11", Title = "Spin-off", Number = 1, RawEpisodeNumber = 1 }
+    };
+    colliding.ForEach(episode => episode.NumberIsAmbiguous = true);
+    Assert(
+        AnimeClickLibraryAudit.ClassifyEpisode(null, AnimeClickEpisodeCatalog.Create(colliding, 2, 1))
+            == AnimeClickAuditReason.NumberingCollision,
+        "Repeated coordinates are their own diagnosis.");
+
+    // The headline for a series is the most actionable cause, not the most frequent one: a single
+    // real failure must not hide under fifty episodes the source will never title.
+    Assert(
+        AnimeClickLibraryAudit.Summarize(
+        [
+            AnimeClickAuditReason.CardHasNoTitles,
+            AnimeClickAuditReason.CardHasNoTitles,
+            AnimeClickAuditReason.NotMatched
+        ]) == AnimeClickAuditReason.NotMatched,
+        "The actionable cause leads.");
+    Assert(
+        AnimeClickLibraryAudit.Summarize([]) == AnimeClickAuditReason.Ok,
+        "No missing titles is a clean bill.");
+    Assert(
+        !string.IsNullOrWhiteSpace(AnimeClickLibraryAudit.Describe(AnimeClickAuditReason.NotMatched)),
+        "Every reason must carry an explanation the user can read.");
+}
+
+    [Xunit.Fact(DisplayName = "An extra numbered past the regular run is matched to its row")]
+    public void TestNumberedExtraBeyondTheRegularRun()
+{
+    // K-On!!'s table ends its regular run at 24 and then lists "Ep. 25 (extra)"; the library stores
+    // that file as S02E25. Every regular strategy comes up empty, but the number in the label is
+    // exact evidence.
+    var parser = new AnimeClickHtmlParser();
+    var rows = parser.ParseEpisodesPage(TestFixtures.SpinOffInsideTableHtml, "https://www.animeclick.it");
+
+    var extra = AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(1, 25));
+    Assert(extra.Episode?.Title == "Pianificazione!", $"Expected the extra row, got '{extra.Episode?.Title}'.");
+    Assert(extra.Strategy == "numberedExtra", $"Expected the numberedExtra strategy, got '{extra.Strategy}'.");
+
+    // Inside the regular run the rule must stay silent: there a special sharing a number is a
+    // companion to that episode, not the episode itself.
+    var inside = AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(1, 2));
+    Assert(inside.Episode?.Title == "Pulizie!", "A regular episode still matches its own row.");
+
+    var recap = new List<AnimeClickEpisode>
+    {
+        new() { ProviderId = "1", Title = "Primo", Number = 1, RawNumberLabel = "Ep. 01" },
+        new() { ProviderId = "2", Title = "Secondo", Number = 2, RawNumberLabel = "Ep. 02" },
+        new() { ProviderId = "3", Title = "Riassunto", Number = 2, RawNumberLabel = "Riassunto 02" }
+    };
+    AnimeClickHtmlParser.FinalizeEpisodeList(recap, null);
+    Assert(recap[2].IsSpecial, "The recap row must be filed as a special for the case to mean anything.");
+    var second = AnimeClickEpisodeMatcher.Match(recap, new AnimeClickEpisodeMatchContext(1, 2));
+    Assert(
+        second.Episode?.Title == "Secondo",
+        $"A recap sharing the number must not win over the episode, got '{second.Episode?.Title}'.");
+}
+
+    [Xunit.Fact(DisplayName = "A service in the house is reachable over HTTP, a public one only over TLS")]
+    public void TestAiEndpointAcceptsLocalDestinations()
+{
+    // The cloud endpoint is not the only sensible way to translate: an Ollama on the same LAN has
+    // no quota, no key and no 30-second cloud latency. Demanding TLS for it would have meant a
+    // certificate for an address like 192.168.1.10, so plain HTTP is allowed — but only towards a
+    // machine that cannot be reached from the internet.
+    string[] allowed =
+    [
+        "https://ollama.com/api/chat",
+        "https://my-host.example.com/api/chat",
+        "http://localhost:11434/api/chat",
+        "http://127.0.0.1:11434/api/chat",
+        "http://ollama:11434/api/chat",
+        "http://192.168.1.10:11434/api/chat",
+        "http://10.0.0.5:11434/api/chat",
+        "http://172.16.4.2:11434/api/chat",
+        "http://nas.local:11434/api/chat"
+    ];
+    foreach (var endpoint in allowed)
+    {
+        Assert(
+            AnimeClickAiTranslator.TryNormalizeEndpoint(endpoint, out _),
+            $"'{endpoint}' must be accepted.");
+    }
+
+    string[] refused =
+    [
+        "http://ollama.com/api/chat",
+        "http://8.8.8.8:11434/api/chat",
+        "http://172.32.0.1:11434/api/chat",
+        "https://user:pass@ollama.com/api/chat",
+        "https://ollama.com/api/chat?key=secret",
+        "https://ollama.com/api/chat#fragment",
+        "ollama.com/api/chat",
+        ""
+    ];
+    foreach (var endpoint in refused)
+    {
+        Assert(
+            !AnimeClickAiTranslator.TryNormalizeEndpoint(endpoint, out _),
+            $"'{endpoint}' must be refused.");
+    }
+}
+
+    [Xunit.Fact(DisplayName = "The translation timeout no longer ships at a value that cuts requests")]
+    public void TestTranslationTimeoutMigration()
+{
+    // Measured on a real library: the slowest successful translation returned 120 ms inside the
+    // 30-second deadline and every failure sat exactly on it, so the shipped default was the cause.
+    var config = new PluginConfiguration();
+    Assert(
+        config.EpisodeTranslationTimeoutSec == 90,
+        $"Expected a 90s default, got {config.EpisodeTranslationTimeoutSec}.");
+
+    var old = new PluginConfiguration { EpisodeTranslationTimeoutSec = 30 };
+    Assert(old.ApplyMigrations(), "An install on the old default must be migrated.");
+    Assert(old.EpisodeTranslationTimeoutSec == 90, "And it must land on the new one.");
+
+    // A value the user chose is theirs, including a deliberately short one.
+    var chosen = new PluginConfiguration { EpisodeTranslationTimeoutSec = 15 };
+    chosen.ApplyMigrations();
+    Assert(chosen.EpisodeTranslationTimeoutSec == 15, "A user-chosen timeout must survive.");
+}
+
+    [Xunit.Fact(DisplayName = "Each provider dialect gets the body, headers and reply key it expects")]
+    public void TestAiProviderDialects()
+{
+    // Nearly every vendor speaks OpenAI's chat shape, Anthropic keeps its own, and Ollama has a
+    // third. Getting any of the three details wrong — body, auth header, reply key — fails silently
+    // as "no translation", which is exactly the class of bug this test exists to catch.
+    var openAi = AnimeClickAiProviders.BuildRequestBody(
+        AnimeClickAiDialect.OpenAi,
+        "some-model",
+        "sys",
+        "hello");
+    Assert(openAi.Contains("\"role\":\"system\"", StringComparison.Ordinal)
+        && openAi.Contains("\"role\":\"user\"", StringComparison.Ordinal),
+        "The OpenAI shape carries system and user messages.");
+    Assert(!openAi.Contains("max_tokens", StringComparison.Ordinal),
+        "And no output ceiling, which some models reject.");
+
+    var anthropic = AnimeClickAiProviders.BuildRequestBody(
+        AnimeClickAiDialect.Anthropic,
+        "some-model",
+        "sys",
+        "hello");
+    Assert(anthropic.Contains("\"system\":\"sys\"", StringComparison.Ordinal),
+        "Anthropic takes the system prompt as its own field, not as a message.");
+    Assert(anthropic.Contains("\"max_tokens\":", StringComparison.Ordinal),
+        "And requires an explicit output ceiling.");
+
+    var ollama = AnimeClickAiProviders.BuildRequestBody(
+        AnimeClickAiDialect.Ollama,
+        "some-model",
+        "sys",
+        "hello");
+    Assert(ollama.Contains("\"think\":false", StringComparison.Ordinal),
+        "A reasoning model on Ollama must not spend its budget thinking about a translation.");
+
+    // Auth: Anthropic wants its own header pair, everyone else a bearer token, and nobody gets a
+    // header when there is no key.
+    var anthropicHeaders = AnimeClickAiProviders
+        .BuildAuthHeaders(AnimeClickAiDialect.Anthropic, "secret")
+        .ToDictionary(header => header.Key, header => header.Value);
+    Assert(anthropicHeaders["x-api-key"] == "secret", "Anthropic authenticates with x-api-key.");
+    Assert(anthropicHeaders.ContainsKey("anthropic-version"), "And requires a version header.");
+    Assert(!anthropicHeaders.ContainsKey("Authorization"), "Never both.");
+
+    var bearer = AnimeClickAiProviders
+        .BuildAuthHeaders(AnimeClickAiDialect.OpenAi, "secret")
+        .ToDictionary(header => header.Key, header => header.Value);
+    Assert(bearer["Authorization"] == "Bearer secret", "The OpenAI shape takes a bearer token.");
+    Assert(!AnimeClickAiProviders.BuildAuthHeaders(AnimeClickAiDialect.OpenAi, "  ").Any(),
+        "No key means no header, which is what a local server wants.");
+
+    // The reply lives under a different key per dialect, and reading the wrong one returns nothing.
+    var openAiReply = "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Ciao\"}}]}";
+    Assert(
+        AnimeClickAiTranslator.ParseTranslatedContent(
+            openAiReply,
+            AnimeClickAiProviders.ResolveReplyMarker(AnimeClickAiDialect.OpenAi)) == "Ciao",
+        "OpenAI nests the reply in choices[0].message.content.");
+
+    var anthropicReply = "{\"id\":\"msg_1\",\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"Ciao\"}]}";
+    Assert(
+        AnimeClickAiTranslator.ParseTranslatedContent(
+            anthropicReply,
+            AnimeClickAiProviders.ResolveReplyMarker(AnimeClickAiDialect.Anthropic)) == "Ciao",
+        "Anthropic returns a content array whose entry carries text.");
+    Assert(
+        AnimeClickAiTranslator.ParseTranslatedContent(anthropicReply) is null,
+        "Reading Anthropic with the OpenAI key finds an array, not a string: better nothing than garbage.");
+}
+
+    [Xunit.Fact(DisplayName = "A custom endpoint is understood from its path, and models are listed")]
+    public void TestAiProviderResolutionAndModelListing()
+{
+    // Under "Personalizzato" the path is the only clue about which shape the destination speaks, and
+    // the two non-OpenAI ones are recognisable — so someone who pastes an Ollama or Anthropic URL
+    // there still works instead of silently getting no translations.
+    Assert(
+        AnimeClickAiProviders.ResolveDialect("custom", "http://nas.local:11434/api/chat")
+            == AnimeClickAiDialect.Ollama,
+        "An /api/chat path is Ollama's.");
+    Assert(
+        AnimeClickAiProviders.ResolveDialect("custom", "https://gateway.example.com/v1/messages")
+            == AnimeClickAiDialect.Anthropic,
+        "A /v1/messages path is Anthropic's.");
+    Assert(
+        AnimeClickAiProviders.ResolveDialect("custom", "https://gateway.example.com/v1/chat/completions")
+            == AnimeClickAiDialect.OpenAi,
+        "Everything else is assumed to be the common shape.");
+    Assert(
+        AnimeClickAiProviders.ResolveDialect("anthropic", "https://whatever.example.com/x")
+            == AnimeClickAiDialect.Anthropic,
+        "A named provider decides for itself, whatever the endpoint looks like.");
+    Assert(
+        AnimeClickAiProviders.Resolve("a-service-that-does-not-exist").Id == AnimeClickAiProviders.CustomId,
+        "An unknown stored value must not disable translation.");
+
+    // The models endpoint is derived from the chat one for a custom destination.
+    Assert(
+        AnimeClickAiProviders.ResolveModelsEndpoint("custom", "http://nas.local:11434/api/chat")
+            == "http://nas.local:11434/api/tags",
+        "Ollama lists its models under /api/tags.");
+    Assert(
+        AnimeClickAiProviders.ResolveModelsEndpoint("custom", "https://gw.example.com/v1/chat/completions")
+            == "https://gw.example.com/v1/models",
+        "Compatible providers list theirs under /models.");
+    Assert(
+        AnimeClickAiProviders.ResolveModelsEndpoint("openai", string.Empty)
+            == "https://api.openai.com/v1/models",
+        "A named provider carries its own.");
+
+    // Model names are read from the listing rather than hardcoded, because vendors retire and
+    // rename them between releases of this plugin.
+    var ollamaTags = "{\"models\":[{\"name\":\"gpt-oss:20b-cloud\",\"size\":1},{\"name\":\"gemma4:31b-cloud\"}]}";
+    var fromOllama = AnimeClickAiTranslator.ExtractModelNames(
+        ollamaTags,
+        AnimeClickAiProviders.ResolveModelNameMarker(AnimeClickAiDialect.Ollama));
+    Assert(fromOllama.Count == 2 && fromOllama.Contains("gpt-oss:20b-cloud"),
+        $"Both Ollama models must be listed, got {fromOllama.Count}.");
+
+    var openAiModels = "{\"object\":\"list\",\"data\":[{\"id\":\"model-b\",\"object\":\"model\"},{\"id\":\"model-a\"},{\"id\":\"model-b\"}]}";
+    var fromOpenAi = AnimeClickAiTranslator.ExtractModelNames(
+        openAiModels,
+        AnimeClickAiProviders.ResolveModelNameMarker(AnimeClickAiDialect.OpenAi));
+    Assert(fromOpenAi.Count == 2, $"Duplicates must collapse, got {fromOpenAi.Count}.");
+    Assert(fromOpenAi[0] == "model-a", "And the list is sorted, so the picker is predictable.");
+    Assert(AnimeClickAiTranslator.ExtractModelNames("{}", "\"id\":").Count == 0,
+        "An empty answer lists nothing rather than throwing.");
+}
+
+    [Xunit.Fact(DisplayName = "An install configured for Ollama keeps translating after the upgrade")]
+    public void TestAiConfigurationMigration()
+{
+    // Translation used to be Ollama and nothing else, so its three settings were named after it.
+    // They are now one provider among many — and an upgrade that quietly started from blank would
+    // switch translation off on every existing install.
+    var stored = new PluginConfiguration
+    {
+        OllamaCloudEndpoint = "https://ollama.com/api/chat",
+        OllamaCloudModel = "gpt-oss:20b-cloud",
+        OllamaCloudApiKey = "kept-secret"
+    };
+    Assert(stored.ApplyMigrations(), "The old profile must be carried across.");
+    Assert(stored.AiProvider == "ollama-cloud", $"Recognised as Ollama Cloud, got '{stored.AiProvider}'.");
+    Assert(stored.AiEndpoint == "https://ollama.com/api/chat", "With its endpoint.");
+    Assert(stored.AiModel == "gpt-oss:20b-cloud", "Its model.");
+    Assert(stored.AiApiKey == "kept-secret", "And its key.");
+    Assert(AnimeClickAiTranslator.IsConfigured(stored, out _), "So translation keeps working.");
+
+    // A local daemon is recognised as such, and needs no key to be considered configured.
+    var local = new PluginConfiguration
+    {
+        OllamaCloudEndpoint = "http://127.0.0.1:11434/api/chat",
+        OllamaCloudModel = "some-model",
+        OllamaCloudApiKey = string.Empty
+    };
+    local.ApplyMigrations();
+    Assert(local.AiProvider == "ollama-local", $"Recognised as local, got '{local.AiProvider}'.");
+    Assert(AnimeClickAiTranslator.IsConfigured(local, out _), "A service in the house needs no key.");
+
+    // Running twice must not move a profile the user has since chosen.
+    var chosen = new PluginConfiguration { AiProvider = "groq", AiEndpoint = "https://api.groq.com/openai/v1/chat/completions", AiModel = "m" };
+    chosen.ApplyMigrations();
+    Assert(chosen.AiProvider == "groq", "An existing choice is never overwritten.");
+
+    // A cloud provider without a key is not usable, and must not be reported as if it were.
+    var keyless = new PluginConfiguration
+    {
+        AiProvider = "openai",
+        AiEndpoint = "https://api.openai.com/v1/chat/completions",
+        AiModel = "some-model"
+    };
+    Assert(!AnimeClickAiTranslator.IsConfigured(keyless, out _), "A cloud service without its key is not configured.");
 }
 
     private static void Assert(bool condition, string message)

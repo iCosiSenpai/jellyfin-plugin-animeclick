@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,7 +8,14 @@ using AnimeClick.Plugin.Configuration;
 using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
+using AnimeClick.Plugin.Tasks;
+using Jellyfin.Data.Enums;
 using MediaBrowser.Common.Api;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -22,35 +30,44 @@ public class AnimeClickDiagnosticsController : ControllerBase
     private readonly AnimeClickSeriesSearchProvider _searchProvider;
     private readonly AnimeClickEpisodeListLoader _episodeListLoader;
     private readonly AnimeClickSeasonResolver _seasonResolver;
+    private readonly AnimeClickEpisodeLayoutResolver _layoutResolver;
     private readonly AnimeClickCacheService _cache;
     private readonly AnimeClickTmdbClient _tmdbClient;
-    private readonly AnimeClickOllamaTranslator _translator;
+    private readonly AnimeClickAiTranslator _translator;
     private readonly AnimeClickTvdbClient _tvdbClient;
     private readonly AnimeClickMetadataFallbackService _fallbackService;
     private readonly AnimeClickTranslationQueue _translationQueue;
+    private readonly ILibraryManager _libraryManager;
+    private readonly ITaskManager _taskManager;
     private readonly ILogger<AnimeClickDiagnosticsController> _logger;
 
     public AnimeClickDiagnosticsController(
         AnimeClickSeriesSearchProvider searchProvider,
         AnimeClickEpisodeListLoader episodeListLoader,
         AnimeClickSeasonResolver seasonResolver,
+        AnimeClickEpisodeLayoutResolver layoutResolver,
         AnimeClickCacheService cache,
         AnimeClickTmdbClient tmdbClient,
-        AnimeClickOllamaTranslator translator,
+        AnimeClickAiTranslator translator,
         AnimeClickTvdbClient tvdbClient,
         AnimeClickMetadataFallbackService fallbackService,
         AnimeClickTranslationQueue translationQueue,
+        ILibraryManager libraryManager,
+        ITaskManager taskManager,
         ILogger<AnimeClickDiagnosticsController> logger)
     {
         _searchProvider = searchProvider;
         _episodeListLoader = episodeListLoader;
         _seasonResolver = seasonResolver;
+        _layoutResolver = layoutResolver;
         _cache = cache;
         _tmdbClient = tmdbClient;
         _translator = translator;
         _tvdbClient = tvdbClient;
         _fallbackService = fallbackService;
         _translationQueue = translationQueue;
+        _libraryManager = libraryManager;
+        _taskManager = taskManager;
         _logger = logger;
     }
 
@@ -150,6 +167,391 @@ public class AnimeClickDiagnosticsController : ControllerBase
             MatchReason = match?.Reason,
             MatchedEpisode = match?.Episode is null ? null : EpisodeDiagnosticItem.From(match.Episode)
         });
+    }
+
+    /// <summary>
+    /// Explains, series by series, why episodes still have no Italian title — reading only what is
+    /// already cached, so auditing a whole library costs no AnimeClick requests.
+    /// </summary>
+    [HttpGet("LibraryAudit")]
+    public async Task<ActionResult<LibraryAuditResponse>> LibraryAudit(CancellationToken cancellationToken)
+    {
+        var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var response = new LibraryAuditResponse
+        {
+            EpisodeTitlesEnabled = config.EnableEpisodeTitles
+        };
+
+        // Two queries for the whole library instead of one per series: on a few thousand episodes
+        // the difference is seconds.
+        var allSeries = _libraryManager
+            .GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Series],
+                Recursive = true,
+                IsVirtualItem = false
+            })
+            .OfType<Series>()
+            .Where(AnimeClickAppliesTo)
+            .ToList();
+
+        var episodesBySeries = _libraryManager
+            .GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Episode],
+                Recursive = true,
+                IsVirtualItem = false
+            })
+            .OfType<Episode>()
+            .GroupBy(episode => episode.SeriesId)
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        var seasonCardIds = _libraryManager
+            .GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Season],
+                Recursive = true,
+                IsVirtualItem = false
+            })
+            .OfType<Season>()
+            .Where(season => !string.IsNullOrWhiteSpace(season.GetProviderId("AnimeClick")))
+            .ToDictionary(
+                season => season.Id,
+                season => season.GetProviderId("AnimeClick")!);
+
+        var catalogs = new Dictionary<string, AnimeClickEpisodeCatalog?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var series in allSeries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var seriesAnimeClickId = series.GetProviderId("AnimeClick");
+            var episodes = episodesBySeries.TryGetValue(series.Id, out var found) ? found : [];
+            var row = new LibraryAuditSeriesItem
+            {
+                Id = series.Id.ToString("N", CultureInfo.InvariantCulture),
+                Name = series.Name ?? string.Empty,
+                Year = series.ProductionYear,
+                AnimeClickId = seriesAnimeClickId,
+                EpisodeCount = episodes.Count
+            };
+
+            var reasons = new List<AnimeClickAuditReason>();
+            foreach (var seasonGroup in episodes
+                         .Where(AnimeClickRefreshMissingTitlesTask.NeedsTitle)
+                         .GroupBy(episode => episode.ParentIndexNumber ?? episode.SeasonId.GetHashCode())
+                         .OrderBy(group => group.Key))
+            {
+                var untitled = seasonGroup.ToList();
+                var seasonId = untitled[0].SeasonId;
+                var cardId = seasonCardIds.TryGetValue(seasonId, out var seasonCard)
+                    ? seasonCard
+                    : seriesAnimeClickId;
+
+                AnimeClickEpisodeCatalog? catalog = null;
+                if (!string.IsNullOrWhiteSpace(cardId))
+                {
+                    catalog = await GetCachedCatalogAsync(cardId, config, catalogs, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    // A season card that was never cached still has the main card to answer from.
+                    if (catalog is null
+                        && !string.IsNullOrWhiteSpace(seriesAnimeClickId)
+                        && !string.Equals(cardId, seriesAnimeClickId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        catalog = await GetCachedCatalogAsync(
+                                seriesAnimeClickId,
+                                config,
+                                catalogs,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                }
+
+                var seasonReasons = untitled
+                    .Select(episode => string.IsNullOrWhiteSpace(seriesAnimeClickId)
+                        ? AnimeClickAuditReason.NotIdentified
+                        : AnimeClickLibraryAudit.ClassifyEpisode(
+                            episode.GetProviderId("AnimeClick"),
+                            catalog))
+                    .ToList();
+                reasons.AddRange(seasonReasons);
+
+                var seasonReason = AnimeClickLibraryAudit.Summarize(seasonReasons);
+                row.Seasons.Add(new LibraryAuditSeasonItem
+                {
+                    SeasonNumber = untitled[0].ParentIndexNumber,
+                    MissingTitleCount = untitled.Count,
+                    AnimeClickId = cardId,
+                    Reason = seasonReason.ToString(),
+                    ReasonLabel = AnimeClickLibraryAudit.Describe(seasonReason)
+                });
+            }
+
+            row.MissingTitleCount = reasons.Count;
+            var reason = reasons.Count == 0
+                ? AnimeClickAuditReason.Ok
+                : AnimeClickLibraryAudit.Summarize(reasons);
+            row.Reason = reason.ToString();
+            row.ReasonLabel = AnimeClickLibraryAudit.Describe(reason);
+            response.Series.Add(row);
+        }
+
+        response.SeriesCount = response.Series.Count;
+        response.EpisodeCount = response.Series.Sum(item => item.EpisodeCount);
+        response.MissingTitleCount = response.Series.Sum(item => item.MissingTitleCount);
+        response.Totals = response.Series
+            .GroupBy(item => item.Reason)
+            .Select(group => new LibraryAuditReasonCount
+            {
+                Reason = group.Key,
+                SeriesCount = group.Count(),
+                EpisodeCount = group.Sum(item => item.MissingTitleCount)
+            })
+            .OrderByDescending(item => item.EpisodeCount)
+            .ToList();
+
+        // Problems first, and the largest gap at the top: the report opens on what to act upon.
+        response.Series = response.Series
+            .OrderByDescending(item => item.MissingTitleCount)
+            .ThenBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// Re-reads one series' card from AnimeClick and re-classifies it. This is the only audit path
+    /// allowed to make a request, and it is bounded to the one series the user asked about.
+    /// </summary>
+    [HttpPost("LibraryAuditSeries")]
+    public async Task<ActionResult<LibraryAuditSeriesItem>> LibraryAuditSeries(
+        [FromBody] LibraryAuditSeriesRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null || !Guid.TryParse(request.ItemId, out var itemId))
+        {
+            return BadRequest(new { error = "itemId is required" });
+        }
+
+        if (_libraryManager.GetItemById(itemId) is not Series series)
+        {
+            return NotFound(new { error = "series not found" });
+        }
+
+        var animeClickId = series.GetProviderId("AnimeClick");
+        if (string.IsNullOrWhiteSpace(animeClickId))
+        {
+            return Ok(new LibraryAuditSeriesItem
+            {
+                Id = series.Id.ToString("N", CultureInfo.InvariantCulture),
+                Name = series.Name ?? string.Empty,
+                Year = series.ProductionYear,
+                Reason = nameof(AnimeClickAuditReason.NotIdentified),
+                ReasonLabel = AnimeClickLibraryAudit.Describe(AnimeClickAuditReason.NotIdentified)
+            });
+        }
+
+        var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var episodes = _libraryManager
+            .GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Episode],
+                Recursive = true,
+                ParentId = series.Id,
+                IsVirtualItem = false
+            })
+            .OfType<Episode>()
+            .ToList();
+
+        var result = new LibraryAuditSeriesItem
+        {
+            Id = series.Id.ToString("N", CultureInfo.InvariantCulture),
+            Name = series.Name ?? string.Empty,
+            Year = series.ProductionYear,
+            AnimeClickId = animeClickId,
+            EpisodeCount = episodes.Count
+        };
+
+        var reasons = new List<AnimeClickAuditReason>();
+        foreach (var seasonGroup in episodes
+                     .GroupBy(episode => episode.ParentIndexNumber)
+                     .OrderBy(group => group.Key ?? int.MaxValue))
+        {
+            var untitled = seasonGroup.Where(AnimeClickRefreshMissingTitlesTask.NeedsTitle).ToList();
+            if (untitled.Count == 0)
+            {
+                continue;
+            }
+
+            // Replay the provider's own decision instead of assuming the series card: on AnimeClick
+            // a season is usually a card of its own, and reporting "no match" against the wrong card
+            // would blame the plugin for a season it never looked at.
+            var seasonNumber = seasonGroup.Key;
+            var storedSeasonId = _libraryManager.GetItemById(untitled[0].SeasonId) is Season season
+                ? season.GetProviderId("AnimeClick")
+                : null;
+            var layout = _layoutResolver.Resolve(untitled[0].Path);
+            var traversed = await _seasonResolver
+                .ResolveAsync(
+                    animeClickId,
+                    seasonNumber,
+                    config,
+                    cancellationToken,
+                    layout?.GetSeasonAirYears())
+                .ConfigureAwait(false);
+            var cardId = traversed ?? storedSeasonId ?? animeClickId;
+            var catalog = await LoadCatalogAsync(cardId, config, cancellationToken).ConfigureAwait(false);
+
+            var seasonReasons = untitled
+                .Select(episode => AnimeClickLibraryAudit.ClassifyEpisode(
+                    episode.GetProviderId("AnimeClick"),
+                    catalog))
+                .ToList();
+
+            // A season past the first, on a card that is not its own and that nothing resolved, is
+            // the case the season-level ID field exists for. Saying so is more useful than
+            // reporting a mismatch the user cannot act on.
+            var seasonReason = AnimeClickLibraryAudit.Summarize(seasonReasons);
+            if (seasonReason == AnimeClickAuditReason.NotMatched
+                && seasonNumber is > 1
+                && traversed is null
+                && string.IsNullOrWhiteSpace(storedSeasonId))
+            {
+                seasonReason = AnimeClickAuditReason.CardNotResolved;
+                seasonReasons = [.. seasonReasons.Select(_ => AnimeClickAuditReason.CardNotResolved)];
+            }
+
+            reasons.AddRange(seasonReasons);
+            result.Seasons.Add(new LibraryAuditSeasonItem
+            {
+                SeasonNumber = seasonNumber,
+                MissingTitleCount = untitled.Count,
+                AnimeClickId = cardId,
+                CardIsResolved = traversed is not null || !string.IsNullOrWhiteSpace(storedSeasonId),
+                CardRowCount = catalog?.Episodes.Count,
+                Reason = seasonReason.ToString(),
+                ReasonLabel = AnimeClickLibraryAudit.Describe(seasonReason)
+            });
+        }
+
+        result.MissingTitleCount = reasons.Count;
+        var reason = reasons.Count == 0 ? AnimeClickAuditReason.Ok : AnimeClickLibraryAudit.Summarize(reasons);
+        result.Reason = reason.ToString();
+        result.ReasonLabel = AnimeClickLibraryAudit.Describe(reason);
+        result.CardRowCount = result.Seasons.Sum(item => item.CardRowCount ?? 0);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Reads one card's episode table, from the cache when it is warm and from AnimeClick when it is
+    /// not. Only the single-series audit uses this; the library-wide report never leaves the cache.
+    /// </summary>
+    private async Task<AnimeClickEpisodeCatalog?> LoadCatalogAsync(
+        string animeClickId,
+        PluginConfiguration config,
+        CancellationToken cancellationToken)
+    {
+        if (!AnimeClickClient.TryBuildAnimeUrl(config.BaseUrl, animeClickId, out var animeUrl))
+        {
+            return null;
+        }
+
+        var summary = await _cache
+            .GetAsync<AnimeClickAnime>($"anime::{animeUrl}", config.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        var cached = await _cache
+            .GetAsync<AnimeClickEpisodeCatalog>(
+                AnimeClickEpisodeProvider.BuildCatalogCacheKey(
+                    animeClickId,
+                    summary?.EpisodeCount,
+                    summary?.SeasonsCount ?? 0),
+                config.CacheHours,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (cached is not null && cached.Episodes.Count > 0)
+        {
+            return cached;
+        }
+
+        var loaded = await _episodeListLoader.LoadAsync(
+                animeUrl + "/episodi",
+                config.BaseUrl,
+                summary?.SeasonsCount > 0 ? summary.SeasonsCount : null,
+                summary?.EpisodeCount,
+                config,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return loaded.Catalog;
+    }
+
+    /// <summary>
+    /// Queues the weekly title re-check immediately, so the user does not have to go looking for it
+    /// among Jellyfin's scheduled tasks.
+    /// </summary>
+    [HttpPost("RunMissingTitlesTask")]
+    public ActionResult<RunTaskResponse> RunMissingTitlesTask()
+    {
+        _taskManager.CancelIfRunningAndQueue<AnimeClickRefreshMissingTitlesTask>();
+        _logger.LogInformation("AnimeClick: title re-check queued from the configuration page");
+        return Ok(new RunTaskResponse
+        {
+            Queued = true,
+            Message = "Ricontrollo dei titoli accodato. L'avanzamento è visibile in Attività pianificate."
+        });
+    }
+
+    /// <summary>
+    /// True when this library asks AnimeClick for its metadata. A library that does not is none of
+    /// the report's business; when Jellyfin does not say, the plugin's own ID is the evidence.
+    /// </summary>
+    private bool AnimeClickAppliesTo(Series series)
+    {
+        if (!string.IsNullOrWhiteSpace(series.GetProviderId("AnimeClick")))
+        {
+            return true;
+        }
+
+        var fetchers = _libraryManager
+            .GetLibraryOptions(series)?
+            .TypeOptions?
+            .FirstOrDefault(option => string.Equals(option.Type, "Series", StringComparison.OrdinalIgnoreCase))?
+            .MetadataFetchers;
+        return fetchers is not null
+            && fetchers.Contains("AnimeClick", StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The cached catalog for one card, or null when nothing is on disk. Reads are memoized because
+    /// every season of a series asks for the same card.
+    /// </summary>
+    private async Task<AnimeClickEpisodeCatalog?> GetCachedCatalogAsync(
+        string animeClickId,
+        PluginConfiguration config,
+        Dictionary<string, AnimeClickEpisodeCatalog?> memo,
+        CancellationToken cancellationToken)
+    {
+        if (memo.TryGetValue(animeClickId, out var cached))
+        {
+            return cached;
+        }
+
+        AnimeClickEpisodeCatalog? catalog = null;
+        if (AnimeClickClient.TryBuildAnimeUrl(config.BaseUrl, animeClickId, out var animeUrl))
+        {
+            var summary = await _cache
+                .GetAsync<AnimeClickAnime>($"anime::{animeUrl}", config.CacheHours, cancellationToken)
+                .ConfigureAwait(false);
+            var key = AnimeClickEpisodeProvider.BuildCatalogCacheKey(
+                animeClickId,
+                summary?.EpisodeCount,
+                summary?.SeasonsCount ?? 0);
+            catalog = await _cache
+                .GetAsync<AnimeClickEpisodeCatalog>(key, config.CacheHours, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        memo[animeClickId] = catalog;
+        return catalog;
     }
 
     [HttpPost("ClearCache")]
@@ -313,12 +715,14 @@ public class AnimeClickDiagnosticsController : ControllerBase
     }
 
     /// <summary>
-    /// Validates the Ollama Cloud endpoint + key + model (as currently entered in the
-    /// form) by sending a trivial test prompt. Returns a detailed result.
+    /// Sends a trivial prompt to the AI profile currently entered in the form — provider, endpoint,
+    /// key and model — and reports what came back. Kept reachable under the historical route name
+    /// too, so anything scripted against it keeps working.
     /// </summary>
+    [HttpPost("TestAi")]
     [HttpPost("TestOllama")]
-    public async Task<ActionResult<OllamaTestResult>> TestOllama(
-        [FromBody] TestOllamaRequest request,
+    public async Task<ActionResult<AnimeClickAiTestResult>> TestAi(
+        [FromBody] TestAiRequest request,
         CancellationToken cancellationToken)
     {
         if (request is null)
@@ -327,11 +731,13 @@ public class AnimeClickDiagnosticsController : ControllerBase
         }
 
         var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        if (!TryResolveOllamaProfile(
+        if (!TryResolveAiProfile(
+                request.Provider,
                 request.Endpoint,
                 request.ApiKey,
                 request.Model,
                 config,
+                out var provider,
                 out var endpoint,
                 out var apiKey,
                 out var model,
@@ -347,10 +753,69 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 apiKey,
                 model,
                 timeoutSec,
+                AnimeClickAiProviders.ResolveDialect(provider, endpoint),
                 cancellationToken)
             .ConfigureAwait(false);
         return Ok(result);
     }
+
+    /// <summary>
+    /// The models the configured credential can actually use. This is what makes a model field
+    /// usable: names change with every vendor release, so the plugin asks instead of shipping a
+    /// list that goes stale.
+    /// </summary>
+    [HttpPost("AiModels")]
+    public async Task<ActionResult<AnimeClickAiModelsResult>> AiModels(
+        [FromBody] TestAiRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+        {
+            return BadRequest(new { error = "request body is required" });
+        }
+
+        var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (!TryResolveAiProfile(
+                request.Provider,
+                request.Endpoint,
+                request.ApiKey,
+
+                // The model is what this call is meant to discover, so it must not be required.
+                request.Model ?? "-",
+                config,
+                out var provider,
+                out var endpoint,
+                out var apiKey,
+                out _,
+                out var profileError))
+        {
+            return BadRequest(new { error = profileError });
+        }
+
+        var result = await _translator.ListModelsAsync(
+                AnimeClickAiProviders.ResolveModelsEndpoint(provider, endpoint),
+                apiKey,
+                AnimeClickAiProviders.ResolveDialect(provider, endpoint),
+                request.TimeoutSec is > 0 ? request.TimeoutSec.Value : 30,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return Ok(result);
+    }
+
+    /// <summary>The selectable AI services, so the configuration page never hardcodes the list.</summary>
+    [HttpGet("AiProviders")]
+    public ActionResult<IEnumerable<AiProviderInfo>> AiProviders()
+        => Ok(AnimeClickAiProviders.Presets.Select(preset => new AiProviderInfo
+        {
+            Id = preset.Id,
+            DisplayName = preset.DisplayName,
+            ChatEndpoint = preset.ChatEndpoint,
+            RequiresApiKey = preset.RequiresApiKey,
+            SupportsModelListing = !string.IsNullOrWhiteSpace(preset.ModelsEndpoint)
+                || preset.Id == AnimeClickAiProviders.CustomId,
+            CredentialUrl = preset.CredentialUrl,
+            Note = preset.Note
+        }).ToList());
 
     /// <summary>
     /// Produces an EN→IT preview with the same model, prompt, cache and global
@@ -373,11 +838,13 @@ public class AnimeClickDiagnosticsController : ControllerBase
         }
 
         var stored = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        if (!TryResolveOllamaProfile(
+        if (!TryResolveAiProfile(
+                request.Provider,
                 request.Endpoint,
                 request.ApiKey,
                 request.Model,
                 stored,
+                out var provider,
                 out var endpoint,
                 out var apiKey,
                 out var model,
@@ -388,9 +855,10 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
         var effective = new PluginConfiguration
         {
-            OllamaCloudEndpoint = endpoint,
-            OllamaCloudApiKey = apiKey,
-            OllamaCloudModel = model,
+            AiProvider = provider,
+            AiEndpoint = endpoint,
+            AiApiKey = apiKey,
+            AiModel = model,
             EpisodeTranslationTimeoutSec = request.TimeoutSec is > 0
                 ? request.TimeoutSec.Value
                 : stored.EpisodeTranslationTimeoutSec,
@@ -413,12 +881,12 @@ public class AnimeClickDiagnosticsController : ControllerBase
         {
             Success = !string.IsNullOrWhiteSpace(translated),
             Translation = translated,
-            Model = effective.OllamaCloudModel,
+            Model = effective.AiModel,
             SourceLanguage = "en",
             TargetLanguage = "it",
             SourceCharacterCount = sourceText.Length,
             ErrorMessage = string.IsNullOrWhiteSpace(translated)
-                ? "No translation was produced. Run the Ollama connection test for details."
+                ? "Nessuna traduzione prodotta. Usa «Verifica AI» per il dettaglio."
                 : null
         });
     }
@@ -483,9 +951,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         var tvdbConfigured = config.EnableTvdbSynopsis
             && !string.IsNullOrWhiteSpace(config.TvdbApiKey);
         var tmdbConfigured = !string.IsNullOrWhiteSpace(config.TmdbApiKey);
-        var ollamaConfigured = !string.IsNullOrWhiteSpace(config.OllamaCloudApiKey)
-            && !string.IsNullOrWhiteSpace(config.OllamaCloudEndpoint)
-            && !string.IsNullOrWhiteSpace(config.OllamaCloudModel);
+        var aiConfigured = AnimeClickAiTranslator.IsConfigured(config, out _);
 
         var fallback = await _fallbackService.ResolveEpisodeOverviewAsync(
                 normalizedId,
@@ -503,7 +969,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
             Overview = fallback?.Value,
             Source = fallback?.Source,
             SourceLanguage = fallback?.SourceLanguage,
-            UsedOllama = fallback?.UsedOllama ?? false,
+            UsedAi = fallback?.UsedAi ?? false,
             Model = fallback?.Model,
             // This endpoint has no Jellyfin item title, file range or complete library
             // topology, so its episode match is always advisory even when it resolves an ID.
@@ -518,9 +984,9 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 new FallbackChainStep("AnimeClick", "it", false, episodeAnimeClickId is not null),
                 new FallbackChainStep("TheTVDB", "ita", false, tvdbConfigured),
                 new FallbackChainStep("TMDB", "it-IT", false, tmdbConfigured),
-                new FallbackChainStep("TMDB", "en-US", true, tmdbConfigured && ollamaConfigured),
-                new FallbackChainStep("TheTVDB", "eng", true, tvdbConfigured && ollamaConfigured),
-                new FallbackChainStep("Ollama Cloud", "en→it", true, ollamaConfigured)
+                new FallbackChainStep("TMDB", "en-US", true, tmdbConfigured && aiConfigured),
+                new FallbackChainStep("TheTVDB", "eng", true, tvdbConfigured && aiConfigured),
+                new FallbackChainStep(AnimeClickAiProviders.Resolve(config.AiProvider).DisplayName, "en→it", true, aiConfigured)
             ],
             ErrorMessage = fallback is null
                 ? "Né AnimeClick né le fonti esterne configurate hanno prodotto una sinossi italiana."
@@ -624,77 +1090,110 @@ public class AnimeClickDiagnosticsController : ControllerBase
         return Ok(result);
     }
 
-    private static bool TryResolveOllamaProfile(
+    /// <summary>
+    /// Works out which destination a diagnostics call should use: what the form sent when it sent
+    /// something, otherwise what is saved. A changed destination has to come with its own freshly
+    /// typed key, so a secret saved for one service is never replayed against another — that rule is
+    /// the reason this is not just three null-coalescing operators.
+    /// </summary>
+    private static bool TryResolveAiProfile(
+        string? requestedProvider,
         string? requestedEndpoint,
         string? requestedApiKey,
         string? requestedModel,
         PluginConfiguration stored,
+        out string provider,
         out string endpoint,
         out string apiKey,
         out string model,
         out string error)
     {
-        var storedEndpointIsValid = AnimeClickOllamaTranslator.TryNormalizeCloudEndpoint(
-            stored.OllamaCloudEndpoint,
+        const string endpointError =
+            "L'endpoint deve essere HTTPS — oppure HTTP verso un indirizzo della tua rete — "
+            + "senza credenziali, query o frammenti.";
+
+        provider = string.IsNullOrWhiteSpace(requestedProvider)
+            ? stored.AiProvider
+            : requestedProvider.Trim();
+
+        // A provider chosen in the form without an endpoint means "use this service's own": that is
+        // what makes the preset menu work before anything has been saved.
+        var preset = AnimeClickAiProviders.Resolve(provider);
+        if (string.IsNullOrWhiteSpace(requestedEndpoint)
+            && !string.IsNullOrWhiteSpace(requestedProvider)
+            && !string.IsNullOrWhiteSpace(preset.ChatEndpoint))
+        {
+            requestedEndpoint = preset.ChatEndpoint;
+        }
+
+        var storedEndpointIsValid = AnimeClickAiTranslator.TryNormalizeEndpoint(
+            stored.AiEndpoint,
             out var storedEndpointUri);
         Uri endpointUri;
-        if (requestedEndpoint is null)
+        if (string.IsNullOrWhiteSpace(requestedEndpoint))
         {
             if (!storedEndpointIsValid)
             {
                 endpoint = string.Empty;
                 apiKey = string.Empty;
                 model = string.Empty;
-                error = "Ollama endpoint must be an absolute HTTPS URL without credentials, query or fragment.";
+                error = endpointError;
                 return false;
             }
 
             endpointUri = storedEndpointUri;
         }
-        else if (!AnimeClickOllamaTranslator.TryNormalizeCloudEndpoint(requestedEndpoint, out endpointUri))
+        else if (!AnimeClickAiTranslator.TryNormalizeEndpoint(requestedEndpoint, out endpointUri))
         {
             endpoint = string.Empty;
             apiKey = string.Empty;
             model = string.Empty;
-            error = "Ollama endpoint must be an absolute HTTPS URL without credentials, query or fragment.";
+            error = endpointError;
             return false;
         }
 
-        var endpointChanged = requestedEndpoint is not null
-            && (!storedEndpointIsValid || !IsSameOllamaDestination(storedEndpointUri, endpointUri));
+        var endpointChanged = !string.IsNullOrWhiteSpace(requestedEndpoint)
+            && (!storedEndpointIsValid || !IsSameDestination(storedEndpointUri, endpointUri));
         var explicitApiKey = requestedApiKey?.Trim() ?? string.Empty;
-        var storedApiKey = stored.OllamaCloudApiKey?.Trim() ?? string.Empty;
+        var storedApiKey = stored.AiApiKey?.Trim() ?? string.Empty;
+
+        // A destination on the user's own network authenticates nothing and is never sent the key,
+        // so demanding one would only make a local service impossible to test.
+        var needsCredential = endpointUri.Scheme == Uri.UriSchemeHttps && preset.RequiresApiKey;
 
         // Endpoint and key are one atomic security profile. A changed destination
         // requires a freshly supplied key and may not reuse the persisted secret.
-        if (endpointChanged && string.IsNullOrWhiteSpace(explicitApiKey))
+        if (needsCredential && endpointChanged && string.IsNullOrWhiteSpace(explicitApiKey))
         {
             endpoint = string.Empty;
             apiKey = string.Empty;
             model = string.Empty;
-            error = "An explicit API key is required when changing the Ollama endpoint.";
+            error = "Serve la chiave API del servizio quando cambi destinazione.";
             return false;
         }
 
-        if (endpointChanged
+        if (needsCredential
+            && endpointChanged
             && !string.IsNullOrEmpty(storedApiKey)
             && string.Equals(explicitApiKey, storedApiKey, StringComparison.Ordinal))
         {
             endpoint = string.Empty;
             apiKey = string.Empty;
             model = string.Empty;
-            error = "The persisted API key cannot be reused with a different Ollama endpoint.";
+            error = "La chiave salvata non può essere riusata verso una destinazione diversa.";
             return false;
         }
 
         endpoint = endpointUri.AbsoluteUri;
-        apiKey = string.IsNullOrWhiteSpace(explicitApiKey) ? storedApiKey : explicitApiKey;
-        model = requestedModel?.Trim() ?? stored.OllamaCloudModel;
+        apiKey = endpointUri.Scheme == Uri.UriSchemeHttps
+            ? (string.IsNullOrWhiteSpace(explicitApiKey) ? storedApiKey : explicitApiKey)
+            : string.Empty;
+        model = string.IsNullOrWhiteSpace(requestedModel) ? stored.AiModel : requestedModel.Trim();
         error = string.Empty;
         return true;
     }
 
-    private static bool IsSameOllamaDestination(Uri left, Uri right)
+    private static bool IsSameDestination(Uri left, Uri right)
         => string.Equals(left.Scheme, right.Scheme, StringComparison.OrdinalIgnoreCase)
             && string.Equals(left.IdnHost, right.IdnHost, StringComparison.OrdinalIgnoreCase)
             && left.Port == right.Port
@@ -782,8 +1281,11 @@ public sealed class TestTmdbRequest
     public string? ApiKey { get; set; }
 }
 
-public sealed class TestOllamaRequest
+public sealed class TestAiRequest
 {
+    /// <summary>Identifier of the selected service, empty to use the saved one.</summary>
+    public string? Provider { get; set; }
+
     public string? Endpoint { get; set; }
     public string? ApiKey { get; set; }
     public string? Model { get; set; }
@@ -799,6 +1301,7 @@ public sealed class TestTvdbRequest
 public sealed class TranslationPreviewRequest
 {
     public string? SourceText { get; set; }
+    public string? Provider { get; set; }
     public string? Endpoint { get; set; }
     public string? ApiKey { get; set; }
     public string? Model { get; set; }
@@ -829,7 +1332,7 @@ public sealed class EpisodeFallbackPreviewResponse
     public string? Overview { get; set; }
     public string? Source { get; set; }
     public string? SourceLanguage { get; set; }
-    public bool UsedOllama { get; set; }
+    public bool UsedAi { get; set; }
     public string? Model { get; set; }
     public bool AnimeClickMatchConclusive { get; set; }
     public string? AnimeClickMatchStrategy { get; set; }
@@ -844,3 +1347,103 @@ public sealed record FallbackChainStep(
     string Language,
     bool RequiresTranslation,
     bool Configured);
+
+
+public sealed class LibraryAuditResponse
+{
+    /// <summary>False when the whole feature is off, which explains every missing title at once.</summary>
+    public bool EpisodeTitlesEnabled { get; set; }
+
+    public int SeriesCount { get; set; }
+
+    public int EpisodeCount { get; set; }
+
+    public int MissingTitleCount { get; set; }
+
+    public List<LibraryAuditReasonCount> Totals { get; set; } = [];
+
+    public List<LibraryAuditSeriesItem> Series { get; set; } = [];
+}
+
+public sealed class LibraryAuditReasonCount
+{
+    public string Reason { get; set; } = string.Empty;
+
+    public int SeriesCount { get; set; }
+
+    public int EpisodeCount { get; set; }
+}
+
+public sealed class LibraryAuditSeriesItem
+{
+    public string Id { get; set; } = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+
+    public int? Year { get; set; }
+
+    public string? AnimeClickId { get; set; }
+
+    public int EpisodeCount { get; set; }
+
+    public int MissingTitleCount { get; set; }
+
+    /// <summary>Rows read from the card. Only filled by the single-series, network-allowed audit.</summary>
+    public int? CardRowCount { get; set; }
+
+    public string Reason { get; set; } = nameof(AnimeClickAuditReason.Ok);
+
+    public string ReasonLabel { get; set; } = string.Empty;
+
+    public List<LibraryAuditSeasonItem> Seasons { get; set; } = [];
+}
+
+public sealed class LibraryAuditSeasonItem
+{
+    public int? SeasonNumber { get; set; }
+
+    public int MissingTitleCount { get; set; }
+
+    public string? AnimeClickId { get; set; }
+
+    /// <summary>True when this card came from the traversal or from an ID stored on the season.</summary>
+    public bool CardIsResolved { get; set; }
+
+    /// <summary>Rows read from the card used for this season.</summary>
+    public int? CardRowCount { get; set; }
+
+    public string Reason { get; set; } = string.Empty;
+
+    public string ReasonLabel { get; set; } = string.Empty;
+}
+
+public sealed class LibraryAuditSeriesRequest
+{
+    public string? ItemId { get; set; }
+}
+
+public sealed class RunTaskResponse
+{
+    public bool Queued { get; set; }
+
+    public string Message { get; set; } = string.Empty;
+}
+
+
+/// <summary>One selectable AI service, as the configuration page needs to render it.</summary>
+public sealed class AiProviderInfo
+{
+    public string Id { get; set; } = string.Empty;
+
+    public string DisplayName { get; set; } = string.Empty;
+
+    public string ChatEndpoint { get; set; } = string.Empty;
+
+    public bool RequiresApiKey { get; set; }
+
+    public bool SupportsModelListing { get; set; }
+
+    public string CredentialUrl { get; set; } = string.Empty;
+
+    public string Note { get; set; } = string.Empty;
+}

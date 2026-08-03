@@ -37,6 +37,15 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"(Opening|Ending)\s+(\d+)\s*\|\s*(.+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ThemeSongRegex();
 
+    [GeneratedRegex(@"^(Opening|Ending)\s*(\d*)\s*[-–—:|]\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex StaffThemeSongRegex();
+
+    // "PV" is not delimited by word boundaries in a Japanese label: in "PV第1弾" the ideograph
+    // that follows counts as a word character, so \bPV\b never matches. Only neighbouring Latin
+    // letters mean this is a different word.
+    [GeneratedRegex(@"(?<![A-Za-z])PV(?![A-Za-z])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PvLabelRegex();
+
     [GeneratedRegex(@"myanimelist\.net/anime/(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex MalIdRegex();
 
@@ -388,8 +397,28 @@ public partial class AnimeClickHtmlParser
                 var actorName = NormalizeWhitespace(actorNode.SelectSingleNode(".//span[@itemprop='name']")?.InnerText);
                 if (string.IsNullOrWhiteSpace(actorName)) continue;
 
-                // Avoid duplicates
-                if (people.Any(p => p.Name == actorName && p.Role == characterName)) continue;
+                // One voice actor, several characters: Jellyfin stores people deduplicated by
+                // name and kind (PeopleRepository: DistinctBy(Name + "-" + Type)), so a second
+                // row for the same actor is dropped on save and the extra character is simply
+                // lost — Tomori Kusunoki kept "Rikako Honda" and lost "Yeti". Merging the
+                // characters into one credit keeps both visible, exactly as the staff parser
+                // already does for someone who holds two roles.
+                var existing = people.Find(person =>
+                    string.Equals(person.Name, actorName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(person.Type, "Actor", StringComparison.Ordinal));
+                if (existing is not null)
+                {
+                    if (string.IsNullOrWhiteSpace(existing.Role))
+                    {
+                        existing.Role = characterName;
+                    }
+                    else if (!existing.Role.Contains(characterName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        existing.Role += ", " + characterName;
+                    }
+
+                    continue;
+                }
 
                 // Extract the actor's AnimeClick page link (e.g. /autore/64107/gen-sato)
                 var urlNode = actorNode.SelectSingleNode(".//a[@itemprop='url']");
@@ -515,6 +544,95 @@ public partial class AnimeClickHtmlParser
         }
 
         return people;
+    }
+
+    /// <summary>
+    /// Reads the opening/ending songs from the /staff page, where AnimeClick publishes them as
+    /// role sections ("Opening - Megane o hazushite", "Ending - Pure") whose people are the
+    /// performers. Plenty of titles have no OP/ED block at all on /multimedia — the page the
+    /// theme song parser was written for — and this is the only place their sigle appear.
+    /// </summary>
+    /// <param name="html">The /staff page HTML.</param>
+    /// <returns>The songs declared by the role headings, in page order.</returns>
+    public List<AnimeClickThemeSong> ParseStaffThemeSongs(string html)
+    {
+        var doc = new HtmlDocument();
+        doc.LoadHtml(html);
+        var songs = new List<AnimeClickThemeSong>();
+
+        // Same structure ParseStaffPage walks: <h4>role</h4> followed by <div class="well">.
+        var h4Nodes = doc.DocumentNode.SelectNodes("//h4[not(@class)]");
+        if (h4Nodes is null)
+        {
+            return songs;
+        }
+
+        foreach (var h4 in h4Nodes)
+        {
+            var roleTitle = NormalizeWhitespace(h4.InnerText);
+            if (string.IsNullOrWhiteSpace(roleTitle))
+            {
+                continue;
+            }
+
+            var match = StaffThemeSongRegex().Match(roleTitle);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var title = NormalizeWhitespace(match.Groups[3].Value);
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                continue;
+            }
+
+            var type = match.Groups[1].Value.StartsWith("Opening", StringComparison.OrdinalIgnoreCase)
+                ? "Opening"
+                : "Ending";
+
+            // An unnumbered heading is the next slot of its kind, not necessarily the first:
+            // AnimeClick writes "Opening" for the first and "Opening 2" for the second.
+            var number = int.TryParse(
+                    match.Groups[2].Value,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out var declared)
+                && declared > 0
+                    ? declared
+                    : songs.Count(song => string.Equals(song.Type, type, StringComparison.Ordinal)) + 1;
+            if (songs.Any(song =>
+                    string.Equals(song.Type, type, StringComparison.Ordinal) && song.Number == number))
+            {
+                continue;
+            }
+
+            var performers = new List<string>();
+            var wellDiv = h4.SelectSingleNode("following-sibling::div[contains(@class, 'well')][1]");
+            var nameNodes = wellDiv?.SelectNodes(".//h4[@class='media-heading']//a");
+            if (nameNodes is not null)
+            {
+                foreach (var nameNode in nameNodes)
+                {
+                    var name = NormalizeWhitespace(nameNode.InnerText);
+                    if (!string.IsNullOrWhiteSpace(name)
+                        && !performers.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        performers.Add(name);
+                    }
+                }
+            }
+
+            songs.Add(new AnimeClickThemeSong
+            {
+                Type = type,
+                Number = number,
+                Title = title,
+                Artist = performers.Count == 0 ? null : string.Join(", ", performers)
+            });
+        }
+
+        return songs;
     }
 
     /// <summary>
@@ -1021,6 +1139,8 @@ public partial class AnimeClickHtmlParser
                     && IsSpecialEpisodeTitle(episode.Title));
         }
 
+        MarkForeignLabelledRowsAsSpecial(episodes);
+
         foreach (var duplicateGroup in episodes
                      .Where(episode => episode.RawEpisodeNumber.HasValue)
                      .GroupBy(episode => (
@@ -1095,6 +1215,89 @@ public partial class AnimeClickHtmlParser
             specials[index].AbsoluteNumber = specials[index].Number;
         }
     }
+
+    /// <summary>
+    /// Files the rows whose label names another work under the specials, but only when their
+    /// numbering actually collides with the episodes of this one.
+    /// <para>
+    /// AnimeClick sometimes lists a numbered spin-off inside the same table: K-On!! carries its own
+    /// "Ep. 01"–"Ep. 24" and then nine "Ura-On!! 01"–"09" shorts. The colliding numbers made every
+    /// regular row ambiguous, and an ambiguous timeline gets no canonical coordinates at all — so a
+    /// perfectly numbered season became unmatchable, twenty-six episodes at a time. The label is
+    /// what tells them apart: a word that is not an episode marker is a title, not a coordinate.
+    /// The collision requirement is the safety net: if this ever misreads a legitimate label, a
+    /// row that clashes with nothing is left exactly where it was.
+    /// </para>
+    /// </summary>
+    private static void MarkForeignLabelledRowsAsSpecial(List<AnimeClickEpisode> episodes)
+    {
+        var foreign = new List<AnimeClickEpisode>();
+        var native = new List<AnimeClickEpisode>();
+        foreach (var episode in episodes)
+        {
+            (HasForeignLabel(episode.RawNumberLabel) ? foreign : native).Add(episode);
+        }
+
+        if (foreign.Count == 0 || native.Count == 0)
+        {
+            return;
+        }
+
+        var nativeCoordinates = native
+            .Where(episode => !episode.IsSpecial && episode.RawEpisodeNumber is > 0)
+            .Select(episode => (episode.RawSeasonNumber, episode.RawEpisodeNumber))
+            .ToHashSet();
+        var collides = foreign.Any(episode =>
+            !episode.IsSpecial
+            && episode.RawEpisodeNumber is > 0
+            && nativeCoordinates.Contains((episode.RawSeasonNumber, episode.RawEpisodeNumber)));
+        if (!collides)
+        {
+            return;
+        }
+
+        foreach (var episode in foreign)
+        {
+            episode.IsSpecial = true;
+        }
+    }
+
+    /// <summary>
+    /// True when an episode label carries a word that cannot be part of a coordinate — the name of
+    /// a different work. "Ep. 01", "S2 Ep. 13", "1x05", "Speciale 2", "Ep. 27 (OAV)" carry none;
+    /// "Ura-On!! 01" carries two.
+    /// </summary>
+    private static bool HasForeignLabel(string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            return false;
+        }
+
+        foreach (var token in Regex.Split(
+                     AnimeClickSearchScorer.RemoveDiacritics(label).ToLowerInvariant(),
+                     @"[^\p{L}]+"))
+        {
+            if (token.Length > 0 && !EpisodeLabelMarkers.Contains(token))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Words that legitimately appear in an AnimeClick episode label beside the numbers.
+    /// </summary>
+    private static readonly HashSet<string> EpisodeLabelMarkers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ep", "episodio", "episode", "eps", "e",
+        "s", "stagione", "season", "cour", "parte", "part", "pt",
+        "oav", "ova", "ona", "web", "special", "speciale", "specials", "sp",
+        "extra", "extras", "bonus", "recap", "riassunto", "preview", "anteprima",
+        "film", "movie", "ova's", "tv", "x", "finale", "final", "ultimo", "prologo", "epilogo"
+    };
 
     /// <summary>
     /// Retains the v4 equal-split hint for callers without Jellyfin topology. Only regular
@@ -1189,6 +1392,12 @@ public partial class AnimeClickHtmlParser
                           || text.Contains("Film", StringComparison.OrdinalIgnoreCase)
                           || text.Contains("OVA", StringComparison.OrdinalIgnoreCase)
                           || text.Contains("OAV", StringComparison.OrdinalIgnoreCase)
+                          // AnimeClick files a streaming-only release as "Web", and that is how
+                          // modern continuations arrive: "Arrivare a te" got its third season on
+                          // Netflix in 2024. Leaving the format null made those relations
+                          // unclassifiable, so the season resolver could never consider them.
+                          || text.Contains("Web", StringComparison.OrdinalIgnoreCase)
+                          || text.Contains("ONA", StringComparison.OrdinalIgnoreCase)
                           || text.Contains("Special", StringComparison.OrdinalIgnoreCase))
                     {
                         format = text;
@@ -1341,7 +1550,10 @@ public partial class AnimeClickHtmlParser
         => label.Contains("Trailer", StringComparison.OrdinalIgnoreCase)
             || label.Contains("Teaser", StringComparison.OrdinalIgnoreCase)
             || label.Contains("Promo", StringComparison.OrdinalIgnoreCase)
-            || Regex.IsMatch(label, @"\bPV\s*\d*\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            // Japanese labels for the same thing: 予告 (yokoku, trailer), 特報 (tokuhou, teaser).
+            || label.Contains("予告", StringComparison.Ordinal)
+            || label.Contains("特報", StringComparison.Ordinal)
+            || PvLabelRegex().IsMatch(label);
 
     private static string? NormalizeYouTubeUrl(string url)
     {

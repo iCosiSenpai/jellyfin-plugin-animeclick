@@ -3,10 +3,11 @@
 (function () {
     'use strict';
 
-    var V = '0.4.5.0';
+    var V = '0.5.0.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
+    var aiProviders = [];
     var dirty = false;
     var toastHost;
 
@@ -271,6 +272,28 @@
         return wrap;
     }
 
+    function makeSelect(id, label, description, options) {
+        var wrap = el('div', 'ac-field');
+        var labelNode = el('label', null, label);
+        labelNode.setAttribute('for', id);
+        var select = el('select', 'ac-select');
+        select.id = id;
+        (options || []).forEach(function (option) {
+            var node = el('option', null, option.label);
+            node.value = option.value;
+            select.appendChild(node);
+        });
+        wrap.appendChild(labelNode);
+        wrap.appendChild(select);
+        if (description) {
+            var desc = el('div', 'ac-field-desc');
+            desc.innerHTML = description;
+            wrap.appendChild(desc);
+        }
+        select.addEventListener('change', markDirty);
+        return wrap;
+    }
+
     function makeTextArea(id, label, description, trackDirty) {
         var wrap = el('div', 'ac-field');
         var labelNode = el('label', null, label);
@@ -361,7 +384,7 @@
         var priorityGrid = el('div', 'ac-priority-grid');
         addPriorityTile(priorityGrid, 'Testo', 'Ordine 0', 'Titoli, trama, generi, tag e cast restano autorevoli.', 'good');
         addPriorityTile(priorityGrid, 'Immagini', 'Fallback 100', 'I provider ad alta risoluzione mantengono la precedenza.', 'neutral');
-        addPriorityTile(priorityGrid, 'Sinossi episodi', 'AnimeClick → IT → EN', 'Prima AnimeClick; Ollama traduce soltanto l’ultima fonte inglese.', 'warn');
+        addPriorityTile(priorityGrid, 'Sinossi episodi', 'AnimeClick → IT → EN', 'Prima AnimeClick; l’AI traduce soltanto l’ultima fonte inglese.', 'warn');
         authority.body.appendChild(priorityGrid);
         panel.appendChild(authority.card);
 
@@ -370,11 +393,11 @@
             'Salute dei provider di fallback',
             'I test usano i valori attualmente inseriti nel modulo. Le API key non vengono mai incluse nei risultati mostrati.'
         );
-        ['tmdb', 'ollama', 'tvdb'].forEach(function (provider) {
-            var names = { tmdb: 'TMDB', ollama: 'Ollama Cloud', tvdb: 'TheTVDB' };
+        ['tmdb', 'ai', 'tvdb'].forEach(function (provider) {
+            var names = { tmdb: 'TMDB', ai: 'Traduzione AI', tvdb: 'TheTVDB' };
             var roles = {
                 tmdb: 'Italiano nativo e fonte inglese',
-                ollama: 'Ultimo fallback EN→IT, cloud-only',
+                ai: 'Ultimo fallback EN→IT',
                 tvdb: 'Prima fonte esterna italiana'
             };
             var row = el('div', 'ac-provider-row');
@@ -440,6 +463,12 @@
             'AnimeClick protegge i metadati italiani che possiede; gli altri provider possono completare soltanto i campi mancanti.',
             'good'
         ));
+        panel.appendChild(makeCallout(
+            'Le correzioni a mano vanno bloccate',
+            'I campi elencati qui vengono riscritti a ogni aggiornamento dei metadati: se correggi a mano un titolo o '
+            + 'una trama, usa il lucchetto di Jellyfin su quel campo, altrimenti al refresh successivo torna il valore AnimeClick.',
+            'warn'
+        ));
 
         var primary = makeCard('Essenziali', 'Identità italiana', 'I valori principali che definiscono la scheda nel catalogo.');
         primary.body.appendChild(makeCheck('acPreferItalianTitle', 'Titolo italiano', 'Usa il titolo AnimeClick come nome principale.'));
@@ -476,7 +505,10 @@
         advanced.body.appendChild(makeCheck(
             'acOverwriteNonItalianFields',
             'Sovrascrivi campi non italiani',
-            'Consente ad AnimeClick di sostituire anche titolo originale, studio, rating e data. Lascia disattivato per un merge conservativo.'
+            'Consente ad AnimeClick di sostituire anche titolo originale, studio, rating e data. '
+            + 'Attenzione: le date AnimeClick sono spesso solo l\'anno (diventano 1° gennaio) e il voto '
+            + 'ha tre decimali, quindi su questi due campi TheTVDB e TMDB sono più precisi. '
+            + 'Lascia disattivato per un merge conservativo.'
         ));
         advanced.body.appendChild(makeCheck(
             'acEnableStudios',
@@ -523,23 +555,23 @@
         onboarding.body.appendChild(makeCheck(
             'acEnableEpisodeSynopsisTranslation',
             'Abilita le sinossi degli episodi',
-            'Funziona anche con il solo AnimeClick. Le API esterne e Ollama servono esclusivamente ad aumentare la copertura.'
+            'Funziona anche con il solo AnimeClick. Le API esterne e l’AI servono esclusivamente ad aumentare la copertura.'
         ));
         var chain = el('div', 'ac-chain');
         appendChainStep(chain, 1, 'AnimeClick', 'Sinossi italiana presente nella pagina dell’episodio.', 'prima scelta');
         appendChainStep(chain, 2, 'Italiano di riserva', 'TheTVDB ita, poi TMDB it-IT.', 'senza AI');
-        appendChainStep(chain, 3, 'Inglese + Ollama', 'TMDB en-US, poi TheTVDB eng; Ollama traduce il testo EN→IT.', 'ultima scelta');
+        appendChainStep(chain, 3, 'Inglese + AI', 'TMDB en-US, poi TheTVDB eng; l’AI traduce il testo EN→IT.', 'ultima scelta');
         onboarding.body.appendChild(chain);
         panel.appendChild(onboarding.card);
 
-        var sources = makeCard('Sorgenti opzionali', 'Aumenta la copertura', 'Non servono chiavi per usare le sinossi AnimeClick. TheTVDB e TMDB cercano le puntate mancanti; Ollama traduce soltanto una sinossi inglese trovata da uno di questi servizi.');
+        var sources = makeCard('Sorgenti opzionali', 'Aumenta la copertura', 'Non servono chiavi per usare le sinossi AnimeClick. TheTVDB e TMDB cercano le puntate mancanti; l’AI traduce soltanto una sinossi inglese trovata da uno di questi servizi.');
         var sourceGrid = el('div', 'ac-grid-2');
         var tvdbBlock = el('div', 'ac-credential-block');
         var tvdbHead = el('div', 'ac-row ac-credential-head');
         tvdbHead.appendChild(el('strong', null, 'TheTVDB'));
         tvdbHead.appendChild(el('span', 'ac-badge neutral', 'prima fonte esterna'));
         tvdbBlock.appendChild(tvdbHead);
-        tvdbBlock.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa fonte italiana TVDB', 'Salta Ollama quando esiste una overview ita.'));
+        tvdbBlock.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa fonte italiana TVDB', 'Salta la traduzione AI quando esiste una overview ita.'));
         tvdbBlock.appendChild(makeSecretField(
             'acTvdbApiKey',
             'API key TheTVDB',
@@ -556,7 +588,7 @@
 
         var cloudBlock = el('div', 'ac-credential-block featured');
         var cloudHead = el('div', 'ac-row ac-credential-head');
-        cloudHead.appendChild(el('strong', null, 'TMDB + Ollama Cloud'));
+        cloudHead.appendChild(el('strong', null, 'TMDB + traduzione AI'));
         cloudHead.appendChild(el('span', 'ac-badge success', 'cloud'));
         cloudBlock.appendChild(cloudHead);
         cloudBlock.appendChild(makeSecretField(
@@ -564,38 +596,63 @@
             'API key TMDB',
             'Creala nelle <a href="https://developer.themoviedb.org/docs/getting-started" target="_blank" rel="noopener noreferrer">impostazioni API TMDB</a>.'
         ));
+        cloudBlock.appendChild(makeSelect(
+            'acAiProvider',
+            'Servizio AI',
+            'Serve solo per tradurre una sinossi che esiste unicamente in inglese. '
+            + 'L’elenco si popola dal server.',
+            []
+        ));
+        var providerNote = el('div', 'ac-field-desc');
+        providerNote.id = 'acAiProviderNote';
+        cloudBlock.appendChild(providerNote);
         cloudBlock.appendChild(makeSecretField(
-            'acOllamaCloudApiKey',
-            'API key Ollama Cloud',
-            'Creala su <a href="https://ollama.com/settings/keys" target="_blank" rel="noopener noreferrer">ollama.com/settings/keys</a>.'
+            'acAiApiKey',
+            'API key del servizio AI',
+            'Lasciala vuota per un servizio in casa: non autentica nulla e la chiave non viene mai '
+            + 'inviata in chiaro.'
         ));
         cloudBlock.appendChild(makeField(
-            'acOllamaCloudModel',
-            'Modello cloud',
+            'acAiModel',
+            'Modello',
             'text',
-            'Consigliato: <strong>gpt-oss:20b-cloud</strong> (piccolo, economico, buona resa EN→IT). Puoi indicare un altro modello Ollama Cloud (suffisso -cloud), es. gemma4:31b-cloud.',
-            { spellcheck: 'false', autocomplete: 'off', placeholder: 'gpt-oss:20b-cloud' }
+            'Nessun valore predefinito di proposito: i fornitori ritirano e rinominano i modelli, '
+            + 'quindi conviene chiederglielo con «Elenca modelli» invece di indovinare.',
+            { spellcheck: 'false', autocomplete: 'off', list: 'acAiModelList', placeholder: 'scegli o incolla il nome del modello' }
         ));
-        var modelReset = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Ripristina modello consigliato');
-        modelReset.type = 'button';
-        modelReset.id = 'acBtnRecommendedModel';
-        cloudBlock.appendChild(modelReset);
+        var modelList = document.createElement('datalist');
+        modelList.id = 'acAiModelList';
+        cloudBlock.appendChild(modelList);
+        cloudBlock.appendChild(makeField(
+            'acAiEndpoint',
+            'Endpoint',
+            'url',
+            'Precompilato dal servizio scelto. HTTP in chiaro è accettato solo verso la tua rete '
+            + '(<code>http://ollama:11434/api/chat</code>, <code>http://nas.local:11434/api/chat</code>).',
+            { placeholder: 'https://…' }
+        ));
+        var aiActions = el('div', 'ac-row');
+        var modelListButton = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Elenca modelli');
+        modelListButton.type = 'button';
+        modelListButton.id = 'acBtnAiModels';
+        aiActions.appendChild(modelListButton);
+        cloudBlock.appendChild(aiActions);
         var cloudTests = el('div', 'ac-row');
         var tmdbTest = el('button', 'ac-btn ac-btn-sm', 'Verifica TMDB');
         tmdbTest.type = 'button';
         tmdbTest.setAttribute('data-ac-test', 'tmdb');
-        var ollamaTest = el('button', 'ac-btn ac-btn-sm', 'Verifica Ollama');
-        ollamaTest.type = 'button';
-        ollamaTest.setAttribute('data-ac-test', 'ollama');
+        var aiTest = el('button', 'ac-btn ac-btn-sm', 'Verifica AI');
+        aiTest.type = 'button';
+        aiTest.setAttribute('data-ac-test', 'ai');
         cloudTests.appendChild(tmdbTest);
-        cloudTests.appendChild(ollamaTest);
+        cloudTests.appendChild(aiTest);
         cloudBlock.appendChild(cloudTests);
         var tmdbResult = el('div', 'ac-state');
         tmdbResult.id = 'acInlineResult_tmdb';
-        var ollamaResult = el('div', 'ac-state');
-        ollamaResult.id = 'acInlineResult_ollama';
+        var aiResult = el('div', 'ac-state');
+        aiResult.id = 'acInlineResult_ai';
         cloudBlock.appendChild(tmdbResult);
-        cloudBlock.appendChild(ollamaResult);
+        cloudBlock.appendChild(aiResult);
         sourceGrid.appendChild(cloudBlock);
         sources.body.appendChild(sourceGrid);
 
@@ -605,22 +662,16 @@
         panel.appendChild(sources.card);
 
         var advanced = makeDetails(
-            'Parametri avanzati cloud e cache',
-            'I valori predefiniti sono ottimizzati per Ollama Cloud e per un NAS senza accelerazione GPU.'
+            'Parametri avanzati e cache',
+            'Modificali solo se il servizio scelto si comporta in modo diverso dal previsto.'
         );
-        advanced.body.appendChild(makeField(
-            'acOllamaCloudEndpoint',
-            'Endpoint Ollama Cloud',
-            'url',
-            'Endpoint chat ufficiale. Non inserire endpoint locali per questo profilo cloud-only.',
-            { placeholder: 'https://ollama.com/api/chat' }
-        ));
         var advancedGrid = el('div', 'ac-grid-2');
         advancedGrid.appendChild(makeField(
             'acEpisodeTranslationTimeoutSec',
             'Timeout richiesta',
             'number',
-            'Secondi per una singola chiamata.',
+            'Secondi concessi a una singola chiamata. È un tetto, non un’attesa: una risposta rapida '
+            + 'non ci arriva vicino. Troppo basso taglia le traduzioni lente a metà.',
             { min: '5', max: '120' }
         ));
         advancedGrid.appendChild(makeField(
@@ -748,6 +799,301 @@
         panel.appendChild(advanced.details);
     }
 
+    /* ===== library audit ===== */
+
+    /* Tone per cause, so the colour says how much the user can do about it: red is a real
+       failure, amber is one click away, grey is a gap in the source. */
+    var AUDIT_TONE = {
+        Ok: 'success',
+        PendingRefresh: 'warn',
+        TitleNotPublished: 'neutral',
+        CardHasNoTitles: 'neutral',
+        CatalogNotCached: 'neutral',
+        NotIdentified: 'danger',
+        NumberingCollision: 'danger',
+        NotMatched: 'danger',
+        CardNotResolved: 'danger',
+        RowVanished: 'danger'
+    };
+
+    var AUDIT_SHORT = {
+        Ok: 'Completa',
+        PendingRefresh: 'Basta un ricontrollo',
+        TitleNotPublished: 'Titolo non pubblicato',
+        CardHasNoTitles: 'Scheda senza titoli',
+        CatalogNotCached: 'Da analizzare',
+        NotIdentified: 'Non identificata',
+        NumberingCollision: 'Numerazione ripetuta',
+        NotMatched: 'Nessun abbinamento',
+        CardNotResolved: 'Scheda di stagione da indicare',
+        RowVanished: 'Riga scomparsa'
+    };
+
+    function auditTone(reason) {
+        return AUDIT_TONE[reason] || 'neutral';
+    }
+
+    function auditShort(reason) {
+        return AUDIT_SHORT[reason] || reason || 'Sconosciuto';
+    }
+
+    function buildLibreriaPanel() {
+        var panel = page.querySelector('#acPanelLibreria');
+        clear(panel);
+
+        var audit = makeCard(
+            'Diagnosi',
+            'Perché mancano i titoli',
+            'Legge soltanto le schede già in cache, quindi l’analisi non produce richieste ad AnimeClick. '
+            + 'Per ogni serie indica la causa: un titolo assente perché la scheda non lo pubblica non si risolve '
+            + 'come uno che manca perché l’abbinamento è fallito.'
+        );
+        var auditActions = el('div', 'ac-row');
+        var auditButton = el('button', 'ac-btn ac-btn-primary', 'Analizza la libreria');
+        auditButton.type = 'button';
+        auditButton.id = 'acBtnAudit';
+        auditActions.appendChild(auditButton);
+        var auditState = el('span', 'ac-state');
+        auditState.id = 'acAuditState';
+        auditActions.appendChild(auditState);
+        audit.body.appendChild(auditActions);
+
+        var summary = el('div', 'ac-priority-grid');
+        summary.id = 'acAuditSummary';
+        summary.style.display = 'none';
+        audit.body.appendChild(summary);
+
+        var totals = el('div', 'ac-row');
+        totals.id = 'acAuditTotals';
+        audit.body.appendChild(totals);
+
+        var list = el('div', 'ac-library-list');
+        list.id = 'acAuditList';
+        audit.body.appendChild(list);
+        panel.appendChild(audit.card);
+
+        var recheck = makeCard(
+            'Manutenzione',
+            'Ricontrollo dei titoli',
+            'Rilegge la scheda per gli episodi già abbinati che hanno ancora un titolo segnaposto. '
+            + 'È la stessa attività pianificata che gira ogni sette giorni: serve alle serie in corso, '
+            + 'dove la riga esiste dal giorno della trasmissione ma il titolo italiano arriva dopo.'
+        );
+        var recheckActions = el('div', 'ac-row');
+        var recheckButton = el('button', 'ac-btn ac-btn-primary', 'Esegui ora il ricontrollo');
+        recheckButton.type = 'button';
+        recheckButton.id = 'acBtnRunTitles';
+        recheckActions.appendChild(recheckButton);
+        var recheckState = el('span', 'ac-state');
+        recheckState.id = 'acRunTitlesState';
+        recheckActions.appendChild(recheckState);
+        recheck.body.appendChild(recheckActions);
+        panel.appendChild(recheck.card);
+
+        panel.appendChild(makeCallout(
+            'Una stagione senza titoli italiani',
+            'AnimeClick pubblica quasi ogni franchise come una scheda per cour, e la catena dei sequel non sempre è '
+            + 'dimostrabile. Quando l’analisi segnala «Nessun abbinamento», apri la stagione in Jellyfin e scrivi l’ID '
+            + 'AnimeClick di quel cour nel campo AnimeClick della stagione: l’ID di stagione ha la precedenza su '
+            + 'quello della serie per il riconoscimento degli episodi, mentre le sinossi continuano a seguire la serie.',
+            'warn'
+        ));
+    }
+
+    function auditSeasonChips(item) {
+        var seasons = asArray(valueOf(item, 'seasons'));
+        if (!seasons.length) return null;
+        var row = el('div', 'ac-row');
+        seasons.forEach(function (season) {
+            var number = valueOf(season, 'seasonNumber');
+            var label = (number == null ? 'Speciali' : 'S' + number)
+                + ' · ' + valueOf(season, 'missingTitleCount');
+            var chip = el('span', 'ac-badge ' + auditTone(valueOf(season, 'reason')), label);
+            var hint = valueOf(season, 'reasonLabel') || '';
+            var card = valueOf(season, 'animeClickId');
+            var rows = valueOf(season, 'cardRowCount');
+            if (card) {
+                hint += '\nScheda usata: ' + card
+                    + (valueOf(season, 'cardIsResolved') ? ' (risolta per questa stagione)' : ' (scheda della serie)')
+                    + (rows != null ? ' · ' + rows + ' righe' : '');
+            }
+            chip.title = hint;
+            row.appendChild(chip);
+        });
+        return row;
+    }
+
+    function renderAuditSeries(item) {
+        var card = el('div', 'ac-library-card');
+        var heading = el('div', 'ac-library-heading');
+        var year = valueOf(item, 'year');
+        heading.appendChild(el('strong', null, valueOf(item, 'name') + (year ? ' (' + year + ')' : '')));
+        var reason = valueOf(item, 'reason');
+        heading.appendChild(el('span', 'ac-badge ' + auditTone(reason), auditShort(reason)));
+        card.appendChild(heading);
+
+        var missing = valueOf(item, 'missingTitleCount') || 0;
+        var total = valueOf(item, 'episodeCount') || 0;
+        var counts = missing
+            ? missing + ' episodi senza titolo su ' + total
+            : total + ' episodi, tutti con titolo';
+        var animeClickId = valueOf(item, 'animeClickId');
+        if (animeClickId) counts += ' · scheda ' + animeClickId;
+        var rows = valueOf(item, 'cardRowCount');
+        if (rows) counts += ' · ' + rows + ' righe lette dalle schede';
+        card.appendChild(el('div', 'ac-field-desc', counts));
+        card.appendChild(el('div', 'ac-note', valueOf(item, 'reasonLabel') || ''));
+
+        var chips = auditSeasonChips(item);
+        if (chips) card.appendChild(chips);
+
+        var actions = el('div', 'ac-row');
+        if (animeClickId) {
+            var analyze = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Analizza');
+            analyze.type = 'button';
+            analyze.title = 'Rilegge la scheda da AnimeClick e ricalcola la causa per questa serie.';
+            analyze.addEventListener('click', function () {
+                setBusy(analyze, true, 'Analizza', 'Lettura…');
+                request('POST', 'Plugins/AnimeClick/LibraryAuditSeries', { itemId: valueOf(item, 'id') })
+                    .then(function (fresh) {
+                        card.parentNode.replaceChild(renderAuditSeries(fresh), card);
+                    })
+                    .catch(function (error) {
+                        setBusy(analyze, false, 'Analizza', 'Lettura…');
+                        toast(truncate(error.message, 240), 'error');
+                    });
+            });
+            actions.appendChild(analyze);
+
+            var purge = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Svuota cache');
+            purge.type = 'button';
+            purge.title = 'Invalida le schede memorizzate per questa serie, così il prossimo refresh le rilegge.';
+            purge.addEventListener('click', function () {
+                setBusy(purge, true, 'Svuota cache', 'Svuotamento…');
+                request('POST', 'Plugins/AnimeClick/ClearCache', { animeClickId: animeClickId })
+                    .then(function (response) {
+                        toast('Cache svuotata · ' + (valueOf(response, 'removed') || 0) + ' elementi', 'success');
+                    })
+                    .catch(function (error) {
+                        toast(truncate(error.message, 240), 'error');
+                    })
+                    .finally(function () {
+                        setBusy(purge, false, 'Svuota cache', 'Svuotamento…');
+                    });
+            });
+            actions.appendChild(purge);
+        } else {
+            var identify = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Identifica in Strumenti');
+            identify.type = 'button';
+            identify.addEventListener('click', function () {
+                val('acItemId').value = valueOf(item, 'id');
+                val('acAnimeClickId').value = '';
+                activateTab(page.querySelector('#acTabStrumenti'), true);
+                toast('ID elemento compilato: cerca l’ID AnimeClick e conferma.', 'success');
+            });
+            actions.appendChild(identify);
+        }
+
+        card.appendChild(actions);
+        return card;
+    }
+
+    function renderAudit(report) {
+        var summary = page.querySelector('#acAuditSummary');
+        var totals = page.querySelector('#acAuditTotals');
+        var list = page.querySelector('#acAuditList');
+        clear(summary);
+        clear(totals);
+        clear(list);
+
+        var series = asArray(valueOf(report, 'series'));
+        var missing = valueOf(report, 'missingTitleCount') || 0;
+        var episodes = valueOf(report, 'episodeCount') || 0;
+        var complete = series.filter(function (item) {
+            return !(valueOf(item, 'missingTitleCount') || 0);
+        });
+
+        summary.style.display = '';
+        addPriorityTile(
+            summary,
+            'Serie',
+            String(series.length),
+            complete.length + ' complete, ' + (series.length - complete.length) + ' con episodi da sistemare',
+            series.length === complete.length ? 'good' : 'neutral'
+        );
+        addPriorityTile(
+            summary,
+            'Episodi senza titolo',
+            String(missing),
+            episodes ? 'su ' + episodes + ' episodi analizzati' : 'nessun episodio analizzato',
+            missing ? 'warn' : 'good'
+        );
+        var actionable = 0;
+        asArray(valueOf(report, 'totals')).forEach(function (entry) {
+            var reason = valueOf(entry, 'reason');
+            if (reason === 'PendingRefresh' || reason === 'RowVanished') {
+                actionable += valueOf(entry, 'episodeCount') || 0;
+            }
+        });
+        addPriorityTile(
+            summary,
+            'Recuperabili subito',
+            String(actionable),
+            actionable ? 'il titolo esiste già su AnimeClick: usa «Esegui ora il ricontrollo»' : 'niente da recuperare con un ricontrollo',
+            actionable ? 'warn' : 'good'
+        );
+
+        asArray(valueOf(report, 'totals')).forEach(function (entry) {
+            var reason = valueOf(entry, 'reason');
+            if (reason === 'Ok') return;
+            var badge = el(
+                'span',
+                'ac-badge ' + auditTone(reason),
+                auditShort(reason) + ' · ' + valueOf(entry, 'seriesCount') + ' serie'
+            );
+            badge.title = valueOf(entry, 'episodeCount') + ' episodi';
+            totals.appendChild(badge);
+        });
+
+        if (!valueOf(report, 'episodeTitlesEnabled')) {
+            list.appendChild(makeCallout(
+                'Titoli episodio disattivati',
+                'Nella scheda Metadati l’opzione dei titoli episodio è spenta: finché resta così nessun titolo viene scritto.',
+                'warn'
+            ));
+        }
+
+        if (!series.length) {
+            list.appendChild(el('div', 'ac-empty', 'Nessuna serie usa AnimeClick come provider di metadati.'));
+            return;
+        }
+
+        var problems = series.filter(function (item) {
+            return (valueOf(item, 'missingTitleCount') || 0) > 0;
+        });
+        problems.forEach(function (item) {
+            list.appendChild(renderAuditSeries(item));
+        });
+
+        if (!problems.length) {
+            list.appendChild(el('div', 'ac-empty', 'Tutte le serie hanno i titoli completi.'));
+        }
+
+        if (complete.length) {
+            var done = makeDetails('Serie complete (' + complete.length + ')', null);
+            var doneList = el('div', 'ac-library-list');
+            complete.forEach(function (item) {
+                var row = el('div', 'ac-library-type');
+                var year = valueOf(item, 'year');
+                row.appendChild(el('span', 'ac-library-type-name', valueOf(item, 'name') + (year ? ' (' + year + ')' : '')));
+                row.appendChild(el('span', 'ac-badge success', (valueOf(item, 'episodeCount') || 0) + ' episodi'));
+                doneList.appendChild(row);
+            });
+            done.body.appendChild(doneList);
+            list.appendChild(done.details);
+        }
+    }
+
     /* ===== configuration mapping ===== */
 
     function setChecked(id, value, fallback) {
@@ -760,10 +1106,28 @@
         input.value = value == null || value === '' ? fallback : value;
     }
 
-    function normalizeOllamaEndpoint(value) {
+    /* Mirrors the server rule: TLS for anything public, plain HTTP only towards the user's own
+       network, which is how a service running in the house is reached. */
+    function isPrivateAiHost(host) {
+        if (host === 'localhost' || host === '::1' || host === '[::1]') return true;
+        var octets = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+        if (octets) {
+            var a = parseInt(octets[1], 10);
+            var b = parseInt(octets[2], 10);
+            return a === 10 || a === 127 || (a === 169 && b === 254)
+                || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+        }
+        return host.indexOf('.') === -1
+            || /\.(local|lan|internal)$/i.test(host)
+            || /\.home\.arpa$/i.test(host);
+    }
+
+    function normalizeAiEndpoint(value) {
         try {
             var endpoint = new URL(String(value || '').trim());
-            if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+            var schemeAllowed = endpoint.protocol === 'https:'
+                || (endpoint.protocol === 'http:' && isPrivateAiHost(endpoint.hostname));
+            if (!schemeAllowed || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
                 return null;
             }
             return endpoint.href;
@@ -772,15 +1136,77 @@
         }
     }
 
-    function ollamaEndpointChanged() {
-        var current = normalizeOllamaEndpoint(val('acOllamaCloudEndpoint').value);
-        var stored = normalizeOllamaEndpoint(savedConfig && savedConfig.OllamaCloudEndpoint);
+    function aiEndpointIsLocal() {
+        try {
+            return new URL(val('acAiEndpoint').value.trim()).protocol === 'http:';
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function aiEndpointChanged() {
+        var current = normalizeAiEndpoint(val('acAiEndpoint').value);
+        var stored = normalizeAiEndpoint(savedConfig && savedConfig.AiEndpoint);
         return current == null || stored == null || current !== stored;
     }
 
-    function ollamaCredentialAvailable() {
-        return !!val('acOllamaCloudApiKey').value.trim()
-            || (!ollamaEndpointChanged() && !!(savedConfig && savedConfig.OllamaCloudApiKey));
+    function aiCredentialAvailable() {
+        return !!val('acAiApiKey').value.trim()
+            || (!aiEndpointChanged() && !!(savedConfig && savedConfig.AiApiKey));
+    }
+
+    /* The selectable services come from the server, so this list never drifts from the one the
+       translator actually knows how to speak to. */
+    function loadAiProviders() {
+        return request('GET', 'Plugins/AnimeClick/AiProviders').then(function (list) {
+            aiProviders = asArray(list);
+            var select = val('acAiProvider');
+            if (!select) return;
+            var chosen = (savedConfig && savedConfig.AiProvider) || '';
+            clear(select);
+            aiProviders.forEach(function (provider) {
+                var option = el('option', null, valueOf(provider, 'displayName'));
+                option.value = valueOf(provider, 'id');
+                select.appendChild(option);
+            });
+            if (chosen) select.value = chosen;
+            updateAiProviderHint();
+        }).catch(function () {
+            // Without the list the saved profile still works; only the menu is unavailable.
+        });
+    }
+
+    function currentAiProvider() {
+        var id = val('acAiProvider') ? val('acAiProvider').value : '';
+        for (var i = 0; i < aiProviders.length; i++) {
+            if (valueOf(aiProviders[i], 'id') === id) return aiProviders[i];
+        }
+        return null;
+    }
+
+    function updateAiProviderHint() {
+        var note = page.querySelector('#acAiProviderNote');
+        var provider = currentAiProvider();
+        if (!note) return;
+        if (!provider) {
+            note.innerHTML = '';
+            return;
+        }
+
+        var text = esc(valueOf(provider, 'note') || '');
+        var credentialUrl = valueOf(provider, 'credentialUrl');
+        if (credentialUrl) {
+            text += ' <a href="' + esc(credentialUrl) + '" target="_blank" rel="noopener noreferrer">'
+                + (valueOf(provider, 'requiresApiKey') ? 'Crea la chiave' : 'Documentazione') + '</a>.';
+        }
+        note.innerHTML = text;
+
+        var keyInput = val('acAiApiKey');
+        if (keyInput) {
+            keyInput.placeholder = valueOf(provider, 'requiresApiKey')
+                ? 'Inserisci la chiave del servizio'
+                : 'Non serve per un servizio in casa';
+        }
     }
 
     function loadForm(config) {
@@ -807,14 +1233,15 @@
         setChecked('acEnableTvdbSynopsis', config.EnableTvdbSynopsis, false);
         setValue('acTvdbApiKey', config.TvdbApiKey, '');
         setValue('acTmdbApiKey', config.TmdbApiKey, '');
-        var ollamaKeyInput = val('acOllamaCloudApiKey');
-        ollamaKeyInput.value = '';
-        ollamaKeyInput.placeholder = config.OllamaCloudApiKey
+        var aiKeyInput = val('acAiApiKey');
+        aiKeyInput.value = '';
+        aiKeyInput.placeholder = config.AiApiKey
             ? 'Chiave salvata — lascia vuoto per mantenerla'
-            : 'Inserisci la chiave Ollama Cloud';
-        setValue('acOllamaCloudEndpoint', config.OllamaCloudEndpoint, 'https://ollama.com/api/chat');
-        setValue('acOllamaCloudModel', config.OllamaCloudModel, 'gpt-oss:20b-cloud');
-        setValue('acEpisodeTranslationTimeoutSec', config.EpisodeTranslationTimeoutSec, 30);
+            : 'Inserisci la chiave del servizio AI';
+        setValue('acAiEndpoint', config.AiEndpoint, '');
+        setValue('acAiModel', config.AiModel, '');
+        if (val('acAiProvider') && config.AiProvider) val('acAiProvider').value = config.AiProvider;
+        setValue('acEpisodeTranslationTimeoutSec', config.EpisodeTranslationTimeoutSec, 90);
         setValue('acTranslationCacheHours', config.TranslationCacheHours, 87600);
 
         setValue('acMaxSearchResults', config.MaxSearchResults, 10);
@@ -852,24 +1279,35 @@
         config.EnableTvdbSynopsis = val('acEnableTvdbSynopsis').checked;
         config.TvdbApiKey = val('acTvdbApiKey').value.trim();
         config.TmdbApiKey = val('acTmdbApiKey').value.trim();
-        var enteredOllamaKey = val('acOllamaCloudApiKey').value.trim();
-        var enteredOllamaEndpoint = val('acOllamaCloudEndpoint').value.trim()
-            || 'https://ollama.com/api/chat';
-        var normalizedOllamaEndpoint = normalizeOllamaEndpoint(enteredOllamaEndpoint);
-        var freshOllamaEndpoint = normalizeOllamaEndpoint(config.OllamaCloudEndpoint);
-        if (normalizedOllamaEndpoint == null) {
-            throw new Error('L’endpoint Ollama deve essere HTTPS e non può includere credenziali, query o frammenti.');
+
+        config.AiProvider = val('acAiProvider') ? val('acAiProvider').value : '';
+        config.AiModel = val('acAiModel').value.trim();
+        var enteredAiKey = val('acAiApiKey').value.trim();
+        var enteredAiEndpoint = val('acAiEndpoint').value.trim();
+        if (enteredAiEndpoint) {
+            var normalizedAiEndpoint = normalizeAiEndpoint(enteredAiEndpoint);
+            if (normalizedAiEndpoint == null) {
+                throw new Error('L’endpoint AI deve essere HTTPS (o HTTP verso un indirizzo della tua '
+                    + 'rete) e non può includere credenziali, query o frammenti.');
+            }
+
+            var freshAiEndpoint = normalizeAiEndpoint(config.AiEndpoint);
+            if (!enteredAiKey && freshAiEndpoint != null && normalizedAiEndpoint !== freshAiEndpoint) {
+                // The configuration may have changed in another admin tab after this
+                // page loaded. Never pair its newly persisted key with our stale URL.
+                throw new Error('Il profilo AI è cambiato sul server: ricarica la pagina o reinserisci la chiave.');
+            }
+
+            config.AiEndpoint = normalizedAiEndpoint;
+        } else {
+            config.AiEndpoint = '';
         }
-        if (enteredOllamaKey) {
-            config.OllamaCloudApiKey = enteredOllamaKey;
-        } else if (freshOllamaEndpoint == null || normalizedOllamaEndpoint !== freshOllamaEndpoint) {
-            // The configuration may have changed in another admin tab after this
-            // page loaded. Never pair its newly persisted key with our stale URL.
-            throw new Error('Il profilo Ollama è cambiato sul server: ricarica la pagina o reinserisci la chiave.');
+
+        if (enteredAiKey) {
+            config.AiApiKey = enteredAiKey;
         }
-        config.OllamaCloudEndpoint = normalizedOllamaEndpoint;
-        config.OllamaCloudModel = val('acOllamaCloudModel').value.trim() || 'gpt-oss:20b-cloud';
-        config.EpisodeTranslationTimeoutSec = parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 30;
+
+        config.EpisodeTranslationTimeoutSec = parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 90;
         config.TranslationCacheHours = parseInt(val('acTranslationCacheHours').value, 10) || 87600;
 
         config.MaxSearchResults = parseInt(val('acMaxSearchResults').value, 10) || 10;
@@ -882,20 +1320,21 @@
     }
 
     function validateForm() {
-        var enteredEndpoint = val('acOllamaCloudEndpoint').value.trim()
-            || 'https://ollama.com/api/chat';
-        if (normalizeOllamaEndpoint(enteredEndpoint) == null) {
-            return 'L’endpoint Ollama deve essere HTTPS e non può includere credenziali, query o frammenti.';
+        var enteredEndpoint = val('acAiEndpoint').value.trim();
+        if (enteredEndpoint && normalizeAiEndpoint(enteredEndpoint) == null) {
+            return 'L’endpoint AI deve essere HTTPS (o HTTP verso un indirizzo della tua rete) '
+                + 'e non può includere credenziali, query o frammenti.';
         }
 
-        var ollamaKey = val('acOllamaCloudApiKey').value.trim();
-        if (ollamaEndpointChanged() && !ollamaKey) {
-            return 'Reinserisci la chiave Ollama dopo aver cambiato endpoint.';
+        // A service in the house authenticates nothing, so the credential rules do not apply to it.
+        if (aiEndpointIsLocal()) {
+            return null;
         }
 
-        var model = val('acOllamaCloudModel').value.trim();
-        if (ollamaCredentialAvailable() && !/cloud$/i.test(model)) {
-            return 'Il profilo cloud-only richiede un modello con tag cloud.';
+        var provider = currentAiProvider();
+        if (provider && valueOf(provider, 'requiresApiKey')
+            && aiEndpointChanged() && !val('acAiApiKey').value.trim()) {
+            return 'Reinserisci la chiave del servizio AI dopo aver cambiato endpoint.';
         }
 
         return null;
@@ -936,7 +1375,7 @@
     function updateHeroStats(config) {
         var providerStat = page.querySelector('#acStatProviders');
         if (providerStat) {
-            var count = [config.TmdbApiKey, config.OllamaCloudApiKey, config.TvdbApiKey].filter(Boolean).length;
+            var count = [config.TmdbApiKey, config.AiApiKey, config.TvdbApiKey].filter(Boolean).length;
             providerStat.querySelector('.ac-stat-value').textContent = count + '/3';
             providerStat.querySelector('.ac-stat-sub').textContent = 'fallback configurati';
             providerStat.className = 'ac-stat ' + (count === 3 ? 'good' : count > 0 ? 'warn' : '');
@@ -988,7 +1427,7 @@
         if (!page || !val('acTmdbApiKey')) return;
         var present = {
             tmdb: !!val('acTmdbApiKey').value.trim(),
-            ollama: ollamaCredentialAvailable(),
+            ai: aiCredentialAvailable(),
             tvdb: !!val('acTvdbApiKey').value.trim()
         };
         Object.keys(present).forEach(function (provider) {
@@ -1105,13 +1544,14 @@
         }
 
         var payload = {
-            model: val('acOllamaCloudModel').value.trim() || 'gpt-oss:20b-cloud',
-            timeoutSec: parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 30
+            provider: val('acAiProvider') ? val('acAiProvider').value : '',
+            model: val('acAiModel').value.trim(),
+            timeoutSec: parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 90
         };
-        var enteredApiKey = val('acOllamaCloudApiKey').value.trim();
-        if (ollamaEndpointChanged() || enteredApiKey) {
-            var visibleEndpoint = val('acOllamaCloudEndpoint').value.trim();
-            payload.endpoint = normalizeOllamaEndpoint(visibleEndpoint) || visibleEndpoint;
+        var enteredApiKey = val('acAiApiKey').value.trim();
+        var visibleEndpoint = val('acAiEndpoint').value.trim();
+        if (visibleEndpoint && (aiEndpointChanged() || enteredApiKey)) {
+            payload.endpoint = normalizeAiEndpoint(visibleEndpoint) || visibleEndpoint;
         }
         if (enteredApiKey) {
             payload.apiKey = enteredApiKey;
@@ -1131,14 +1571,15 @@
             return 'Autenticazione e endpoint episodi validi' +
                 (valueOf(result, 'effectiveLanguage') ? ' · lingua ' + valueOf(result, 'effectiveLanguage') : '');
         }
-        return 'Ollama Cloud raggiungibile' + (status ? ' · HTTP ' + status : '') +
-            ' · modello ' + (valueOf(result, 'model') || val('acOllamaCloudModel').value.trim());
+        var providerName = currentAiProvider() ? valueOf(currentAiProvider(), 'displayName') : 'Servizio AI';
+        return providerName + ' raggiungibile' + (status ? ' · HTTP ' + status : '') +
+            ' · modello ' + (valueOf(result, 'model') || val('acAiModel').value.trim());
     }
 
     function runProviderTest(provider, button) {
         var endpoints = {
             tmdb: 'Plugins/AnimeClick/TestTmdb',
-            ollama: 'Plugins/AnimeClick/TestOllama',
+            ai: 'Plugins/AnimeClick/TestAi',
             tvdb: 'Plugins/AnimeClick/TestTvdb'
         };
         var inline = page.querySelector('#acInlineResult_' + provider);
@@ -1179,7 +1620,7 @@
         clear(host);
         var success = !!valueOf(result, 'success');
         if (!success) {
-            host.appendChild(makeCallout('Nessuna traduzione', valueOf(result, 'errorMessage') || 'Esegui prima il test Ollama.', 'warn'));
+            host.appendChild(makeCallout('Nessuna traduzione', valueOf(result, 'errorMessage') || 'Esegui prima «Verifica AI».', 'warn'));
             return;
         }
         var meta = el('div', 'ac-row');
@@ -1200,7 +1641,7 @@
             var meta = el('div', 'ac-row');
             meta.appendChild(el('span', 'ac-badge success', valueOf(result, 'source') || 'Fonte'));
             meta.appendChild(el('span', 'ac-badge neutral', valueOf(result, 'sourceLanguage') || 'it'));
-            if (valueOf(result, 'usedOllama')) meta.appendChild(el('span', 'ac-badge warn', valueOf(result, 'model') || 'Ollama Cloud'));
+            if (valueOf(result, 'usedAi')) meta.appendChild(el('span', 'ac-badge warn', valueOf(result, 'model') || 'AI'));
             host.appendChild(meta);
             host.appendChild(el('p', 'ac-preview-copy', valueOf(result, 'overview')));
         }
@@ -1278,10 +1719,47 @@
             });
         });
 
-        page.querySelector('#acBtnRecommendedModel').addEventListener('click', function () {
-            val('acOllamaCloudModel').value = 'gpt-oss:20b-cloud';
+        page.querySelector('#acAiProvider').addEventListener('change', function () {
+            // Choosing a service fills in its own endpoint and clears the model, because a model
+            // name from one vendor means nothing to another.
+            var provider = currentAiProvider();
+            if (provider) {
+                val('acAiEndpoint').value = valueOf(provider, 'chatEndpoint') || '';
+                val('acAiModel').value = '';
+                clear(page.querySelector('#acAiModelList'));
+            }
+            updateAiProviderHint();
             markDirty();
-            toast('Modello consigliato ripristinato', 'success');
+        });
+
+        page.querySelector('#acBtnAiModels').addEventListener('click', function () {
+            var button = this;
+            var inline = page.querySelector('#acInlineResult_ai');
+            setBusy(button, true, 'Elenca modelli', 'Lettura…');
+            inline.className = 'ac-state';
+            inline.textContent = 'Richiesta dell’elenco dei modelli…';
+            request('POST', 'Plugins/AnimeClick/AiModels', providerPayload('ai')).then(function (result) {
+                var models = asArray(valueOf(result, 'models'));
+                var list = page.querySelector('#acAiModelList');
+                clear(list);
+                models.forEach(function (model) {
+                    var option = document.createElement('option');
+                    option.value = model;
+                    list.appendChild(option);
+                });
+                if (models.length) {
+                    inline.className = 'ac-state success';
+                    inline.textContent = models.length + ' modelli disponibili: scrivi nel campo Modello per filtrarli.';
+                } else {
+                    inline.className = 'ac-state error';
+                    inline.textContent = truncate(valueOf(result, 'errorMessage') || 'Nessun modello elencato.', 240);
+                }
+            }).catch(function (error) {
+                inline.className = 'ac-state error';
+                inline.textContent = truncate(error.message, 240);
+            }).finally(function () {
+                setBusy(button, false, 'Elenca modelli', 'Lettura…');
+            });
         });
 
         page.querySelector('#acBtnRefreshLibraries').addEventListener('click', loadLibraryHealth);
@@ -1294,7 +1772,7 @@
             }
             var button = this;
             setBusy(button, true, 'Genera anteprima', 'Traduzione…');
-            var payload = providerPayload('ollama');
+            var payload = providerPayload('ai');
             payload.sourceText = source;
             request('POST', 'Plugins/AnimeClick/PreviewTranslation', payload).then(function (result) {
                 renderTranslationPreview(result);
@@ -1327,6 +1805,45 @@
                 renderFallbackPreview({ success: false, errorMessage: truncate(error.message, 300), chain: [] });
             }).finally(function () {
                 setBusy(button, false, 'Esegui catena salvata', 'Analisi…');
+            });
+        });
+
+        page.querySelector('#acBtnAudit').addEventListener('click', function () {
+            var button = this;
+            var state = page.querySelector('#acAuditState');
+            setBusy(button, true, 'Analizza la libreria', 'Analisi…');
+            state.className = 'ac-state';
+            state.textContent = 'Lettura della libreria e delle schede in cache…';
+            request('GET', 'Plugins/AnimeClick/LibraryAudit').then(function (report) {
+                renderAudit(report);
+                var missing = valueOf(report, 'missingTitleCount') || 0;
+                state.className = 'ac-state success';
+                state.textContent = (valueOf(report, 'seriesCount') || 0) + ' serie analizzate · '
+                    + (missing ? missing + ' episodi senza titolo' : 'nessun titolo mancante');
+            }).catch(function (error) {
+                state.className = 'ac-state error';
+                state.textContent = truncate(error.message, 240);
+                toast('Analisi fallita', 'error');
+            }).finally(function () {
+                setBusy(button, false, 'Analizza la libreria', 'Analisi…');
+            });
+        });
+
+        page.querySelector('#acBtnRunTitles').addEventListener('click', function () {
+            var button = this;
+            var state = page.querySelector('#acRunTitlesState');
+            setBusy(button, true, 'Esegui ora il ricontrollo', 'Avvio…');
+            state.className = 'ac-state';
+            state.textContent = 'Accodamento…';
+            request('POST', 'Plugins/AnimeClick/RunMissingTitlesTask').then(function (response) {
+                state.className = 'ac-state success';
+                state.textContent = valueOf(response, 'message') || 'Ricontrollo accodato.';
+                toast('Ricontrollo dei titoli avviato', 'success');
+            }).catch(function (error) {
+                state.className = 'ac-state error';
+                state.textContent = truncate(error.message, 240);
+            }).finally(function () {
+                setBusy(button, false, 'Esegui ora il ricontrollo', 'Avvio…');
             });
         });
 
@@ -1395,6 +1912,7 @@
         buildOverviewPanel();
         buildMetadatiPanel();
         buildSinossiPanel();
+        buildLibreriaPanel();
         buildStrumentiPanel();
         initTabs();
         wireActions();
@@ -1409,6 +1927,7 @@
 
         getPluginConfig().then(function (config) {
             loadForm(config);
+            loadAiProviders();
             loadLibraryHealth();
         }).catch(function (error) {
             toast('Impossibile caricare la configurazione: ' + truncate(error.message, 240), 'error');

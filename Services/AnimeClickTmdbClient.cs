@@ -15,7 +15,7 @@ namespace AnimeClick.Plugin.Services;
 /// Minimal TMDB v3 client used to fetch English episode overviews for the
 /// optional EN→IT synopsis translation feature. AnimeClick publishes no
 /// per-episode synopsis and AniList has no Episode.description, so TMDB is the
-/// source of the English text that <see cref="AnimeClickOllamaTranslator"/>
+/// source of the English text that <see cref="AnimeClickAiTranslator"/>
 /// then translates to Italian.
 ///
 /// All methods are best-effort: they return null on any failure (network,

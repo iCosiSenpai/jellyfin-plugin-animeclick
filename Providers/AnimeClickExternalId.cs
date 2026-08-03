@@ -33,3 +33,22 @@ public class AnimeClickMovieExternalId : IExternalId
     public string UrlFormatString => "https://www.animeclick.it/anime/{0}";
     public bool Supports(IHasProviderIds item) => item is Movie;
 }
+
+/// <summary>
+/// Registers the AnimeClick external ID for Seasons, so the field is editable on a season.
+/// <para>
+/// AnimeClick publishes most franchises as one card per cour, and the sequel traversal can only
+/// follow a chain it can prove: for "Clannad After Story" or "Kaguya-sama 2" the relation exists
+/// but the safety filters or the ambiguity rule stop it. Writing the right card on the season is
+/// the manual way out, and the episode provider now prefers a season identity over the series
+/// one — but without this registration the field never appears in the interface.
+/// </para>
+/// </summary>
+public class AnimeClickSeasonExternalId : IExternalId
+{
+    public string ProviderName => "AnimeClick";
+    public string Key => "AnimeClick";
+    public ExternalIdMediaType? Type => ExternalIdMediaType.Season;
+    public string UrlFormatString => "https://www.animeclick.it/anime/{0}";
+    public bool Supports(IHasProviderIds item) => item is Season;
+}

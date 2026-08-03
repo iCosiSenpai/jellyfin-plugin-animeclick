@@ -12,7 +12,7 @@ namespace AnimeClick.Plugin.Services;
 /// <summary>
 /// Runs cloud translations outside Jellyfin's metadata request path. Jobs are
 /// bounded, process-wide, deduplicated by the same key used by the translation
-/// cache, and handled by one worker because Ollama Cloud allows one active model.
+/// cache, and handled by one worker because some services allow one active model at a time.
 /// </summary>
 public sealed class AnimeClickTranslationQueue : IDisposable
 {
@@ -22,7 +22,7 @@ public sealed class AnimeClickTranslationQueue : IDisposable
     private static readonly TimeSpan FastFailureBackoff = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan TimeoutBackoff = TimeSpan.FromMinutes(15);
 
-    private readonly AnimeClickOllamaTranslator _translator;
+    private readonly AnimeClickAiTranslator _translator;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickTranslationQueue> _logger;
     private readonly Channel<TranslationWorkItem> _channel;
@@ -34,7 +34,7 @@ public sealed class AnimeClickTranslationQueue : IDisposable
     private int _disposed;
 
     public AnimeClickTranslationQueue(
-        AnimeClickOllamaTranslator translator,
+        AnimeClickAiTranslator translator,
         AnimeClickCacheService cache,
         ILogger<AnimeClickTranslationQueue> logger)
     {
@@ -221,31 +221,27 @@ public sealed class AnimeClickTranslationQueue : IDisposable
         out string workKey)
     {
         workKey = string.Empty;
-        if (string.IsNullOrWhiteSpace(configuration.OllamaCloudApiKey)
-            || string.IsNullOrWhiteSpace(configuration.OllamaCloudModel)
-            || string.IsNullOrWhiteSpace(sourceText)
-            || !AnimeClickOllamaTranslator.TryNormalizeCloudEndpoint(
-                configuration.OllamaCloudEndpoint,
-                out var endpointUri))
+        if (!AnimeClickAiTranslator.IsConfigured(configuration, out var endpointUri)
+            || string.IsNullOrWhiteSpace(sourceText))
         {
             return false;
         }
 
-        var plain = AnimeClickOllamaTranslator.StripHtml(sourceText);
+        var plain = AnimeClickAiTranslator.StripHtml(sourceText);
         if (string.IsNullOrWhiteSpace(plain))
         {
             return false;
         }
 
-        workKey = AnimeClickOllamaTranslator.BuildTranslationCacheKey(
+        workKey = AnimeClickAiTranslator.BuildTranslationCacheKey(
             cacheScope,
             sourceIdentity,
             fieldName,
             sourceLanguage,
             targetLanguage,
-            configuration.OllamaCloudModel,
+            configuration.AiModel,
             endpointUri.AbsoluteUri,
-            configuration.OllamaCloudApiKey,
+            configuration.AiApiKey,
             plain);
         return true;
     }
@@ -439,9 +435,10 @@ public sealed class AnimeClickTranslationQueue : IDisposable
         => new()
         {
             EnableEpisodeSynopsisTranslation = source.EnableEpisodeSynopsisTranslation,
-            OllamaCloudApiKey = source.OllamaCloudApiKey,
-            OllamaCloudEndpoint = source.OllamaCloudEndpoint,
-            OllamaCloudModel = source.OllamaCloudModel,
+            AiProvider = source.AiProvider,
+            AiApiKey = source.AiApiKey,
+            AiEndpoint = source.AiEndpoint,
+            AiModel = source.AiModel,
             EpisodeTranslationTimeoutSec = source.EpisodeTranslationTimeoutSec,
             TranslationCacheHours = source.TranslationCacheHours,
             NegativeCacheHours = source.NegativeCacheHours

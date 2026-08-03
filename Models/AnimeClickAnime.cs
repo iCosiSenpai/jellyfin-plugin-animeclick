@@ -40,4 +40,31 @@ public class AnimeClickAnime
     public List<AnimeClickTrailer> Trailers { get; set; } = [];
     public bool MultimediaLoaded { get; set; }
     public Dictionary<string, string> ProviderIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Merges theme songs coming from a secondary page into <see cref="ThemeSongs"/>.
+    /// The sigle are published in two unrelated places — the /multimedia video list and the
+    /// /staff role sections — and either one can be the only source for a given title, so both
+    /// are read and the first entry claiming a slot (same type and number, or same type and
+    /// title) wins.
+    /// </summary>
+    public void AddThemeSongs(IEnumerable<AnimeClickThemeSong> songs)
+    {
+        foreach (var song in songs)
+        {
+            if (string.IsNullOrWhiteSpace(song.Title))
+            {
+                continue;
+            }
+
+            var alreadyKnown = ThemeSongs.Exists(existing =>
+                string.Equals(existing.Type, song.Type, StringComparison.OrdinalIgnoreCase)
+                && (existing.Number == song.Number
+                    || string.Equals(existing.Title, song.Title, StringComparison.OrdinalIgnoreCase)));
+            if (!alreadyKnown)
+            {
+                ThemeSongs.Add(song);
+            }
+        }
+    }
 }

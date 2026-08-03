@@ -29,8 +29,7 @@ public static class AnimeClickEpisodeMatcher
     {
         if (episodes.Count == 0
             || context.JellyfinEpisodeNumber < 0
-            || context.JellyfinSeasonNumber is < 0
-            || (context.JellyfinEpisodeNumber == 0 && context.JellyfinSeasonNumber is not 0))
+            || context.JellyfinSeasonNumber is < 0)
         {
             return AnimeClickEpisodeMatch.None("none", "invalid or empty episode request");
         }
@@ -81,7 +80,13 @@ public static class AnimeClickEpisodeMatcher
 
         // Specials use their own coordinate space. Regular layout overrides must never
         // turn S00E01 into global episode 1 or suppress an explicit special match.
-        if (context.JellyfinSeasonNumber == 0)
+        //
+        // Episode zero of a regular season belongs here too. The parser files any row whose
+        // printed number is not positive as a special (see ParseEpisodesPage: episodeNumber <= 0
+        // makes it one), so a prologue that the library stores as S01E00 — a real shape, from
+        // Kimi ni Todoke S02E00 to Dead Dead Demons S01E00 — can only ever be found among the
+        // special rows. It used to be rejected outright before any lookup.
+        if (context.JellyfinSeasonNumber == 0 || context.JellyfinEpisodeNumber == 0)
         {
             return MatchSpecial(ordered, context);
         }
@@ -263,9 +268,43 @@ public static class AnimeClickEpisodeMatcher
             }
         }
 
+        // A row that declares a length incompatible with the file cannot be that file, whatever
+        // the numbers say. This is what a short-form broadcast recut for streaming looks like:
+        // AnimeClick documents Saiki K. as 120 rows of 5', while the library holds the 24 Netflix
+        // episodes of 24' that were cut from them, and every positional strategy still agrees on
+        // a row — so a wrong identity used to be accepted at full confidence, taking the runtime
+        // with it. Capping instead of discarding keeps the mapping usable when the file's own
+        // title corroborates it. Multi-episode files are exempt: there one row legitimately
+        // accounts for a fraction of the runtime.
+        if (context.LibraryRuntimeMinutes is > 0 && !context.JellyfinEpisodeNumberEnd.HasValue)
+        {
+            foreach (var episode in candidates.Keys.ToList())
+            {
+                var candidate = candidates[episode];
+                if (candidate.Score > UncorroboratedScoreCap
+                    && !episode.NumberEnd.HasValue
+                    && IsRuntimeIncompatible(episode.DurationMinutes, context.LibraryRuntimeMinutes.Value))
+                {
+                    candidates[episode] = candidate with
+                    {
+                        Score = UncorroboratedScoreCap,
+                        Reason = string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"row declares {episode.DurationMinutes}' against a {context.LibraryRuntimeMinutes.Value:0.#}' file; needs corroboration")
+                    };
+                }
+            }
+        }
+
         ApplyTitleEvidence(candidates, context.JellyfinTitle);
         if (candidates.Count == 0)
         {
+            var numberedExtra = MatchNumberedExtra(ordered, context);
+            if (numberedExtra.Episode is not null)
+            {
+                return numberedExtra;
+            }
+
             var requestedGroupExists = requestedSeason.HasValue
                 && ordered.Any(episode => episode.RawSeasonNumber == requestedSeason.Value
                     || episode.SeasonNumber == requestedSeason.Value);
@@ -298,6 +337,78 @@ public static class AnimeClickEpisodeMatcher
             best.Strategy,
             Math.Min(1, best.Score / 125d),
             best.Reason);
+    }
+
+    /// <summary>
+    /// Last resort for a file numbered inside the season that the card files among its specials.
+    /// <para>
+    /// K-On!!'s table ends its regular run at 24 and then lists "Ep. 25 (extra)" and "Ep. 26
+    /// (extra)"; the library, quite reasonably, stores those two as S02E25 and S02E26 and every
+    /// regular strategy comes up empty. The number written in the label is the evidence, so this is
+    /// an exact numeric agreement rather than a positional guess — but it only applies past the end
+    /// of the regular run, because inside it a special sharing a number is a companion to that
+    /// episode (a recap of episode 5), not the episode itself.
+    /// </para>
+    /// </summary>
+    private static AnimeClickEpisodeMatch MatchNumberedExtra(
+        IReadOnlyCollection<AnimeClickEpisode> episodes,
+        AnimeClickEpisodeMatchContext context)
+    {
+        var requested = context.JellyfinEpisodeNumber;
+        if (requested <= 0)
+        {
+            return AnimeClickEpisodeMatch.None("none", "no numbered extra for a special request");
+        }
+
+        var regularHigh = episodes
+            .Where(episode => !episode.IsSpecial && episode.RawEpisodeNumber is > 0)
+            .Select(episode => episode.RawEpisodeNumber!.Value)
+            .DefaultIfEmpty(0)
+            .Max();
+        if (requested <= regularHigh)
+        {
+            return AnimeClickEpisodeMatch.None("none", "inside the regular run");
+        }
+
+        var candidates = episodes
+            .Where(episode => episode.IsSpecial
+                && !episode.NumberEnd.HasValue
+                && !episode.NumberIsAmbiguous
+                && episode.RawEpisodeNumber == requested
+
+                // Season zero is how a special declares it has no season, so it disqualifies
+                // nothing; a row that names a different season does.
+                && (episode.RawSeasonNumber is null or 0
+                    || episode.RawSeasonNumber == context.JellyfinSeasonNumber)
+                && !(context.LibraryRuntimeMinutes.HasValue
+                    && IsRuntimeIncompatible(episode.DurationMinutes, context.LibraryRuntimeMinutes.Value)))
+            .ToList();
+        return candidates.Count == 1
+            ? AnimeClickEpisodeMatch.Found(
+                candidates[0],
+                "numberedExtra",
+                0.8,
+                "special row carries the requested number past the end of the regular run")
+            : AnimeClickEpisodeMatch.None(
+                candidates.Count > 1 ? "ambiguousNumberedExtra" : "none",
+                candidates.Count > 1 ? "several extras share the number" : "no numbered extra");
+    }
+
+    /// <summary>
+    /// Two lengths are incompatible when one is at least twice the other and they differ by more
+    /// than five minutes. The factor catches recuts and split specials; the absolute floor keeps
+    /// rounding on very short rows — a 2' row against a 4' file — from meaning anything.
+    /// </summary>
+    private static bool IsRuntimeIncompatible(int? rowMinutes, double fileMinutes)
+    {
+        if (rowMinutes is not > 0 || fileMinutes <= 0)
+        {
+            return false;
+        }
+
+        var shorter = Math.Min(rowMinutes.Value, fileMinutes);
+        var longer = Math.Max(rowMinutes.Value, fileMinutes);
+        return longer >= shorter * 2 && longer - shorter > 5;
     }
 
     private static bool CanUseSeasonOrdinal(
@@ -603,6 +714,13 @@ public sealed class AnimeClickEpisodeMatchContext
     /// against the rows actually parsed to detect a table that carries more than it counts.
     /// </summary>
     public int? DeclaredEpisodeCount { get; init; }
+
+    /// <summary>
+    /// Runtime in minutes Jellyfin already knows for the file being matched, when it has one.
+    /// A row whose declared length is incompatible with it cannot be that file, however well
+    /// the numbers line up.
+    /// </summary>
+    public double? LibraryRuntimeMinutes { get; init; }
 
     public bool IsSeasonSpecificPage { get; init; }
 }

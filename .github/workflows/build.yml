@@ -106,43 +106,63 @@ jobs:
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            Rilascio di correzioni. Tre difetti sono stati trovati mettendo il plugin alla prova
-            su una libreria reale, non leggendo il codice, e due di essi impedivano da sempre a
-            intere funzioni di produrre qualcosa.
+            Rilascio di funzionalità. La traduzione automatica non è più legata a un solo
+            fornitore, la pagina di configurazione dice per la prima volta *perché* una stagione
+            resta senza titoli, e sono state chiuse alcune falle di abbinamento trovate provando
+            il plugin su una libreria reale.
 
-            **Le sinossi italiane da TheTVDB non hanno mai funzionato**
-            TheTVDB risponde con l'elenco degli episodi annidato dentro un oggetto, mentre il
-            plugin si aspettava un elenco al primo livello: ogni pagina veniva quindi scartata
-            come non valida e l'anello TheTVDB della catena sinossi non ha mai restituito niente,
-            in silenzio. Su otto serie di prova TheTVDB aveva 119 sinossi italiane su 212
-            episodi, tutte irraggiungibili. Essendo il primo anello dopo AnimeClick, la
-            correzione riduce anche il ricorso alla traduzione automatica.
+            **La traduzione ora funziona con il servizio AI che preferisci**
+            Prima esisteva soltanto Ollama Cloud. Ora il servizio si sceglie da un menu: Ollama
+            (in rete o in casa), OpenAI, Anthropic Claude, Google Gemini, Mistral, Groq, DeepSeek,
+            OpenRouter, Together, xAI Grok, LM Studio, oppure qualunque endpoint compatibile
+            OpenAI — LiteLLM, vLLM, llama.cpp, un proxy aziendale. Bastano tre formati di
+            richiesta per coprirli tutti, e chi incolla un endpoint sotto «Personalizzato» viene
+            riconosciuto dal percorso dell'URL.
 
-            **Le sinossi di AnimeClick mancavano su tutti gli episodi con un accento nel titolo**
-            L'identificativo salvato per quegli episodi contiene la codifica percentuale
-            (`c%C3%A8-una-ragione`), e il plugin la rifiutava, cioè rifiutava un dato che aveva
-            scritto lui stesso: la sinossi AnimeClick non veniva mai richiesta. Su una libreria di
-            prova erano 224 identificativi su 1781, il 13%.
+            Il nome del modello non ha più un valore predefinito, ed è voluto: i fornitori
+            ritirano e rinominano i modelli continuamente, e un default scaduto diventa «la
+            traduzione ha smesso di funzionare senza dire niente». Il pulsante **Elenca modelli**
+            chiede la lista al servizio con la tua chiave.
 
-            **Una stagione intera poteva ricevere i titoli sfalsati di una posizione**
-            Quando la tabella di AnimeClick contiene più righe degli episodi che AnimeClick stessa
-            dichiara, i suoi numeri e le sue posizioni non corrispondono più alla libreria e ogni
-            titolo finiva sull'episodio precedente, con piena confidenza. Ora quella discordanza
-            viene rilevata e il titolo del file deve confermare la corrispondenza: in mancanza
-            l'episodio resta intatto, perché nessun metadato è preferibile a un metadato
-            plausibile e sbagliato.
+            Chi aveva già configurato Ollama non deve fare niente: il profilo salvato viene
+            travasato nei nuovi campi al primo avvio, chiave compresa.
 
-            **Altre correzioni**
-            - I titoli che ripetono soltanto il numero (`Episodio 11.`, `Ep.11`, `Episodio 11-12`,
-              `Puntata 5`) non vengono più scritti: la regola è ora una sola per titoli e sinossi.
-            - La coda delle traduzioni non può più fermarsi in silenzio: un guasto viene registrato
-              e il lavoratore riparte, invece di lasciare le traduzioni bloccate fino al riavvio.
-            - Passo minimo e rispetto delle richieste di rallentamento verso TheTVDB, TMDB e
-              AniList, che prima venivano interrogati senza freni durante una scansione.
+            *Non* è possibile usare un abbonamento ChatGPT o Claude al posto di una chiave API:
+            l'API di OpenAI è fatturata a parte e Anthropic vieta espressamente l'uso dei token
+            dei piani Free, Pro e Max fuori dai suoi programmi. L'unico modo per non tenere una
+            chiave dentro Jellyfin è un servizio in casa che custodisca lui le credenziali.
 
-            La catena sinossi episodi resta AnimeClick → TheTVDB ita → TMDB it-IT →
-            TMDB en-US → TheTVDB eng → Ollama Cloud EN→IT. La modalità solo AnimeClick
-            non richiede API key.
+            **Una nuova scheda «Libreria» che spiega i titoli mancanti**
+            Un titolo assente sembrava identico qualunque ne fosse la causa, e le cause chiedono
+            reazioni opposte: una si risolve con un pulsante, una si sistemerà da sé, una è una
+            lacuna della fonte che nessun aggiornamento colmerà. L'analisi legge solo le schede
+            già in cache — nessuna richiesta ad AnimeClick — e per ogni serie e stagione dice
+            quale delle nove cause è in gioco, con i colori a indicare quanto ci si può fare.
+            Accanto, per ogni serie, i pulsanti per rileggerne la scheda, svuotarne la cache o
+            identificarla.
+
+            **Il ricontrollo settimanale dei titoli ora sceglie con criterio**
+            Prendeva i primi duecento episodi senza titolo in ordine di libreria, spendendo il
+            budget sulle schede che non pubblicano titoli affatto — settimana dopo settimana,
+            senza possibilità di riuscita — e ignorava per sempre gli episodi mai abbinati,
+            perché Jellyfin rinfresca un episodio solo se ne cambia il file. Ora è la stessa
+            classificazione dell'analisi a scegliere e a ordinare la coda.
+
+            **Abbinamenti recuperati**
+            - Una tabella che elenca uno spin-off numerato insieme alla serie (K-On!! con i corti
+              «Ura-On!!») azzerava le coordinate di tutte le righe per via dei numeri ripetuti, e
+              rendeva inabbinabile una stagione interamente numerata. Le righe che portano
+              l'etichetta di un'altra opera vengono ora archiviate tra gli speciali, ma soltanto
+              se collidono davvero: un'etichetta insolita ma legittima non costa un titolo.
+            - Gli extra numerati oltre la fine della serie regolare («Ep. 25 (extra)» dopo una
+              corsa che finisce a 24) vengono abbinati ai file che la libreria tiene, del tutto
+              ragionevolmente, come episodi 25 e 26.
+
+            **Timeout della traduzione portato a 90 secondi**
+            Il tetto di 30 secondi tagliava richieste sane: su una libreria reale la traduzione
+            riuscita più lenta rientrava 120 millisecondi prima della scadenza, e ogni fallimento
+            stava esattamente sul limite. È un tetto, non un'attesa: una risposta rapida non ci
+            arriva vicino.
 
             **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
             **Versione:** `${{ env.VERSION }}`
