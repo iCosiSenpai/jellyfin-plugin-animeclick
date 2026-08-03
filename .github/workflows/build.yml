@@ -83,7 +83,11 @@ jobs:
         run: |
           set -euo pipefail
           rm -f AnimeClick.Plugin.zip
-          zip -j AnimeClick.Plugin.zip publish/AnimeClick.Plugin.dll publish/HtmlAgilityPack.dll
+          # LICENSE e NOTICE viaggiano con il programma: la GPL richiede che la licenza
+          # accompagni la distribuzione, e il NOTICE dichiara i termini aggiuntivi
+          # ammessi dalla sezione 7(e) su nome e logo. Jellyfin carica le DLL e ignora
+          # il resto, quindi due file di testo in piu' non cambiano l'installazione.
+          zip -j AnimeClick.Plugin.zip publish/AnimeClick.Plugin.dll publish/HtmlAgilityPack.dll LICENSE NOTICE
           CHECKSUM_VALUE="$(md5sum AnimeClick.Plugin.zip | cut -d ' ' -f 1 | tr 'a-f' 'A-F')"
           SOURCE_VALUE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/AnimeClick.Plugin.zip"
           [[ -n "${CHECKSUM_VALUE}" ]]

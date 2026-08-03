@@ -1,3 +1,11 @@
+// AnimeClick Metadata Plugin for Jellyfin
+// Copyright (C) 2026 Alessio Cosi (iCosiSenpai)
+//
+// Software libero sotto GNU General Public License v3: vedi LICENSE.
+// Nome e logo del progetto non sono concessi in licenza, ai sensi della sezione 7(e)
+// della GPLv3, e l'autorizzazione allo scraping di AnimeClick.it non è trasferibile
+// a opere derivate: vedi NOTICE.
+
 using System;
 using System.Collections.Generic;
 using AnimeClick.Plugin.Configuration;
