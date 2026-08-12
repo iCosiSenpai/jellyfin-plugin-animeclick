@@ -39,6 +39,7 @@ internal static class Program
         var refresh = false;
         var delaySeconds = 1.5;
         var verbose = false;
+        var qualityAudit = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -83,6 +84,9 @@ internal static class Program
                 case "--refresh":
                     refresh = true;
                     break;
+                case "--quality-audit":
+                    qualityAudit = true;
+                    break;
                 case "--verbose":
                     verbose = true;
                     break;
@@ -93,10 +97,17 @@ internal static class Program
             }
         }
 
-        var cacheDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".cache",
-            "animeclick-harness");
+        if (qualityAudit && string.IsNullOrWhiteSpace(jellyfinUrl))
+        {
+            Console.Error.WriteLine("--quality-audit richiede --jellyfin <url>");
+            return 2;
+        }
+
+        if (jellyfinUrl is not null && string.IsNullOrWhiteSpace(tokenFile))
+        {
+            Console.Error.WriteLine("--jellyfin richiede --token-file <path>");
+            return 2;
+        }
 
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
@@ -105,6 +116,22 @@ internal static class Program
             cts.Cancel();
         };
 
+        if (qualityAudit)
+        {
+            var token = await ReadJellyfinTokenAsync(tokenFile!, cts.Token).ConfigureAwait(false);
+            if (token is null)
+            {
+                Console.Error.WriteLine("il file token Jellyfin manca o è vuoto");
+                return 2;
+            }
+
+            return await RunQualityAuditAsync(jellyfinUrl!, token, cts.Token).ConfigureAwait(false);
+        }
+
+        var cacheDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".cache",
+            "animeclick-harness");
         using var fetcher = new Fetcher(cacheDirectory, TimeSpan.FromSeconds(delaySeconds), refresh);
         var parser = new AnimeClickHtmlParser();
 
@@ -116,7 +143,13 @@ internal static class Program
 
         if (jellyfinUrl is not null)
         {
-            var token = (await File.ReadAllTextAsync(tokenFile!, cts.Token).ConfigureAwait(false)).Trim();
+            var token = await ReadJellyfinTokenAsync(tokenFile!, cts.Token).ConfigureAwait(false);
+            if (token is null)
+            {
+                Console.Error.WriteLine("il file token Jellyfin manca o è vuoto");
+                return 2;
+            }
+
             return await RunLibraryDiffAsync(
                     fetcher, parser, jellyfinUrl, token, limit, ignoreDeclaredCount, cts.Token)
                 .ConfigureAwait(false);
@@ -1038,15 +1071,132 @@ internal static class Program
         }
     }
 
+    private static async Task<string?> ReadJellyfinTokenAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var token = (await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false)).Trim();
+            return token.Length == 0 ? null : token;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static async Task<int> RunQualityAuditAsync(
+        string jellyfinUrl,
+        string token,
+        CancellationToken cancellationToken)
+    {
+        using var jellyfin = new JellyfinClient(jellyfinUrl, token);
+        var items = await jellyfin.GetLibraryQualityItemsAsync(cancellationToken).ConfigureAwait(false);
+        var findings = items.Select(item =>
+        {
+            AnimeClickOverviewAuditStatus status;
+            if (string.IsNullOrWhiteSpace(item.Overview))
+            {
+                status = AnimeClickOverviewAuditStatus.Missing;
+            }
+            else
+            {
+                status = AnimeClickMetadataLanguageDetector.Detect(item.Overview).Language switch
+                {
+                    AnimeClickTextLanguage.Italian => AnimeClickOverviewAuditStatus.Italian,
+                    AnimeClickTextLanguage.English => AnimeClickOverviewAuditStatus.English,
+                    _ => AnimeClickOverviewAuditStatus.Unknown
+                };
+            }
+
+            return new QualityFinding(item, status);
+        }).ToList();
+
+        var italian = findings.Count(finding => finding.Status == AnimeClickOverviewAuditStatus.Italian);
+        var english = findings.Count(finding => finding.Status == AnimeClickOverviewAuditStatus.English);
+        var missing = findings.Count(finding => finding.Status == AnimeClickOverviewAuditStatus.Missing);
+        var unknown = findings.Count(finding => finding.Status == AnimeClickOverviewAuditStatus.Unknown);
+        var locked = findings.Count(finding =>
+            finding.Status != AnimeClickOverviewAuditStatus.Italian && finding.Item.Locked);
+        var repairable = findings.Count(finding =>
+            !finding.Item.Locked
+            && finding.Status is AnimeClickOverviewAuditStatus.English or AnimeClickOverviewAuditStatus.Missing);
+        var groups = items.Count(item =>
+            string.Equals(item.ItemType, "Series", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(item.ItemType, "Movie", StringComparison.OrdinalIgnoreCase));
+
+        Console.WriteLine("═══ audit qualità libreria AnimeClick (sola lettura) ═══");
+        Console.WriteLine($"gruppi identificati       : {groups}");
+        Console.WriteLine($"elementi analizzati       : {items.Count}");
+        Console.WriteLine($"sinossi italiane          : {italian}");
+        Console.WriteLine($"sinossi inglesi           : {english}");
+        Console.WriteLine($"sinossi mancanti          : {missing}");
+        Console.WriteLine($"lingua incerta            : {unknown}");
+        Console.WriteLine($"problemi bloccati         : {locked}");
+        Console.WriteLine($"candidati EN/mancanti sbloccati: {repairable}");
+
+        var samples = findings
+            .Where(finding => finding.Status != AnimeClickOverviewAuditStatus.Italian)
+            .GroupBy(
+                finding => string.Equals(finding.Item.ItemType, "Episode", StringComparison.OrdinalIgnoreCase)
+                    ? finding.Item.SeriesName ?? "(serie senza nome)"
+                    : finding.Item.Name,
+                StringComparer.CurrentCultureIgnoreCase)
+            .Select(group => new
+            {
+                Name = group.Key,
+                English = group.Count(finding => finding.Status == AnimeClickOverviewAuditStatus.English),
+                Missing = group.Count(finding => finding.Status == AnimeClickOverviewAuditStatus.Missing),
+                Unknown = group.Count(finding => finding.Status == AnimeClickOverviewAuditStatus.Unknown),
+                Locked = group.Count(finding => finding.Item.Locked)
+            })
+            .OrderByDescending(group => group.English + group.Missing)
+            .ThenByDescending(group => group.Unknown)
+            .ThenBy(group => group.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Take(12)
+            .ToList();
+        if (samples.Count > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine("campioni aggregati (nessun ID o testo della sinossi):");
+            foreach (var sample in samples)
+            {
+                Console.WriteLine(
+                    $"  {Truncate(sample.Name, 52),-52} EN {sample.English,3} | mancanti {sample.Missing,3} | "
+                    + $"incerti {sample.Unknown,3} | bloccati {sample.Locked,3}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"richieste Jellyfin        : {jellyfin.GetRequestCount} GET");
+        Console.WriteLine("richieste AnimeClick      : 0");
+        Console.WriteLine("nessuna modifica, refresh o scrittura è stata eseguita");
+        return 0;
+    }
+
+    private sealed record QualityFinding(
+        JellyfinQualityItem Item,
+        AnimeClickOverviewAuditStatus Status);
+
     private static void PrintUsage()
     {
         Console.WriteLine(
             """
-            Audit di quello che il plugin scriverebbe in libreria, senza Jellyfin.
+            Audit del parser AnimeClick oppure della qualità già memorizzata in Jellyfin.
 
-            Scarica le pagine reali di AnimeClick e ci esegue il parser e il matcher di
-            produzione, poi segnala le anomalie. Le pagine vengono messe in cache su disco:
-            rilanciare non ricarica il sito.
+            La modalità normale scarica le pagine reali di AnimeClick e ci esegue il parser e
+            il matcher di produzione. --quality-audit, invece, legge soltanto Jellyfin via GET:
+            non crea cache, non contatta AnimeClick e non modifica la libreria.
 
               --id <id>              id AnimeClick, es. 44780/boku-no-kokoro-no-yabai-yatsu
                                      (ripetibile)
@@ -1054,6 +1204,8 @@ internal static class Program
               --search "<titolo>"    cerca il titolo e stampa gli id, poi esce
               --jellyfin <url>       confronta la libreria Jellyfin con quello che il plugin
                                      produrrebbe oggi (richiede --token-file). Sola lettura.
+              --quality-audit        con --jellyfin, classifica le sinossi già memorizzate senza
+                                     richieste AnimeClick, cache, refresh o scritture
               --token-file <path>    file contenente la API key di Jellyfin
               --limit <n>            in modalità --jellyfin, ferma dopo n serie
               --ignore-declared-count

@@ -40,6 +40,41 @@ public sealed class AnimeClickSeasonResolver
         _logger = logger;
     }
 
+    /// <summary>
+    /// Returns a season traversal only when the provider has already proved and cached it. This is
+    /// the audit-safe counterpart of <see cref="ResolveAsync"/>: it never contacts AnimeClick and
+    /// therefore lets whole-library diagnostics replay the same card choice without network I/O.
+    /// </summary>
+    public async Task<string?> ResolveCachedAsync(
+        string mainId,
+        int? seasonNumber,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<int, int>? seasonAirYears = null)
+    {
+        if (!seasonNumber.HasValue
+            || seasonNumber.Value <= 1
+            || !AnimeClickClient.TryNormalizeAnimeClickId(mainId, out var normalizedMainId))
+        {
+            return null;
+        }
+
+        var expectedYear = seasonAirYears?.GetValueOrDefault(seasonNumber.Value);
+        var yearKey = expectedYear is > 0
+            ? expectedYear.Value.ToString(CultureInfo.InvariantCulture)
+            : "na";
+        var cacheKey = $"seasonMap:v6::{normalizedMainId}::{seasonNumber.Value}::{yearKey}";
+        var cached = await _cache
+            .GetAsync<string>(cacheKey, configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(cached))
+        {
+            _logger.LogDebug("AnimeClick season map cache-only hit: {Key}", cacheKey);
+        }
+
+        return string.IsNullOrWhiteSpace(cached) ? null : cached;
+    }
+
     public async Task<string?> ResolveAsync(
         string mainId,
         int? seasonNumber,
@@ -60,7 +95,7 @@ public sealed class AnimeClickSeasonResolver
         var yearKey = expectedYear is > 0
             ? expectedYear.Value.ToString(CultureInfo.InvariantCulture)
             : "na";
-        var cacheKey = $"seasonMap:v5::{normalizedMainId}::{seasonNumber.Value}::{yearKey}";
+        var cacheKey = $"seasonMap:v6::{normalizedMainId}::{seasonNumber.Value}::{yearKey}";
         var missCacheKey = cacheKey + "::miss";
         var cached = await _cache
             .GetAsync<string>(cacheKey, configuration.CacheHours, cancellationToken)
@@ -412,11 +447,10 @@ public sealed class AnimeClickSeasonResolver
     /// keeps a franchise's web spin-off from being read as the season next to it.
     /// </summary>
     private static bool IsWebRelease(AnimeClickRelation relation)
-    {
-        var format = relation.Format ?? string.Empty;
-        return format.Contains("Web", StringComparison.OrdinalIgnoreCase)
-            || format.Contains("ONA", StringComparison.OrdinalIgnoreCase);
-    }
+        => Regex.IsMatch(
+            relation.Format ?? string.Empty,
+            @"\b(Web|ONA)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static bool IsSameTitle(string? left, string? right)
         => string.Equals(
@@ -465,6 +499,14 @@ public sealed class AnimeClickSeasonResolver
             .Where(token => token.Length > 0 && !StopWords.Contains(token))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// True when the card declares a continuation of itself. Used to refuse reading a card as a
+    /// later season: if a sequel exists, this card is not the franchise's last cour, and a library
+    /// season numbered above one might well be that sequel rather than this card.
+    /// </summary>
+    internal static bool DeclaresExplicitSequel(IEnumerable<AnimeClickRelation>? relations)
+        => relations is not null && relations.Any(IsExplicitSequel);
 
     private static bool IsExplicitSequel(AnimeClickRelation relation)
     {

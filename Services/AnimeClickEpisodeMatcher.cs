@@ -34,7 +34,14 @@ public static class AnimeClickEpisodeMatcher
             return AnimeClickEpisodeMatch.None("none", "invalid or empty episode request");
         }
 
-        var ordered = episodes.OrderBy(episode => episode.SourceOrder).ToList();
+        var ordered = episodes
+            .Where(episode => !episode.IsForeignWork)
+            .OrderBy(episode => episode.SourceOrder)
+            .ToList();
+        if (ordered.Count == 0)
+        {
+            return AnimeClickEpisodeMatch.None("none", "catalog contains no rows belonging to this work");
+        }
 
         // One Jellyfin file spanning multiple episodes must never silently inherit the
         // title of only its first part. Validate the range before any persisted anchor:
@@ -52,21 +59,23 @@ public static class AnimeClickEpisodeMatcher
                 : AnimeClickEpisodeMatch.None("multiEpisodeAmbiguous", "no unique AnimeClick range for a multi-episode file");
         }
 
-        // The ID written by a previous high-confidence match is the strongest anchor.
+        // The ID written by a previous high-confidence match is the strongest anchor, but only
+        // after proving that it still belongs to the requested season. This matters when a library
+        // now contains only S2 while the series ID still points to an unseasoned S1 card: the old
+        // row ID is real, yet applying it would confidently copy S1 titles onto S2.
         if (!string.IsNullOrWhiteSpace(context.ExistingProviderId))
         {
-            var anchored = ordered.Where(episode => string.Equals(
+            var anchored = ordered.Where(episode => AnimeClickEpisodeProviderId.Equals(
                     episode.ProviderId,
-                    context.ExistingProviderId,
-                    StringComparison.OrdinalIgnoreCase))
+                    context.ExistingProviderId))
                 .ToList();
             if (anchored.Count == 1)
             {
-                if (context.JellyfinSeasonNumber == 0 && !anchored[0].IsSpecial)
+                if (!PersistedAnchorCompatible(anchored[0], context))
                 {
                     return AnimeClickEpisodeMatch.None(
                         "staleProviderId",
-                        "regular provider ID cannot anchor a season-zero item");
+                        "existing AnimeClick episode ID is not compatible with the requested season");
                 }
 
                 return AnimeClickEpisodeMatch.Found(anchored[0], "providerId", 1, "existing AnimeClick episode ID");
@@ -508,7 +517,22 @@ public static class AnimeClickEpisodeMatcher
         IReadOnlyCollection<AnimeClickEpisode> episodes,
         AnimeClickEpisodeMatchContext context)
     {
-        var candidates = episodes.Where(episode => episode.IsSpecial && !episode.NumberEnd.HasValue)
+        var candidates = episodes
+            .Where(episode => episode.IsSpecial
+                && !episode.IsForeignWork
+                && !episode.NumberEnd.HasValue)
+
+            // The season-zero bucket is cross-season by nature: Jellyfin numbers every special of a
+            // show in one flat sequence, so a request for S00Ex must be free to reach a special the
+            // card attributes to season one. A request for a real season's episode zero is the
+            // opposite case and there the season has to agree, otherwise S02E00 takes the season-one
+            // prologue — a real title written with confidence on the wrong episode.
+            //
+            // On an AnimeClick row season zero means "not attributed to any numbered season", not
+            // "the zeroth season", so it stays compatible with everything just like an absent value.
+            .Where(episode => context.JellyfinSeasonNumber is null or 0
+                || episode.RawSeasonNumber is null or 0
+                || episode.RawSeasonNumber == context.JellyfinSeasonNumber)
             .Where(episode =>
                 (!episode.HasNonStandardNumber
                     && !episode.NumberIsAmbiguous
@@ -638,6 +662,74 @@ public static class AnimeClickEpisodeMatcher
                 StringComparison.Ordinal))
             .ToList();
         return matches.Count == 1 ? matches[0] : null;
+    }
+
+    private static bool PersistedAnchorCompatible(
+        AnimeClickEpisode episode,
+        AnimeClickEpisodeMatchContext context)
+    {
+        if (context.IsSeasonSpecificPage)
+        {
+            return true;
+        }
+
+        var requestedSeason = context.JellyfinSeasonNumber;
+        if (!requestedSeason.HasValue)
+        {
+            return true;
+        }
+
+        if (requestedSeason == 0)
+        {
+            return episode.IsSpecial;
+        }
+
+        if (episode.IsSpecial)
+        {
+            if (episode.RawSeasonNumber is > 0)
+            {
+                return episode.RawSeasonNumber == requestedSeason;
+            }
+
+            // Decimal/suffixed rows are represented as specials by the parser even when they are
+            // episodes of the flat first season. Their durable detail ID remains valid there, but
+            // an unseasoned row still cannot prove S2+.
+            return requestedSeason <= 1;
+        }
+
+        // A season printed by AnimeClick is direct evidence. Synthetic equal-split seasons are
+        // intentionally excluded: they are the inference whose staleness we are guarding against.
+        if (episode.RawSeasonNumber is > 0)
+        {
+            return episode.RawSeasonNumber == requestedSeason;
+        }
+
+        if (!episode.SeasonNumberIsSynthetic && episode.SeasonNumber is > 0)
+        {
+            return episode.SeasonNumber == requestedSeason;
+        }
+
+        // An unseasoned row is the normal flat/S1 shape.
+        if (requestedSeason <= 1)
+        {
+            return true;
+        }
+
+        if (context.LayoutOverride?.TryGetGlobalOrdinal(
+                requestedSeason.Value,
+                context.JellyfinEpisodeNumber,
+                out var overrideOrdinal) == true)
+        {
+            return episode.GlobalOrdinal == overrideOrdinal;
+        }
+
+        return context.LibraryLayout?.TryGetGlobalOrdinal(
+                   requestedSeason.Value,
+                   context.JellyfinEpisodeNumber,
+                   out var libraryOrdinal,
+                   out var reliable) == true
+               && reliable
+               && episode.GlobalOrdinal == libraryOrdinal;
     }
 
     private static bool SeasonCompatible(AnimeClickEpisode episode, int? jellyfinSeasonNumber)

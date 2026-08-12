@@ -207,32 +207,6 @@ public sealed class AnimeClickEpisodeLibraryLayout
             .Where(pair => pair.Value.FirstAirYear is > 1900)
             .ToDictionary(pair => pair.Key, pair => pair.Value.FirstAirYear!.Value);
 
-    /// <summary>
-    /// True when the library holds a single season, numbered above one, whose episodes the card
-    /// accounts for exactly.
-    /// <para>
-    /// This is the shape of a standalone work filed under a later season number because the rest
-    /// of its franchise lives in other folders — "D4DJ All Mix" sits in Season 02 with its own
-    /// twelve episodes and its own AnimeClick card. There is no season one to measure an offset
-    /// against, so the only sane reading is the flat one. The exact count is what makes it safe:
-    /// were the card a longer timeline, row one would belong to a cour the library does not hold.
-    /// </para>
-    /// </summary>
-    /// <param name="seasonNumber">The season the file sits in.</param>
-    /// <param name="regularRowCount">Regular, non-special rows the AnimeClick card lists.</param>
-    /// <returns>True when the card can be read as that season, numbered from one.</returns>
-    public bool IsStandaloneSeason(int seasonNumber, int regularRowCount)
-    {
-        if (seasonNumber <= 1 || regularRowCount <= 0 || Seasons.Count != 1)
-        {
-            return false;
-        }
-
-        return Seasons.TryGetValue(seasonNumber, out var only)
-            && only.StartsAtOne
-            && only.IsContiguous
-            && only.KnownEpisodeCount == regularRowCount;
-    }
 }
 
 public enum AnimeClickEpisodeLayoutMode

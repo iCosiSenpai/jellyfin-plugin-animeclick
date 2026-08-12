@@ -75,6 +75,28 @@ public sealed class AnimeClickMetadataFallbackService
             cancellationToken,
             allowSynchronousTranslation: false);
 
+    /// <summary>
+    /// Normal provider path with the Jellyfin item location that must be refreshed once an
+    /// asynchronous translation has been published to the cache.
+    /// </summary>
+    public Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
+        string animeClickId,
+        int season,
+        int episode,
+        string? animeClickEpisodeId,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken,
+        string? refreshPath)
+        => ResolveEpisodeOverviewAsync(
+            animeClickId,
+            season,
+            episode,
+            animeClickEpisodeId,
+            configuration,
+            cancellationToken,
+            allowSynchronousTranslation: false,
+            refreshPath);
+
     public Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
         string animeClickId,
         int season,
@@ -98,7 +120,8 @@ public sealed class AnimeClickMetadataFallbackService
         string? animeClickEpisodeId,
         PluginConfiguration configuration,
         CancellationToken cancellationToken,
-        bool allowSynchronousTranslation)
+        bool allowSynchronousTranslation,
+        string? refreshPath = null)
     {
         if (!configuration.EnableEpisodeSynopsisTranslation
             || season < 0
@@ -385,7 +408,8 @@ public sealed class AnimeClickMetadataFallbackService
                     "en",
                     "it",
                     configuration,
-                    cancellationToken)
+                    cancellationToken,
+                    refreshPath)
                 .ConfigureAwait(false);
             stage.Stop();
             translationMs += stage.ElapsedMilliseconds;

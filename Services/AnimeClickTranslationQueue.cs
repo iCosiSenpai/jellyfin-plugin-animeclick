@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Channels;
@@ -24,9 +25,11 @@ public sealed class AnimeClickTranslationQueue : IDisposable
 
     private readonly AnimeClickAiTranslator _translator;
     private readonly AnimeClickCacheService _cache;
+    private readonly AnimeClickMetadataRefreshScheduler _refreshScheduler;
     private readonly ILogger<AnimeClickTranslationQueue> _logger;
     private readonly Channel<TranslationWorkItem> _channel;
-    private readonly ConcurrentDictionary<string, byte> _pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, AnimeClickPendingTranslation> _pending =
+        new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _publicationGate = new(1, 1);
     private readonly Task _worker;
@@ -36,10 +39,12 @@ public sealed class AnimeClickTranslationQueue : IDisposable
     public AnimeClickTranslationQueue(
         AnimeClickAiTranslator translator,
         AnimeClickCacheService cache,
+        AnimeClickMetadataRefreshScheduler refreshScheduler,
         ILogger<AnimeClickTranslationQueue> logger)
     {
         _translator = translator;
         _cache = cache;
+        _refreshScheduler = refreshScheduler;
         _logger = logger;
         _channel = Channel.CreateBounded<TranslationWorkItem>(new BoundedChannelOptions(QueueCapacity)
         {
@@ -90,20 +95,12 @@ public sealed class AnimeClickTranslationQueue : IDisposable
         string sourceLanguage,
         string targetLanguage,
         PluginConfiguration configuration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? refreshPath = null)
     {
         if (Volatile.Read(ref _disposed) != 0)
         {
             return AnimeClickTranslationQueueState.Invalid;
-        }
-
-        // Capture the generation before any asynchronous cache work. A clear that
-        // starts after this point makes the eventual item stale; work entering while
-        // the exclusive clear lease is active is rejected immediately.
-        var generation = Volatile.Read(ref _generation);
-        if ((generation & 1) != 0)
-        {
-            return AnimeClickTranslationQueueState.Invalidating;
         }
 
         if (!TryBuildWorkKey(
@@ -117,6 +114,24 @@ public sealed class AnimeClickTranslationQueue : IDisposable
                 out var workKey))
         {
             return AnimeClickTranslationQueueState.Invalid;
+        }
+
+        // Cache inspection and pending registration are one atomic phase with respect to
+        // administrative invalidation. A clear therefore either sees and invalidates this claim,
+        // or completes before this enqueue starts; there is no gap after the clear's pending scan.
+        await _publicationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var generation = Volatile.Read(ref _generation);
+            if ((generation & 1) != 0)
+            {
+                return AnimeClickTranslationQueueState.Invalidating;
+            }
+
+        AnimeClickPendingRefreshTarget? refreshTarget = null;
+        if (_refreshScheduler.TryCaptureOverviewByPath(refreshPath, out var expectedOverview))
+        {
+            refreshTarget = new AnimeClickPendingRefreshTarget(refreshPath!, expectedOverview);
         }
 
         var cached = await GetCachedTranslationAsync(
@@ -148,46 +163,115 @@ public sealed class AnimeClickTranslationQueue : IDisposable
             _cache.ClearKey(backoffKey);
         }
 
-        if (!_pending.TryAdd(workKey, 0))
+        while (true)
         {
-            return AnimeClickTranslationQueueState.AlreadyQueued;
-        }
+            var currentGeneration = Volatile.Read(ref _generation);
+            if (currentGeneration != generation || (currentGeneration & 1) != 0)
+            {
+                return AnimeClickTranslationQueueState.Invalidating;
+            }
 
-        var item = new TranslationWorkItem(
-            workKey,
-            sourceText,
-            cacheScope,
-            sourceIdentity,
-            fieldName,
-            sourceLanguage,
-            targetLanguage,
-            generation);
-        if (!_channel.Writer.TryWrite(item))
+            var pending = new AnimeClickPendingTranslation(generation, refreshTarget);
+            if (_pending.TryAdd(workKey, pending))
+            {
+                var item = new TranslationWorkItem(
+                    workKey,
+                    sourceText,
+                    cacheScope,
+                    sourceIdentity,
+                    fieldName,
+                    sourceLanguage,
+                    targetLanguage,
+                    generation,
+                    pending);
+                if (!_channel.Writer.TryWrite(item))
+                {
+                    pending.Seal();
+                    RemovePending(workKey, pending);
+                    return AnimeClickTranslationQueueState.QueueFull;
+                }
+
+                _logger.LogInformation(
+                    "AnimeClick translation queued: source={Source} field={Field} pending={Pending}",
+                    sourceIdentity,
+                    fieldName,
+                    _pending.Count);
+                return AnimeClickTranslationQueueState.Queued;
+            }
+
+            if (_pending.TryGetValue(workKey, out var existing)
+                && existing.TryJoin(generation, refreshTarget))
+            {
+                return AnimeClickTranslationQueueState.AlreadyQueued;
+            }
+
+            // The worker has sealed this claim or it belongs to a generation invalidated while
+            // this enqueue was awaiting cache I/O. Remove only that exact instance: a new claim
+            // may already have replaced it. Recheck publication/backoff before translating again.
+            if (existing is not null)
+            {
+                RemovePending(workKey, existing);
+            }
+
+            cached = await GetCachedTranslationAsync(
+                    sourceText,
+                    cacheScope,
+                    sourceIdentity,
+                    fieldName,
+                    sourceLanguage,
+                    targetLanguage,
+                    configuration,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(cached))
+            {
+                return AnimeClickTranslationQueueState.Cached;
+            }
+
+            backoff = await _cache
+                .GetAsync<AnimeClickTranslationBackoff>(backoffKey, int.MaxValue, cancellationToken)
+                .ConfigureAwait(false);
+            if (backoff is not null && backoff.RetryAfterUtc > DateTime.UtcNow)
+            {
+                return AnimeClickTranslationQueueState.Backoff;
+            }
+
+            if (backoff is not null)
+            {
+                _cache.ClearKey(backoffKey);
+            }
+        }
+        }
+        finally
         {
-            _pending.TryRemove(workKey, out _);
-            return AnimeClickTranslationQueueState.QueueFull;
+            _publicationGate.Release();
         }
-
-        _logger.LogInformation(
-            "AnimeClick translation queued: source={Source} field={Field} pending={Pending}",
-            sourceIdentity,
-            fieldName,
-            _pending.Count);
-        return AnimeClickTranslationQueueState.Queued;
     }
 
     /// <summary>
-    /// Starts an exclusive administrative cache invalidation. The lease spans the
-    /// complete clear operation, so background publication cannot race its result.
-    /// Generations are odd while the lease is active and even when work is accepted.
+    /// Starts an exclusive administrative cache invalidation. New enqueues are rejected while the
+    /// lease is active. Existing work is invalidated only when its logical cache key matches the
+    /// supplied predicate; a targeted clear for series B therefore cannot strand series A.
     /// </summary>
-    public IDisposable BeginInvalidation()
+    public IDisposable BeginInvalidation(Func<string, bool>? shouldInvalidate = null)
     {
         _publicationGate.Wait();
         var generation = Interlocked.Increment(ref _generation);
+        var invalidated = 0;
+        foreach (var pair in _pending)
+        {
+            if (shouldInvalidate is null || shouldInvalidate(pair.Key))
+            {
+                pair.Value.Invalidate();
+                RemovePending(pair.Key, pair.Value);
+                invalidated++;
+            }
+        }
+
         _logger.LogInformation(
-            "AnimeClick translation queue invalidation started: generation={Generation} pending={Pending}",
+            "AnimeClick translation queue invalidation started: generation={Generation} invalidated={Invalidated} pending={Pending}",
             generation,
+            invalidated,
             _pending.Count);
         return new TranslationInvalidationLease(this);
     }
@@ -268,6 +352,11 @@ public sealed class AnimeClickTranslationQueue : IDisposable
             {
                 // Nothing claimed can be trusted after an unexpected fault here, and releasing
                 // the claims is what keeps EnqueueAsync from refusing those keys forever.
+                foreach (var pending in _pending.Values)
+                {
+                    pending.Invalidate();
+                }
+
                 _pending.Clear();
 
                 if (attempt >= WorkerRestartLimit)
@@ -305,11 +394,11 @@ public sealed class AnimeClickTranslationQueue : IDisposable
             {
                 try
                 {
-                    if (item.Generation != Volatile.Read(ref _generation)
+                    if (item.Pending.IsInvalidated
                         || !TryGetCurrentConfiguration(item, out var configuration))
                     {
                         _logger.LogInformation(
-                            "AnimeClick background translation discarded before execution: source={Source} field={Field} reason=stale-profile-or-generation",
+                            "AnimeClick background translation discarded before execution: source={Source} field={Field} reason=stale-profile-or-invalidated",
                             item.SourceIdentity,
                             item.FieldName);
                         continue;
@@ -329,16 +418,16 @@ public sealed class AnimeClickTranslationQueue : IDisposable
                     stopwatch.Stop();
 
                     // Publication and administrative cache clearing share this gate.
-                    // Recheck generation/profile only after acquiring it, then publish
+                    // Recheck targeted invalidation/profile only after acquiring it, then publish
                     // the result (or backoff) while the clear endpoint is excluded.
                     await _publicationGate.WaitAsync(_shutdown.Token).ConfigureAwait(false);
                     try
                     {
-                        if (item.Generation != Volatile.Read(ref _generation)
+                        if (item.Pending.IsInvalidated
                             || !TryGetCurrentConfiguration(item, out _))
                         {
                             _logger.LogInformation(
-                                "AnimeClick background translation discarded after execution: source={Source} field={Field} reason=stale-profile-or-generation",
+                                "AnimeClick background translation discarded after execution: source={Source} field={Field} reason=stale-profile-or-invalidated",
                                 item.SourceIdentity,
                                 item.FieldName);
                             continue;
@@ -354,6 +443,22 @@ public sealed class AnimeClickTranslationQueue : IDisposable
                                 item.SourceIdentity,
                                 item.FieldName,
                                 stopwatch.ElapsedMilliseconds);
+
+                            // Seal only after publication so every path that joined this work key
+                            // before the cache became visible receives a callback. Each target
+                            // carries the Overview observed before translation started. The narrow
+                            // provider re-runs the source chain instead of applying this payload
+                            // directly, so newly available native Italian or a newer source wins.
+                            var refreshTargets = item.Pending.Seal();
+                            foreach (var target in refreshTargets)
+                            {
+                                _refreshScheduler.TryQueueByPathIfUnchanged(
+                                    target.Path,
+                                    MediaBrowser.Model.Entities.MetadataField.Overview,
+                                    "background-translation-completed",
+                                    target.ExpectedOverview,
+                                    item.WorkKey);
+                            }
                         }
                         else
                         {
@@ -398,11 +503,16 @@ public sealed class AnimeClickTranslationQueue : IDisposable
                 }
                 finally
                 {
-                    _pending.TryRemove(item.WorkKey, out _);
+                    item.Pending.Seal();
+                    RemovePending(item.WorkKey, item.Pending);
                 }
             }
         }
     }
+
+    private bool RemovePending(string workKey, AnimeClickPendingTranslation pending)
+        => ((ICollection<KeyValuePair<string, AnimeClickPendingTranslation>>)_pending)
+            .Remove(new KeyValuePair<string, AnimeClickPendingTranslation>(workKey, pending));
 
     private static bool TryGetCurrentConfiguration(
         TranslationWorkItem item,
@@ -512,8 +622,91 @@ public sealed class AnimeClickTranslationQueue : IDisposable
         string FieldName,
         string SourceLanguage,
         string TargetLanguage,
-        long Generation);
+        long Generation,
+        AnimeClickPendingTranslation Pending);
 }
+
+/// <summary>
+/// One shared translation claim. Equal content can be requested by several Jellyfin items; all
+/// paths join until publication seals the claim, after which no refresh can be silently lost.
+/// </summary>
+internal sealed class AnimeClickPendingTranslation
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, AnimeClickPendingRefreshTarget> _refreshTargets =
+        new(StringComparer.Ordinal);
+    private bool _sealed;
+    private bool _invalidated;
+
+    internal AnimeClickPendingTranslation(
+        long generation,
+        AnimeClickPendingRefreshTarget? refreshTarget)
+    {
+        Generation = generation;
+        AddTarget(refreshTarget);
+    }
+
+    internal long Generation { get; private set; }
+
+    internal bool IsInvalidated
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _invalidated;
+            }
+        }
+    }
+
+    internal bool TryJoin(long generation, AnimeClickPendingRefreshTarget? refreshTarget)
+    {
+        lock (_gate)
+        {
+            if (_sealed || _invalidated)
+            {
+                return false;
+            }
+
+            // A non-matching targeted clear advances the global enqueue generation but leaves this
+            // work valid. EnqueueAsync has already rejected callers captured before that clear, so
+            // a newer caller may safely rebase and join the unaffected claim.
+            Generation = generation;
+            AddTarget(refreshTarget);
+            return true;
+        }
+    }
+
+    internal IReadOnlyList<AnimeClickPendingRefreshTarget> Seal()
+    {
+        lock (_gate)
+        {
+            _sealed = true;
+            return _refreshTargets.Values.ToArray();
+        }
+    }
+
+    internal void Invalidate()
+    {
+        lock (_gate)
+        {
+            _invalidated = true;
+            _sealed = true;
+        }
+    }
+
+    private void AddTarget(AnimeClickPendingRefreshTarget? refreshTarget)
+    {
+        if (refreshTarget is not null)
+        {
+            // Keep the earliest observed state for a path. If it changes while the shared
+            // translation is pending, the callback must fail closed rather than authorize anew.
+            _refreshTargets.TryAdd(refreshTarget.Path, refreshTarget);
+        }
+    }
+}
+
+internal sealed record AnimeClickPendingRefreshTarget(string Path, string? ExpectedOverview);
 
 public enum AnimeClickTranslationQueueState
 {

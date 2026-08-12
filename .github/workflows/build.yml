@@ -95,9 +95,9 @@ jobs:
           echo "CHECKSUM=${CHECKSUM_VALUE}" >> "${GITHUB_ENV}"
           echo "SOURCE_URL=${SOURCE_VALUE}" >> "${GITHUB_ENV}"
 
-      # A tag creates only a draft. The maintainer must update and validate the
-      # external Jellyfin manifest with this exact version/checksum/sourceUrl,
-      # complete the release-asset smoke test, then explicitly publish the draft.
+      # A tag creates only a draft. The maintainer downloads that authenticated
+      # asset, records its exact checksum, publishes the draft, smoke-tests the now
+      # public sourceUrl, and only then commits and pushes the Jellyfin manifest.
       - name: Create gated draft release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
@@ -110,69 +110,46 @@ jobs:
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            Rilascio di funzionalità. La traduzione automatica non è più legata a un solo
-            fornitore, la pagina di configurazione dice per la prima volta *perché* una stagione
-            resta senza titoli, e sono state chiuse alcune falle di abbinamento trovate provando
-            il plugin su una libreria reale.
+            Questo rilascio rende affidabile la manutenzione delle librerie aggiornate
+            settimanalmente: individua sinossi inglesi o mancanti, ripara soltanto il campo
+            necessario e rende più rigoroso l'abbinamento fra file, stagioni e righe AnimeClick.
 
-            **La traduzione ora funziona con il servizio AI che preferisci**
-            Prima esisteva soltanto Ollama Cloud. Ora il servizio si sceglie da un menu: Ollama
-            (in rete o in casa), OpenAI, Anthropic Claude, Google Gemini, Mistral, Groq, DeepSeek,
-            OpenRouter, Together, xAI Grok, LM Studio, oppure qualunque endpoint compatibile
-            OpenAI — LiteLLM, vLLM, llama.cpp, un proxy aziendale. Bastano tre formati di
-            richiesta per coprirli tutti, e chi incolla un endpoint sotto «Personalizzato» viene
-            riconosciuto dal percorso dell'URL.
+            **Audit qualità e riparazione sicura delle sinossi**
+            - La scheda **Libreria** distingue sinossi italiane, inglesi, mancanti, ambigue e
+              bloccate, aggregandole per serie senza modificare i metadati durante l'analisi.
+            - La riparazione usa un refresh di validazione correlato all'elemento e limitato a
+              `Overview`: titoli, generi, studi e valori bloccati non vengono riscritti.
+            - Una traduzione arrivata in ritardo viene accettata solo se la sinossi osservata
+              all'avvio non è cambiata; valori manuali o nativi più recenti restano prioritari.
 
-            Il nome del modello non ha più un valore predefinito, ed è voluto: i fornitori
-            ritirano e rinominano i modelli continuamente, e un default scaduto diventa «la
-            traduzione ha smesso di funzionare senza dire niente». Il pulsante **Elenca modelli**
-            chiede la lista al servizio con la tua chiave.
+            **Abbinamento di episodi e stagioni più rigoroso**
+            - ID numerici, legacy e percent-encoded vengono normalizzati prima del confronto.
+            - Le righe appartenenti a opere diverse, gli anchor obsoleti e le collisioni fra
+              speciali non possono più spostare una stagione o sottrarre il titolo a un episodio.
+            - Le librerie che contengono solo una stagione successiva e le serie in corso vengono
+              ricalcolate senza inferire la mappa dal solo numero di episodi.
 
-            Chi aveva già configurato Ollama non deve fare niente: il profilo salvato viene
-            travasato nei nuovi campi al primo avvio, chiave compresa.
+            **Coda traduzioni AI e cache resilienti**
+            - Una singola traduzione serve tutti i percorsi Jellyfin in attesa e riavvia la
+              normale catena delle sorgenti, invece di applicare direttamente un risultato
+              tardivo.
+            - Pubblicazione, clear mirati e invalidazione delle cache sono serializzati per non
+              perdere callback né cancellare lavori non correlati; i namespace cache sono stati
+              incrementati per escludere mappe prodotte dalle regole precedenti.
+            - Anthropic usa un limite compatibile di 4096 token e rifiuta risposte dichiarate
+              troncate, evitando di salvare sinossi incomplete.
 
-            *Non* è possibile usare un abbonamento ChatGPT o Claude al posto di una chiave API:
-            l'API di OpenAI è fatturata a parte e Anthropic vieta espressamente l'uso dei token
-            dei piani Free, Pro e Max fuori dai suoi programmi. L'unico modo per non tenere una
-            chiave dentro Jellyfin è un servizio in casa che custodisca lui le credenziali.
-
-            **Una nuova scheda «Libreria» che spiega i titoli mancanti**
-            Un titolo assente sembrava identico qualunque ne fosse la causa, e le cause chiedono
-            reazioni opposte: una si risolve con un pulsante, una si sistemerà da sé, una è una
-            lacuna della fonte che nessun aggiornamento colmerà. L'analisi legge solo le schede
-            già in cache — nessuna richiesta ad AnimeClick — e per ogni serie e stagione dice
-            quale delle nove cause è in gioco, con i colori a indicare quanto ci si può fare.
-            Accanto, per ogni serie, i pulsanti per rileggerne la scheda, svuotarne la cache o
-            identificarla.
-
-            **Il ricontrollo settimanale dei titoli ora sceglie con criterio**
-            Prendeva i primi duecento episodi senza titolo in ordine di libreria, spendendo il
-            budget sulle schede che non pubblicano titoli affatto — settimana dopo settimana,
-            senza possibilità di riuscita — e ignorava per sempre gli episodi mai abbinati,
-            perché Jellyfin rinfresca un episodio solo se ne cambia il file. Ora è la stessa
-            classificazione dell'analisi a scegliere e a ordinare la coda.
-
-            **Abbinamenti recuperati**
-            - Una tabella che elenca uno spin-off numerato insieme alla serie (K-On!! con i corti
-              «Ura-On!!») azzerava le coordinate di tutte le righe per via dei numeri ripetuti, e
-              rendeva inabbinabile una stagione interamente numerata. Le righe che portano
-              l'etichetta di un'altra opera vengono ora archiviate tra gli speciali, ma soltanto
-              se collidono davvero: un'etichetta insolita ma legittima non costa un titolo.
-            - Gli extra numerati oltre la fine della serie regolare («Ep. 25 (extra)» dopo una
-              corsa che finisce a 24) vengono abbinati ai file che la libreria tiene, del tutto
-              ragionevolmente, come episodi 25 e 26.
-
-            **Timeout della traduzione portato a 90 secondi**
-            Il tetto di 30 secondi tagliava richieste sane: su una libreria reale la traduzione
-            riuscita più lenta rientrava 120 millisecondi prima della scadenza, e ogni fallimento
-            stava esattamente sul limite. È un tetto, non un'attesa: una risposta rapida non ci
-            arriva vicino.
+            **Ricontrollo periodico più utile**
+            Il task dei titoli mancanti ruota la finestra di lavoro e privilegia gli elementi
+            realmente riparabili, così i nuovi episodi settimanali non restano esclusi dietro
+            agli stessi record irrisolvibili.
 
             **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
             **Versione:** `${{ env.VERSION }}`
             **Checksum MD5:** `${{ env.CHECKSUM }}`
             **Source URL manifest:** `${{ env.SOURCE_URL }}`
 
-            > **Release gate:** questa release resta draft finché `manifest.json` non è
-            > aggiornato e verificato con gli esatti versione, checksum e source URL sopra,
-            > e l'asset non supera lo smoke test. Solo allora va pubblicata come latest.
+            > **Procedura di pubblicazione:** questa release nasce come draft. Scaricare l'asset
+            > con `gh`, calcolarne l'MD5, pubblicare la draft, verificare l'URL pubblico e lo
+            > stesso MD5, quindi aggiungere e pushare la voce in `manifest.json` nello stesso
+            > giro. Il manifest non deve mai puntare a una draft, perché l'asset risponde 404.

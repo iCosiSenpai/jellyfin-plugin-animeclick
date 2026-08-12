@@ -34,6 +34,20 @@ public partial class AnimeClickHtmlParser
     [GeneratedRegex(@"(\d+)")]
     private static partial Regex DigitsRegex();
 
+    /// <summary>
+    /// The formats AnimeClick declares on a related work. Word boundaries are the whole point: the
+    /// acronyms are short enough to hide inside ordinary Italian words, and a naked substring test
+    /// found "ONA" in "funziona", "personaggi", "nazionale" and "stagionale". Any relation whose
+    /// description contained one of those was filed as a web release, and a web release is only
+    /// accepted as the next season on an exact year match — so a legitimate TV sequel silently
+    /// stopped resolving. AnimeClick also files a streaming-only release as "Web", which is how
+    /// modern continuations arrive: "Arrivare a te" got its third season on Netflix in 2024.
+    /// </summary>
+    [GeneratedRegex(
+        @"\b(Serie TV|TV|Film|Movie|OVA|OAV|OAD|ONA|Web|Special[ei]?)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex RelationFormatRegex();
+
     [GeneratedRegex(@"(Opening|Ending)\s+(\d+)\s*\|\s*(.+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ThemeSongRegex();
 
@@ -708,14 +722,7 @@ public partial class AnimeClickHtmlParser
                         continue;
                     }
 
-                    if (liText.Contains("Serie TV", StringComparison.OrdinalIgnoreCase) ||
-                        liText.Contains("TV", StringComparison.OrdinalIgnoreCase) ||
-                        liText.Contains("Movie", StringComparison.OrdinalIgnoreCase) ||
-                        liText.Contains("Film", StringComparison.OrdinalIgnoreCase) ||
-                        liText.Contains("Special", StringComparison.OrdinalIgnoreCase) ||
-                        liText.Contains("OVA", StringComparison.OrdinalIgnoreCase) ||
-                        liText.Contains("OAV", StringComparison.OrdinalIgnoreCase) ||
-                        liText.Contains("ONA", StringComparison.OrdinalIgnoreCase))
+                    if (RelationFormatRegex().IsMatch(liText))
                     {
                         format = liText;
                     }
@@ -1206,7 +1213,7 @@ public partial class AnimeClickHtmlParser
         }
 
         var specials = episodes
-            .Where(episode => episode.IsSpecial)
+            .Where(episode => episode.IsSpecial && !episode.IsForeignWork)
             .OrderBy(episode => episode.SourceOrder)
             .ToList();
         for (var index = 0; index < specials.Count; index++)
@@ -1259,6 +1266,7 @@ public partial class AnimeClickHtmlParser
         foreach (var episode in foreign)
         {
             episode.IsSpecial = true;
+            episode.IsForeignWork = true;
         }
     }
 
@@ -1388,17 +1396,7 @@ public partial class AnimeClickHtmlParser
                     {
                         year = y;
                     }
-                    else if (text.Contains("Serie TV", StringComparison.OrdinalIgnoreCase)
-                          || text.Contains("Film", StringComparison.OrdinalIgnoreCase)
-                          || text.Contains("OVA", StringComparison.OrdinalIgnoreCase)
-                          || text.Contains("OAV", StringComparison.OrdinalIgnoreCase)
-                          // AnimeClick files a streaming-only release as "Web", and that is how
-                          // modern continuations arrive: "Arrivare a te" got its third season on
-                          // Netflix in 2024. Leaving the format null made those relations
-                          // unclassifiable, so the season resolver could never consider them.
-                          || text.Contains("Web", StringComparison.OrdinalIgnoreCase)
-                          || text.Contains("ONA", StringComparison.OrdinalIgnoreCase)
-                          || text.Contains("Special", StringComparison.OrdinalIgnoreCase))
+                    else if (RelationFormatRegex().IsMatch(text))
                     {
                         format = text;
                     }

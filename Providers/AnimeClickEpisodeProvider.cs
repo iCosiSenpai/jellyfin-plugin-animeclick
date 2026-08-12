@@ -68,7 +68,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         string animeClickId,
         int? declaredEpisodeCount,
         int declaredSeasonsCount)
-        => $"episodes:raw:v5::{animeClickId}::{declaredEpisodeCount.GetValueOrDefault()}:{declaredSeasonsCount}";
+        => $"episodes:raw:v6::{animeClickId}::{declaredEpisodeCount.GetValueOrDefault()}:{declaredSeasonsCount}";
 
     public int Order => 0;
 
@@ -202,7 +202,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                         episodeNumber.Value,
                         episodeAnimeClickId,
                         configuration,
-                        cancellationToken)
+                        cancellationToken,
+                        info.Path)
                     .ConfigureAwait(false);
                 if (fallback is not null && !string.IsNullOrWhiteSpace(fallback.Value))
                 {
@@ -406,24 +407,6 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         // being the reference for this match.
         if (isSeasonSpecificPage)
         {
-            libraryLayout = null;
-        }
-
-        // The library may number a standalone work as a later season because the rest of its
-        // franchise sits in other folders. When the card accounts for exactly that one season,
-        // read it flat instead of looking for an offset that has nothing to measure against.
-        if (!isSeasonSpecificPage
-            && seasonNumber.HasValue
-            && libraryLayout is not null
-            && libraryLayout.IsStandaloneSeason(
-                seasonNumber.Value,
-                catalog.Episodes.Count(episode => !episode.IsSpecial)))
-        {
-            _logger.LogInformation(
-                "AnimeClick: {Id} read as a standalone season: the library holds only S{Season} and the card lists exactly its episodes",
-                animeClickId,
-                seasonNumber.Value);
-            isSeasonSpecificPage = true;
             libraryLayout = null;
         }
 

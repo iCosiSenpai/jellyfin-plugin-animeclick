@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -175,7 +177,7 @@ public class AnimeClickCacheService
         MutationGate.Wait();
         try
         {
-            var safePrefix = SanitizeFileKey(prefix);
+            var safePrefix = SanitizePathComponent(prefix);
             var removed = 0;
 
             // Do not pass user-controlled prefixes as a glob: '*' and '?' are valid filename
@@ -289,14 +291,60 @@ public class AnimeClickCacheService
         }
     }
 
-    private static string SanitizeFileKey(string key)
+    /// <summary>
+    /// Budget in bytes for a cache file name, comfortably inside the 255-byte limit that ext4, btrfs
+    /// and most other filesystems impose on a single path component. The ".json" suffix and a margin
+    /// for future key prefixes are already accounted for.
+    /// </summary>
+    private const int MaximumFileNameBytes = 200;
+
+    /// <summary>
+    /// Replaces the characters a file name cannot contain. Used on its own for prefix comparison,
+    /// where shortening the value would break the match.
+    /// </summary>
+    private static string SanitizePathComponent(string value)
     {
-        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(value);
         foreach (var c in Path.GetInvalidFileNameChars())
         {
-            key = key.Replace(c, '_');
+            value = value.Replace(c, '_');
         }
 
-        return key;
+        return value;
+    }
+
+    private static string SanitizeFileKey(string key)
+    {
+        key = SanitizePathComponent(key);
+        if (Encoding.UTF8.GetByteCount(key) <= MaximumFileNameBytes)
+        {
+            return key;
+        }
+
+        // A translation key is already ~190 characters of fixed structure — prefix, field, languages
+        // and five hashes — before the anime's own id and slug are added, and an accented character
+        // costs two bytes. A real title was enough to push the name past the limit, at which point
+        // the write failed with "File name too long", SetAsync swallowed the IOException and the
+        // consequences were entirely silent: the translation was never stored, so the same synopsis
+        // was paid for again at every refresh, and the failure backoff was never written either, so
+        // a broken endpoint was retried for every episode forever.
+        //
+        // Names that already fit are left exactly as they are, so no existing cache entry is
+        // invalidated by this; only the ones that could never be written change shape.
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..32];
+        var budget = MaximumFileNameBytes - digest.Length - 1;
+        var head = key;
+        while (Encoding.UTF8.GetByteCount(head) > budget)
+        {
+            head = head[..(head.Length - 1)];
+        }
+
+        // Never leave a dangling high surrogate: on its own it encodes as a replacement character.
+        if (head.Length > 0 && char.IsHighSurrogate(head[^1]))
+        {
+            head = head[..^1];
+        }
+
+        return head + "~" + digest;
     }
 }

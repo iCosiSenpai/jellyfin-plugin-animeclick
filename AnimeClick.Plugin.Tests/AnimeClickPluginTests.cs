@@ -1604,38 +1604,6 @@ public class AnimeClickPluginTests
         "A title that merely starts like a placeholder is still a title.");
 }
 
-    [Xunit.Fact(DisplayName = "A standalone work filed under a later season is read flat")]
-    public void TestStandaloneSeasonIsReadFlat()
-{
-    // "D4DJ All Mix" lives in Season 02 because the other D4DJ series have their own folders, and
-    // its AnimeClick card lists exactly its twelve episodes. There is no season one to measure an
-    // offset against, so the flat reading is the only sane one — and the exact count is what makes
-    // it safe: a longer card would mean row one belongs to a cour the library does not hold.
-    static AnimeClickEpisodeLibraryLayout Layout(params (int Season, int Count)[] seasons)
-        => new(
-            System.Guid.NewGuid(),
-            seasons.ToDictionary(
-                s => s.Season,
-                s => new AnimeClickEpisodeSeasonLayout(s.Season, s.Count, s.Count, true, true)));
-
-    Assert(Layout((2, 12)).IsStandaloneSeason(2, 12),
-        "One season numbered two, twelve episodes, twelve rows: read it flat.");
-    Assert(!Layout((2, 12)).IsStandaloneSeason(2, 24),
-        "A longer card may be a full timeline: row one would be the wrong episode.");
-    Assert(!Layout((1, 12), (2, 12)).IsStandaloneSeason(2, 12),
-        "With a season one present the boundaries can be measured, so no reinterpretation.");
-    Assert(!Layout((1, 12)).IsStandaloneSeason(1, 12),
-        "Season one is already the flat case and needs no special rule.");
-
-    var gappy = new AnimeClickEpisodeLibraryLayout(
-        System.Guid.NewGuid(),
-        new System.Collections.Generic.Dictionary<int, AnimeClickEpisodeSeasonLayout>
-        {
-            [2] = new AnimeClickEpisodeSeasonLayout(2, 12, 11, true, false)
-        });
-    Assert(!gappy.IsStandaloneSeason(2, 12), "A season with a hole proves nothing about the count.");
-}
-
     [Xunit.Fact(DisplayName = "The season the library dated picks the sequel card by itself")]
     public void TestSequelChosenByAirYear()
 {
@@ -2062,6 +2030,159 @@ public class AnimeClickPluginTests
         AiModel = "some-model"
     };
     Assert(!AnimeClickAiTranslator.IsConfigured(keyless, out _), "A cloud service without its key is not configured.");
+}
+
+    [Xunit.Fact(DisplayName = "A spin-off row stays out of the specials numbering too")]
+    public void TestForeignRowsDoNotDisturbTheSpecials()
+{
+    // Filing the spin-off rows among the specials fixed the regular timeline and broke the specials:
+    // "Ura-On!! 01" answered a request for the first special by its printed number, and its presence
+    // pushed every genuine special's ordinal down a slot. A row that belongs to another work is
+    // neither an episode of this one nor one of its specials, so it must stay out of both.
+    var parser = new AnimeClickHtmlParser();
+    var rows = parser.ParseEpisodesPage(TestFixtures.SpinOffInsideTableHtml, "https://www.animeclick.it");
+
+    var extra = rows.Find(row => row.RawNumberLabel == "Ep. 25 (extra)");
+    Assert(extra?.SpecialOrdinalNumber == 1, $"The real special keeps ordinal 1, got {extra?.SpecialOrdinalNumber}.");
+    foreach (var foreign in rows.FindAll(row => row.RawNumberLabel!.StartsWith("Ura-On", StringComparison.Ordinal)))
+    {
+        Assert(foreign.IsForeignWork, "A row labelled with another work must be marked as such.");
+        Assert(foreign.SpecialOrdinalNumber == 0, "And must not take a special's ordinal.");
+    }
+
+    var firstSpecial = AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(0, 1));
+    Assert(
+        firstSpecial.Episode?.Title == "Pianificazione!",
+        $"S00E01 must still find the real special, got '{firstSpecial.Episode?.Title}' via {firstSpecial.Strategy}.");
+}
+
+    [Xunit.Fact(DisplayName = "Episode zero of one season cannot take another season's prologue")]
+    public void TestEpisodeZeroRespectsItsSeason()
+{
+    // Routing a regular season's episode zero to the specials was right — AnimeClick files num<=0 as
+    // a special — but the specials lookup had no season filter, so S02E00 happily took the row the
+    // card attributes to season one: a real title, written with confidence, on the wrong episode.
+    var rows = new List<AnimeClickEpisode>
+    {
+        new() { ProviderId = "1", Title = "Prologo della prima", Number = 0, RawEpisodeNumber = 0, RawNumberLabel = "S1 Ep. 00", RawSeasonNumber = 1 },
+        new() { ProviderId = "2", Title = "Primo", Number = 1, RawEpisodeNumber = 1, RawNumberLabel = "S1 Ep. 01", RawSeasonNumber = 1 },
+        new() { ProviderId = "3", Title = "Secondo", Number = 1, RawEpisodeNumber = 1, RawNumberLabel = "S2 Ep. 01", RawSeasonNumber = 2 }
+    };
+    AnimeClickHtmlParser.FinalizeEpisodeList(rows, null);
+
+    var wrongSeason = AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(2, 0));
+    Assert(
+        wrongSeason.Episode is null,
+        $"S02E00 must find nothing, got '{wrongSeason.Episode?.Title}'.");
+
+    var rightSeason = AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(1, 0));
+    Assert(
+        rightSeason.Episode?.Title == "Prologo della prima",
+        $"S01E00 must still find its own prologue, got '{rightSeason.Episode?.Title}'.");
+
+    // The season-zero bucket is flat across seasons: a request there must stay free to reach it.
+    var specialsBucket = AnimeClickEpisodeMatcher.Match(rows, new AnimeClickEpisodeMatchContext(0, 1));
+    Assert(
+        specialsBucket.Episode?.Title == "Prologo della prima",
+        $"S00E01 must reach the first special whatever season it belongs to, got '{specialsBucket.Episode?.Title}'.");
+}
+
+    [Xunit.Fact(DisplayName = "A saved API key is never replayed towards another destination")]
+    public void TestAiConfigurationMigrationIsIdempotent()
+{
+    // The migration used to be gated on AiProvider being blank, and the configuration page blanks
+    // that very field when it cannot load the provider list. A restart then overwrote endpoint, model
+    // and key with the legacy values — empty on a recent install — throwing the key away and
+    // switching translation off without a word.
+    var chosen = new PluginConfiguration
+    {
+        AiProvider = string.Empty,
+        AiEndpoint = "https://api.groq.com/openai/v1/chat/completions",
+        AiModel = "some-model",
+        AiApiKey = "keep-me"
+    };
+    chosen.ApplyMigrations();
+    Assert(chosen.AiApiKey == "keep-me", "A configured key must survive the migration.");
+    Assert(chosen.AiEndpoint == "https://api.groq.com/openai/v1/chat/completions", "And so must the endpoint.");
+    Assert(chosen.AiModel == "some-model", "And the model.");
+    Assert(chosen.AiProvider == AnimeClickAiProviders.CustomId, "The missing provider is inferred, not imposed.");
+
+    // Running again must change nothing at all, whatever the values look like.
+    var second = chosen.ApplyMigrations();
+    Assert(!second, "A migrated configuration must report no further work.");
+
+    // A deliberately chosen timeout is not a leftover default: once migrated, it stays.
+    var timeout = new PluginConfiguration { ConfigurationVersion = 1, EpisodeTranslationTimeoutSec = 30 };
+    timeout.ApplyMigrations();
+    Assert(timeout.EpisodeTranslationTimeoutSec == 30, "A user-chosen 30 seconds must not be rewritten.");
+
+    // The legacy profile still has to be carried across for someone upgrading.
+    var legacy = new PluginConfiguration
+    {
+        OllamaCloudEndpoint = "https://ollama.com/api/chat",
+        OllamaCloudModel = "gpt-oss:20b-cloud",
+        OllamaCloudApiKey = "legacy-secret"
+    };
+    Assert(legacy.ApplyMigrations(), "An unmigrated configuration must be migrated.");
+    Assert(legacy.AiProvider == "ollama-cloud" && legacy.AiApiKey == "legacy-secret",
+        "With its provider recognised and its key preserved.");
+    Assert(AnimeClickAiTranslator.IsConfigured(legacy, out _), "So translation keeps working after the upgrade.");
+}
+
+    [Xunit.Fact(DisplayName = "An echoed request is not mistaken for the reply")]
+    public void TestReplyIsReadAfterItsAnchor()
+{
+    // A compatible gateway that returns the request alongside its answer puts the system prompt in
+    // the first "content" of the document. Taking that one would write the Italian translation
+    // instructions into the episode's synopsis.
+    var echoed = "{\"model\":\"m\",\"messages\":[{\"role\":\"system\",\"content\":\""
+        + "Sei un traduttore professionista da inglese a italiano"
+        + "\"}],\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Ichika va al festival.\"}}]}";
+    Assert(
+        AnimeClickAiTranslator.ParseTranslatedContent(
+            echoed,
+            AnimeClickAiProviders.ResolveReplyMarker(AnimeClickAiDialect.OpenAi),
+            AnimeClickAiProviders.ResolveReplyAnchor(AnimeClickAiDialect.OpenAi)) == "Ichika va al festival.",
+        "The reply must be read after the choices anchor, not from the echoed prompt.");
+
+    // The ordinary shapes must keep working, anchor or not.
+    var plain = "{\"choices\":[{\"message\":{\"content\":\"Ciao\"}}]}";
+    Assert(
+        AnimeClickAiTranslator.ParseTranslatedContent(
+            plain,
+            AnimeClickAiProviders.ResolveReplyMarker(AnimeClickAiDialect.OpenAi),
+            AnimeClickAiProviders.ResolveReplyAnchor(AnimeClickAiDialect.OpenAi)) == "Ciao",
+        "A plain OpenAI response still parses.");
+    var ollama = "{\"message\":{\"role\":\"assistant\",\"content\":\"Ciao\"}}";
+    Assert(
+        AnimeClickAiTranslator.ParseTranslatedContent(
+            ollama,
+            AnimeClickAiProviders.ResolveReplyMarker(AnimeClickAiDialect.Ollama),
+            AnimeClickAiProviders.ResolveReplyAnchor(AnimeClickAiDialect.Ollama)) == "Ciao",
+        "Ollama's shape has no wrapper and must not require one.");
+}
+
+    [Xunit.Fact(DisplayName = "A format is recognised by word, not by substring")]
+    public void TestRelationFormatNeedsWordBoundaries()
+{
+    // The acronyms are short enough to hide inside ordinary Italian words: a naked substring test
+    // found "ONA" in "funziona", "personaggi", "nazionale" and "stagionale". Any relation whose
+    // description contained one of those was filed as a web release, and a web release is only
+    // accepted as the next season on an exact year match — so a legitimate TV sequel silently
+    // stopped resolving, which is a season of titles lost to a false positive.
+    var parser = new AnimeClickHtmlParser();
+    var relations = parser.ParseRelationsPage(TestFixtures.RelationWithItalianProseHtml, "https://www.animeclick.it");
+
+    var prose = relations.Find(relation => relation.Title == "Seguito con descrizione");
+    Assert(prose is not null, "The fixture must expose the prose relation.");
+    Assert(
+        prose!.Format is null || !prose.Format.Contains("funziona", StringComparison.OrdinalIgnoreCase),
+        $"An Italian sentence must not become a format, got '{prose.Format}'.");
+
+    var declared = relations.Find(relation => relation.Title == "Seguito dichiarato");
+    Assert(
+        declared?.Format is not null && declared.Format.Contains("Serie TV", StringComparison.OrdinalIgnoreCase),
+        $"A real declaration must still be read, got '{declared?.Format}'.");
 }
 
     private static void Assert(bool condition, string message)

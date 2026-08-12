@@ -6,17 +6,14 @@ using AnimeClick.Plugin.Models;
 namespace AnimeClick.Plugin.Services;
 
 /// <summary>
-/// Why an episode in the library still has no Italian title.
-/// <para>
-/// A missing title looks identical from the outside whatever the cause, and the causes call for
-/// opposite reactions: one is fixed by a button, one will fix itself next week, one is a gap in the
-/// source that no amount of refreshing will close, and one is a real matching failure worth
-/// reporting. Presenting them as one number is what makes a working plugin look broken.
-/// </para>
+/// Why an episode in the library still has no authoritative Italian title.
+/// A valid-looking downstream title can still be stale: the AnimeClick row is the
+/// source of truth when episode titles are enabled, so the audit compares both the
+/// durable row identity and the current title.
 /// </summary>
 public enum AnimeClickAuditReason
 {
-    /// <summary>Every episode carries a real title.</summary>
+    /// <summary>The current title already matches the AnimeClick row.</summary>
     Ok,
 
     /// <summary>The series has no AnimeClick ID: nothing can be matched until it is identified.</summary>
@@ -34,14 +31,17 @@ public enum AnimeClickAuditReason
     /// <summary>The row was matched; upstream still shows a placeholder instead of a title.</summary>
     TitleNotPublished,
 
-    /// <summary>The title exists upstream and the identity is written: only a refresh is missing.</summary>
+    /// <summary>The authoritative title exists and differs from the library: only a refresh is missing.</summary>
     PendingRefresh,
 
-    /// <summary>The stored identity points at a row the current catalog no longer contains.</summary>
+    /// <summary>The stored numeric identity is absent from the current catalog.</summary>
     RowVanished,
 
-    /// <summary>No identity was ever written and no other cause explains it.</summary>
+    /// <summary>No identity was ever written and no other cause explains the missing title.</summary>
     NotMatched,
+
+    /// <summary>The title needs attention but the item or Name field is locked.</summary>
+    Locked,
 
     /// <summary>
     /// The season belongs to another AnimeClick card and the sequel traversal could not prove
@@ -51,15 +51,11 @@ public enum AnimeClickAuditReason
 }
 
 /// <summary>
-/// Classifies missing episode titles from data already on disk. Every decision here is made from a
-/// cached catalog and the library's own rows, so an audit of a whole library costs no requests.
+/// Classifies episode titles from data already on disk. Every decision here is made from a cached
+/// catalog and the library's own rows, so an audit of a whole library costs no requests.
 /// </summary>
 public static class AnimeClickLibraryAudit
 {
-    /// <summary>
-    /// Ranked by how much the user can do about it. When one series shows several causes the report
-    /// leads with the most actionable one, because that is the one worth a click.
-    /// </summary>
     private static readonly AnimeClickAuditReason[] SeverityOrder =
     [
         AnimeClickAuditReason.NotIdentified,
@@ -67,6 +63,7 @@ public static class AnimeClickLibraryAudit
         AnimeClickAuditReason.NumberingCollision,
         AnimeClickAuditReason.NotMatched,
         AnimeClickAuditReason.RowVanished,
+        AnimeClickAuditReason.Locked,
         AnimeClickAuditReason.PendingRefresh,
         AnimeClickAuditReason.CatalogNotCached,
         AnimeClickAuditReason.TitleNotPublished,
@@ -77,7 +74,7 @@ public static class AnimeClickLibraryAudit
     /// <summary>Italian one-liners, shown as-is in the configuration page.</summary>
     public static string Describe(AnimeClickAuditReason reason) => reason switch
     {
-        AnimeClickAuditReason.Ok => "Tutti gli episodi hanno un titolo.",
+        AnimeClickAuditReason.Ok => "Tutti gli episodi hanno il titolo AnimeClick aggiornato.",
         AnimeClickAuditReason.NotIdentified =>
             "La serie non è identificata su AnimeClick: identificala per abilitare i titoli.",
         AnimeClickAuditReason.CatalogNotCached =>
@@ -89,12 +86,14 @@ public static class AnimeClickLibraryAudit
         AnimeClickAuditReason.TitleNotPublished =>
             "Episodio abbinato, ma su AnimeClick il titolo non è ancora stato pubblicato.",
         AnimeClickAuditReason.PendingRefresh =>
-            "Il titolo esiste su AnimeClick: basta un ricontrollo per scriverlo.",
+            "AnimeClick pubblica un titolo diverso: basta un ricontrollo per applicarlo.",
         AnimeClickAuditReason.RowVanished =>
-            "L'identità salvata punta a una riga che la scheda non contiene più: svuota la cache.",
+            "L'identità numerica salvata non compare più nella scheda corrente: analizza la serie.",
         AnimeClickAuditReason.NotMatched =>
             "Nessuna identità AnimeClick scritta su questo episodio: prova il ricontrollo dei titoli. "
             + "Se resiste, la numerazione della scheda non coincide con quella della libreria.",
+        AnimeClickAuditReason.Locked =>
+            "Il titolo avrebbe bisogno di un ricontrollo, ma l'elemento o il campo Nome è bloccato.",
         AnimeClickAuditReason.CardNotResolved =>
             "La stagione sta su un'altra scheda AnimeClick e la traversata dei sequel non è riuscita "
             + "a dimostrare quale: scrivi l'ID di quel cour nel campo AnimeClick della stagione.",
@@ -111,7 +110,10 @@ public static class AnimeClickLibraryAudit
             return AnimeClickAuditReason.CatalogNotCached;
         }
 
-        var withTitle = catalog.Episodes.Count(episode =>
+        var relevantRows = catalog.Episodes
+            .Where(episode => !episode.IsForeignWork)
+            .ToList();
+        var withTitle = relevantRows.Count(episode =>
             !string.IsNullOrWhiteSpace(episode.Title)
             && !AnimeClickHtmlParser.IsPlaceholderEpisodeText(episode.Title));
         if (withTitle == 0)
@@ -119,9 +121,7 @@ public static class AnimeClickLibraryAudit
             return AnimeClickAuditReason.CardHasNoTitles;
         }
 
-        // Only a collision among the regular rows hides titles: ambiguous specials are matched by
-        // their own ordinal and stay reachable.
-        if (catalog.Episodes.Any(episode => !episode.IsSpecial && episode.NumberIsAmbiguous))
+        if (relevantRows.Any(episode => !episode.IsSpecial && episode.NumberIsAmbiguous))
         {
             return AnimeClickAuditReason.NumberingCollision;
         }
@@ -130,39 +130,70 @@ public static class AnimeClickLibraryAudit
     }
 
     /// <summary>
-    /// Explains one untitled episode. <paramref name="episodeAnimeClickId"/> is the identity the
-    /// provider wrote on it, which is what separates "matched but no title upstream" from "never
-    /// matched" — the whole point of the report.
+    /// Historical overload retained for callers that are classifying an already-known missing
+    /// title. New library paths should also supply the current title and its placeholder state.
     /// </summary>
     public static AnimeClickAuditReason ClassifyEpisode(
         string? episodeAnimeClickId,
+        AnimeClickEpisodeCatalog? catalog)
+        => ClassifyEpisode(episodeAnimeClickId, currentTitle: null, titleNeedsRepair: true, catalog);
+
+    /// <summary>
+    /// Compares one library episode with its cached AnimeClick row. A complete downstream title is
+    /// still repairable when it differs from the now-published Italian title. A complete item with
+    /// no usable catalog is left alone rather than being reported as a speculative problem.
+    /// </summary>
+    public static AnimeClickAuditReason ClassifyEpisode(
+        string? episodeAnimeClickId,
+        string? currentTitle,
+        bool titleNeedsRepair,
         AnimeClickEpisodeCatalog? catalog)
     {
         var catalogVerdict = ClassifyCatalog(catalog);
         if (catalogVerdict is not null)
         {
-            return catalogVerdict.Value;
+            return titleNeedsRepair ? catalogVerdict.Value : AnimeClickAuditReason.Ok;
         }
 
         if (string.IsNullOrWhiteSpace(episodeAnimeClickId))
         {
-            return AnimeClickAuditReason.NotMatched;
+            return titleNeedsRepair ? AnimeClickAuditReason.NotMatched : AnimeClickAuditReason.Ok;
         }
 
-        var row = catalog!.Episodes.FirstOrDefault(episode => string.Equals(
-            episode.ProviderId,
-            episodeAnimeClickId,
-            StringComparison.OrdinalIgnoreCase));
-        if (row is null)
+        var rows = catalog!.Episodes
+            .Where(episode => !episode.IsForeignWork)
+            .Where(episode => AnimeClickEpisodeProviderId.Equals(
+                episode.ProviderId,
+                episodeAnimeClickId))
+            .ToList();
+        if (rows.Count != 1)
         {
-            return AnimeClickAuditReason.RowVanished;
+            return titleNeedsRepair ? AnimeClickAuditReason.RowVanished : AnimeClickAuditReason.Ok;
         }
 
-        return string.IsNullOrWhiteSpace(row.Title)
-               || AnimeClickHtmlParser.IsPlaceholderEpisodeText(row.Title)
-            ? AnimeClickAuditReason.TitleNotPublished
-            : AnimeClickAuditReason.PendingRefresh;
+        var rowTitle = rows[0].Title;
+        if (string.IsNullOrWhiteSpace(rowTitle)
+            || AnimeClickHtmlParser.IsPlaceholderEpisodeText(rowTitle))
+        {
+            return titleNeedsRepair
+                ? AnimeClickAuditReason.TitleNotPublished
+                : AnimeClickAuditReason.Ok;
+        }
+
+        return titleNeedsRepair || !AnimeClickEpisodeProviderId.TitlesEquivalent(currentTitle, rowTitle)
+            ? AnimeClickAuditReason.PendingRefresh
+            : AnimeClickAuditReason.Ok;
     }
+
+    /// <summary>
+    /// Marks an actionable title refresh as locked without hiding unrelated audit causes.
+    /// </summary>
+    public static AnimeClickAuditReason ApplyNameLock(
+        AnimeClickAuditReason reason,
+        bool isNameLocked)
+        => reason == AnimeClickAuditReason.PendingRefresh && isNameLocked
+            ? AnimeClickAuditReason.Locked
+            : reason;
 
     /// <summary>
     /// The headline cause for a series: the most actionable one among the episodes that need a

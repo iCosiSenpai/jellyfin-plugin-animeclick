@@ -37,6 +37,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
     private readonly AnimeClickTvdbClient _tvdbClient;
     private readonly AnimeClickMetadataFallbackService _fallbackService;
     private readonly AnimeClickTranslationQueue _translationQueue;
+    private readonly AnimeClickLibraryQualityService _qualityService;
     private readonly ILibraryManager _libraryManager;
     private readonly ITaskManager _taskManager;
     private readonly ILogger<AnimeClickDiagnosticsController> _logger;
@@ -52,6 +53,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         AnimeClickTvdbClient tvdbClient,
         AnimeClickMetadataFallbackService fallbackService,
         AnimeClickTranslationQueue translationQueue,
+        AnimeClickLibraryQualityService qualityService,
         ILibraryManager libraryManager,
         ITaskManager taskManager,
         ILogger<AnimeClickDiagnosticsController> logger)
@@ -66,6 +68,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         _tvdbClient = tvdbClient;
         _fallbackService = fallbackService;
         _translationQueue = translationQueue;
+        _qualityService = qualityService;
         _libraryManager = libraryManager;
         _taskManager = taskManager;
         _logger = logger;
@@ -237,15 +240,32 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
             var reasons = new List<AnimeClickAuditReason>();
             foreach (var seasonGroup in episodes
-                         .Where(AnimeClickRefreshMissingTitlesTask.NeedsTitle)
                          .GroupBy(episode => episode.ParentIndexNumber ?? episode.SeasonId.GetHashCode())
                          .OrderBy(group => group.Key))
             {
-                var untitled = seasonGroup.ToList();
-                var seasonId = untitled[0].SeasonId;
-                var cardId = seasonCardIds.TryGetValue(seasonId, out var seasonCard)
+                var seasonEpisodes = seasonGroup.ToList();
+                var seasonId = seasonEpisodes[0].SeasonId;
+                var storedSeasonCard = seasonCardIds.TryGetValue(seasonId, out var seasonCard)
                     ? seasonCard
-                    : seriesAnimeClickId;
+                    : null;
+                string? traversedCard = null;
+                if (!string.IsNullOrWhiteSpace(seriesAnimeClickId)
+                    && seasonEpisodes[0].ParentIndexNumber is > 1)
+                {
+                    var layout = _layoutResolver.Resolve(seasonEpisodes[0].Path);
+                    traversedCard = await _seasonResolver
+                        .ResolveCachedAsync(
+                            seriesAnimeClickId,
+                            seasonEpisodes[0].ParentIndexNumber,
+                            config,
+                            cancellationToken,
+                            layout?.GetSeasonAirYears())
+                        .ConfigureAwait(false);
+                }
+
+                // Replay the provider's priority without leaving the local audit: a proven cached
+                // traversal wins, then an explicit season ID, then the series card.
+                var cardId = traversedCard ?? storedSeasonCard ?? seriesAnimeClickId;
 
                 AnimeClickEpisodeCatalog? catalog = null;
                 if (!string.IsNullOrWhiteSpace(cardId))
@@ -253,34 +273,36 @@ public class AnimeClickDiagnosticsController : ControllerBase
                     catalog = await GetCachedCatalogAsync(cardId, config, catalogs, cancellationToken)
                         .ConfigureAwait(false);
 
-                    // A season card that was never cached still has the main card to answer from.
-                    if (catalog is null
-                        && !string.IsNullOrWhiteSpace(seriesAnimeClickId)
-                        && !string.Equals(cardId, seriesAnimeClickId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        catalog = await GetCachedCatalogAsync(
-                                seriesAnimeClickId,
-                                config,
-                                catalogs,
-                                cancellationToken)
-                            .ConfigureAwait(false);
-                    }
                 }
 
-                var seasonReasons = untitled
-                    .Select(episode => string.IsNullOrWhiteSpace(seriesAnimeClickId)
-                        ? AnimeClickAuditReason.NotIdentified
-                        : AnimeClickLibraryAudit.ClassifyEpisode(
-                            episode.GetProviderId("AnimeClick"),
-                            catalog))
+                var seasonReasons = seasonEpisodes
+                    .Select(episode =>
+                    {
+                        var needsTitle = AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode);
+                        var result = string.IsNullOrWhiteSpace(seriesAnimeClickId)
+                            ? needsTitle ? AnimeClickAuditReason.NotIdentified : AnimeClickAuditReason.Ok
+                            : AnimeClickLibraryAudit.ClassifyEpisode(
+                                episode.GetProviderId("AnimeClick"),
+                                episode.Name,
+                                needsTitle,
+                                catalog);
+                        return AnimeClickLibraryAudit.ApplyNameLock(
+                            result,
+                            AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode));
+                    })
+                    .Where(reason => reason != AnimeClickAuditReason.Ok)
                     .ToList();
-                reasons.AddRange(seasonReasons);
+                if (seasonReasons.Count == 0)
+                {
+                    continue;
+                }
 
+                reasons.AddRange(seasonReasons);
                 var seasonReason = AnimeClickLibraryAudit.Summarize(seasonReasons);
                 row.Seasons.Add(new LibraryAuditSeasonItem
                 {
-                    SeasonNumber = untitled[0].ParentIndexNumber,
-                    MissingTitleCount = untitled.Count,
+                    SeasonNumber = seasonEpisodes[0].ParentIndexNumber,
+                    MissingTitleCount = seasonReasons.Count,
                     AnimeClickId = cardId,
                     Reason = seasonReason.ToString(),
                     ReasonLabel = AnimeClickLibraryAudit.Describe(seasonReason)
@@ -377,20 +399,16 @@ public class AnimeClickDiagnosticsController : ControllerBase
                      .GroupBy(episode => episode.ParentIndexNumber)
                      .OrderBy(group => group.Key ?? int.MaxValue))
         {
-            var untitled = seasonGroup.Where(AnimeClickRefreshMissingTitlesTask.NeedsTitle).ToList();
-            if (untitled.Count == 0)
-            {
-                continue;
-            }
+            var seasonEpisodes = seasonGroup.ToList();
 
             // Replay the provider's own decision instead of assuming the series card: on AnimeClick
             // a season is usually a card of its own, and reporting "no match" against the wrong card
             // would blame the plugin for a season it never looked at.
             var seasonNumber = seasonGroup.Key;
-            var storedSeasonId = _libraryManager.GetItemById(untitled[0].SeasonId) is Season season
+            var storedSeasonId = _libraryManager.GetItemById(seasonEpisodes[0].SeasonId) is Season season
                 ? season.GetProviderId("AnimeClick")
                 : null;
-            var layout = _layoutResolver.Resolve(untitled[0].Path);
+            var layout = _layoutResolver.Resolve(seasonEpisodes[0].Path);
             var traversed = await _seasonResolver
                 .ResolveAsync(
                     animeClickId,
@@ -402,11 +420,25 @@ public class AnimeClickDiagnosticsController : ControllerBase
             var cardId = traversed ?? storedSeasonId ?? animeClickId;
             var catalog = await LoadCatalogAsync(cardId, config, cancellationToken).ConfigureAwait(false);
 
-            var seasonReasons = untitled
-                .Select(episode => AnimeClickLibraryAudit.ClassifyEpisode(
-                    episode.GetProviderId("AnimeClick"),
-                    catalog))
+            var seasonReasons = seasonEpisodes
+                .Select(episode =>
+                {
+                    var result = AnimeClickLibraryAudit.ClassifyEpisode(
+                        episode.GetProviderId("AnimeClick"),
+                        episode.Name,
+                        AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode),
+                        catalog);
+                    return result == AnimeClickAuditReason.PendingRefresh
+                           && AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode)
+                        ? AnimeClickAuditReason.Locked
+                        : result;
+                })
+                .Where(reason => reason != AnimeClickAuditReason.Ok)
                 .ToList();
+            if (seasonReasons.Count == 0)
+            {
+                continue;
+            }
 
             // A season past the first, on a card that is not its own and that nothing resolved, is
             // the case the season-level ID field exists for. Saying so is more useful than
@@ -425,7 +457,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
             result.Seasons.Add(new LibraryAuditSeasonItem
             {
                 SeasonNumber = seasonNumber,
-                MissingTitleCount = untitled.Count,
+                MissingTitleCount = seasonReasons.Count,
                 AnimeClickId = cardId,
                 CardIsResolved = traversed is not null || !string.IsNullOrWhiteSpace(storedSeasonId),
                 CardRowCount = catalog?.Episodes.Count,
@@ -482,6 +514,47 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 cancellationToken)
             .ConfigureAwait(false);
         return loaded.Catalog;
+    }
+
+    /// <summary>
+    /// Classifies the language and completeness of metadata already stored in Jellyfin. The scan is
+    /// deliberately local: it does not contact AnimeClick, TMDB, TVDB or the configured AI service.
+    /// </summary>
+    [HttpGet("LibraryQualityAudit")]
+    public ActionResult<AnimeClickLibraryQualityReport> LibraryQualityAudit()
+    {
+        var report = _qualityService.Audit();
+        _logger.LogInformation(
+            "AnimeClick local metadata audit: groups={Groups} items={Items} english={English} missing={Missing} unknown={Unknown} locked={Locked} repairable={Repairable}",
+            report.GroupCount,
+            report.ItemCount,
+            report.EnglishCount,
+            report.MissingCount,
+            report.UnknownCount,
+            report.LockedCount,
+            report.RepairableCount);
+        return Ok(report);
+    }
+
+    /// <summary>
+    /// Queues a bounded set of non-destructive metadata refreshes. Every ID is revalidated against
+    /// the current library state, and only English or missing unlocked fields remain eligible.
+    /// </summary>
+    [HttpPost("LibraryQualityRepair")]
+    public ActionResult<AnimeClickLibraryQualityRepairResult> LibraryQualityRepair(
+        [FromBody] LibraryQualityRepairRequest request)
+    {
+        if (request is null || request.ItemIds is null || request.ItemIds.Count == 0)
+        {
+            return BadRequest(new { error = "itemIds must contain at least one Jellyfin item ID" });
+        }
+
+        return Ok(_qualityService.QueueRepair(request.ItemIds));
+    }
+
+    public sealed class LibraryQualityRepairRequest
+    {
+        public List<string> ItemIds { get; set; } = [];
     }
 
     /// <summary>
@@ -583,9 +656,30 @@ public class AnimeClickDiagnosticsController : ControllerBase
             }
         }
 
-        // Hold the queue publication gate for the complete administrative clear,
-        // preventing a background translation from becoming visible afterward.
-        using var translationInvalidation = _translationQueue.BeginInvalidation();
+        // Hold publication for the complete administrative clear. Targeted requests invalidate
+        // only matching translation work; unrelated series keep their pending callbacks.
+        Func<string, bool>? translationInvalidationPredicate = null;
+        if (hasKey || hasPrefix || normalizedId is not null)
+        {
+            var stableId = normalizedId?.Split('/', 2)[0];
+            translationInvalidationPredicate = workKey =>
+                (hasKey
+                    && (string.Equals(workKey, request.Key, StringComparison.Ordinal)
+                        || string.Equals(workKey + "::backoff", request.Key, StringComparison.Ordinal)))
+                || (hasPrefix
+                    && (workKey.StartsWith(request.Prefix!, StringComparison.Ordinal)
+                        || (workKey + "::backoff").StartsWith(request.Prefix!, StringComparison.Ordinal)))
+                || (stableId is not null
+                    && (workKey.StartsWith(
+                            "translation:v4::" + stableId + "::",
+                            StringComparison.Ordinal)
+                        || workKey.StartsWith(
+                            "translation:v4::" + stableId + "/",
+                            StringComparison.Ordinal)));
+        }
+
+        using var translationInvalidation = _translationQueue.BeginInvalidation(
+            translationInvalidationPredicate);
 
         if (!hasKey && !hasPrefix && !hasAnimeClickId)
         {
@@ -605,32 +699,36 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
         if (normalizedId is not null && canonicalAnimeUrl is not null)
         {
+            var stableAnimeClickId = normalizedId.Split('/', 2)[0];
+
             // Episode synopsis entries are keyed by the stable /episodio ID, which
             // cannot be derived from a series ID. A targeted series reset therefore
             // invalidates this small cache family as a whole.
             removed += _cache.ClearByPrefix("episodeOverview:v2::");
             removed += _cache.ClearByPrefix("episodeOverview:v1::");
 
-            // Raw v5 keys include declared-count suffixes, so targeted invalidation
-            // removes the complete key family for the selected AnimeClick entry.
-            removed += _cache.ClearByPrefix("episodes:raw:v5::" + normalizedId + "::");
-            if (!normalizedId.Contains('/', StringComparison.Ordinal))
+            // Raw catalog keys include declared-count suffixes. Clear the current family and the
+            // legacy version so an administrative reset cannot leave semantically stale rows.
+            foreach (var rawPrefix in new[] { "episodes:raw:v6::", "episodes:raw:v5::" })
             {
-                removed += _cache.ClearByPrefix("episodes:raw:v5::" + normalizedId + "/");
+                // SanitizeFileKey hash-shortens filenames over 200 bytes. A full long slug can no
+                // longer be matched as a prefix after that boundary, while these stable numeric
+                // family prefixes remain short and clear both numeric and every slug variant.
+                removed += _cache.ClearByPrefix(rawPrefix + stableAnimeClickId + "::");
+                removed += _cache.ClearByPrefix(rawPrefix + stableAnimeClickId + "/");
             }
 
             var episodePrefixes = new[] { "episodes:v4::", "episodes:v3::", "episodes:v2::", "episodes::" };
             foreach (var prefix in episodePrefixes)
             {
-                removed += _cache.ClearKey(prefix + normalizedId);
-                if (!normalizedId.Contains('/', StringComparison.Ordinal))
-                {
-                    removed += _cache.ClearByPrefix(prefix + normalizedId + "/");
-                }
+                removed += _cache.ClearKey(prefix + stableAnimeClickId);
+                removed += _cache.ClearByPrefix(prefix + stableAnimeClickId + "/");
             }
 
             var seasonPrefixes = new[]
             {
+                "seasonMap:v6::",
+                "seasonMap:v5::",
                 "seasonMap:v4::",
                 "seasonMap:v3::",
                 "seasonMap:v2::",
@@ -638,11 +736,8 @@ public class AnimeClickDiagnosticsController : ControllerBase
             };
             foreach (var prefix in seasonPrefixes)
             {
-                removed += _cache.ClearByPrefix(prefix + normalizedId + "::");
-                if (!normalizedId.Contains('/', StringComparison.Ordinal))
-                {
-                    removed += _cache.ClearByPrefix(prefix + normalizedId + "/");
-                }
+                removed += _cache.ClearByPrefix(prefix + stableAnimeClickId + "::");
+                removed += _cache.ClearByPrefix(prefix + stableAnimeClickId + "/");
             }
 
             // Clear language-aware source resolution and content-addressed translations
@@ -658,26 +753,24 @@ public class AnimeClickDiagnosticsController : ControllerBase
             };
             foreach (var prefix in externalIdPrefixes)
             {
-                var mappingKey = prefix + normalizedId;
+                var mappingKey = prefix + stableAnimeClickId;
                 removed += _cache.ClearKey(mappingKey);
                 removed += _cache.ClearKey(mappingKey + "::miss");
-                if (!normalizedId.Contains('/', StringComparison.Ordinal))
-                {
-                    removed += _cache.ClearByPrefix(prefix + normalizedId + "/");
-                }
+                removed += _cache.ClearByPrefix(prefix + stableAnimeClickId + "/");
             }
 
-            var stableAnimeClickId = normalizedId.Split('/', 2)[0];
             removed += _cache.ClearByPrefix("anilistId:v3::" + stableAnimeClickId + "::");
             removed += _cache.ClearByPrefix("anilistId:v2::" + stableAnimeClickId + "::");
 
-            foreach (var translationPrefix in new[] { "translation:v3::", "translation:v2::" })
+            foreach (var translationPrefix in new[]
+                     {
+                         "translation:v4::",
+                         "translation:v3::",
+                         "translation:v2::"
+                     })
             {
-                removed += _cache.ClearByPrefix(translationPrefix + normalizedId + "::");
-                if (!normalizedId.Contains('/', StringComparison.Ordinal))
-                {
-                    removed += _cache.ClearByPrefix(translationPrefix + normalizedId + "/");
-                }
+                removed += _cache.ClearByPrefix(translationPrefix + stableAnimeClickId + "::");
+                removed += _cache.ClearByPrefix(translationPrefix + stableAnimeClickId + "/");
             }
 
             if (normalizedId.Contains('/', StringComparison.Ordinal))
@@ -1172,8 +1265,12 @@ public class AnimeClickDiagnosticsController : ControllerBase
             return false;
         }
 
-        if (needsCredential
-            && endpointChanged
+        // Deliberately not gated on needsCredential: replaying a saved secret towards a different
+        // destination must be refused whatever the chosen preset claims about needing a key. The
+        // first version tied this to the preset, and since an unknown provider id resolves to
+        // "custom" — which needs no key — asking for custom plus an arbitrary HTTPS endpoint walked
+        // straight past both guards and had the saved key sent there.
+        if (endpointChanged
             && !string.IsNullOrEmpty(storedApiKey)
             && string.Equals(explicitApiKey, storedApiKey, StringComparison.Ordinal))
         {
@@ -1185,9 +1282,14 @@ public class AnimeClickDiagnosticsController : ControllerBase
         }
 
         endpoint = endpointUri.AbsoluteUri;
-        apiKey = endpointUri.Scheme == Uri.UriSchemeHttps
-            ? (string.IsNullOrWhiteSpace(explicitApiKey) ? storedApiKey : explicitApiKey)
-            : string.Empty;
+
+        // Same reason: the saved key belongs to the saved destination. Towards a new one only a key
+        // typed in this very request may be used, and towards a plain-HTTP endpoint none at all.
+        apiKey = endpointUri.Scheme != Uri.UriSchemeHttps
+            ? string.Empty
+            : endpointChanged
+                ? explicitApiKey
+                : (string.IsNullOrWhiteSpace(explicitApiKey) ? storedApiKey : explicitApiKey);
         model = string.IsNullOrWhiteSpace(requestedModel) ? stored.AiModel : requestedModel.Trim();
         error = string.Empty;
         return true;
