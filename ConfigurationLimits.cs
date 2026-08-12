@@ -30,7 +30,7 @@ internal static class ConfigurationLimits
     internal const int TranslationCacheHoursMinimum = 0;
     internal const int TranslationCacheHoursMaximum = 100 * 8760;
 
-    // Matches the clamp the Ollama translator and the diagnostics endpoint already apply.
+    // Matches the clamp the AI translator and the diagnostics endpoint already apply.
     internal const int TranslationTimeoutMinimum = 5;
     internal const int TranslationTimeoutMaximum = 120;
 

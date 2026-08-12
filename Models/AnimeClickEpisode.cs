@@ -48,6 +48,18 @@ public class AnimeClickEpisode
     /// <summary>True for S0, OVA/OAD/ONA, recap, bonus, PV, episode 0 and non-integer rows.</summary>
     public bool IsSpecial { get; set; }
 
+    /// <summary>
+    /// True for a row that belongs to a different work listed inside this card's table — a numbered
+    /// spin-off like K-On!!'s "Ura-On!!" shorts.
+    /// <para>
+    /// Such a row is neither an episode of this work nor one of its specials, so it must stay out of
+    /// both numberings. Filing it among the specials, as a first attempt did, made it collide with
+    /// the real ones: its printed number matched a request for the first special, and its presence
+    /// shifted every genuine special's ordinal by one.
+    /// </para>
+    /// </summary>
+    public bool IsForeignWork { get; set; }
+
     /// <summary>True for decimal, suffix, range or non-numeric labels requiring extra evidence.</summary>
     public bool HasNonStandardNumber { get; set; }
 

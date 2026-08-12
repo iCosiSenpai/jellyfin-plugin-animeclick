@@ -41,11 +41,14 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
     /// large library would hammer the site for hours.
     /// </summary>
     private const int MaximumEpisodesPerRun = 200;
+    private const string CandidateCursorCacheKey = "taskState::missingEpisodeTitlesCursor:v1";
 
     private readonly ILibraryManager _libraryManager;
     private readonly IProviderManager _providerManager;
     private readonly IFileSystem _fileSystem;
     private readonly AnimeClickCacheService _cache;
+    private readonly AnimeClickSeasonResolver _seasonResolver;
+    private readonly AnimeClickEpisodeLayoutResolver _layoutResolver;
     private readonly ILogger<AnimeClickRefreshMissingTitlesTask> _logger;
 
     /// <summary>
@@ -56,12 +59,16 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
         IProviderManager providerManager,
         IFileSystem fileSystem,
         AnimeClickCacheService cache,
+        AnimeClickSeasonResolver seasonResolver,
+        AnimeClickEpisodeLayoutResolver layoutResolver,
         ILogger<AnimeClickRefreshMissingTitlesTask> logger)
     {
         _libraryManager = libraryManager;
         _providerManager = providerManager;
         _fileSystem = fileSystem;
         _cache = cache;
+        _seasonResolver = seasonResolver;
+        _layoutResolver = layoutResolver;
         _logger = logger;
     }
 
@@ -73,10 +80,10 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
 
     /// <inheritdoc />
     public string Description =>
-        "Rilegge la lista episodi di AnimeClick per gli episodi che hanno ancora un titolo "
-        + "segnaposto (\"Episodio 12\") o il nome del file. Sceglie quelli che un ricontrollo può "
-        + "davvero sistemare — titolo già presente sulla scheda, riga cambiata, episodio mai "
-        + "abbinato — e salta le schede che non pubblicano titoli. "
+        "Rilegge la lista episodi di AnimeClick per i titoli segnaposto, derivati dal nome file "
+        + "o rimasti in una lingua diversa dopo che AnimeClick ha pubblicato il titolo italiano. "
+        + "Confronta l'identità numerica stabile della riga, rispetta i campi bloccati e salta "
+        + "le schede che non possono migliorare. "
         + $"Ogni esecuzione ne accoda al massimo {MaximumEpisodesPerRun}.";
 
     /// <inheritdoc />
@@ -179,11 +186,12 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
         };
 
         var catalogs = new Dictionary<string, AnimeClickEpisodeCatalog?>(StringComparer.OrdinalIgnoreCase);
-        var ranked = new List<(int Priority, BaseItem Episode)>();
+        var seasonMaps = new Dictionary<(string SeriesId, int SeasonNumber, int? AirYear), string?>();
+        var ranked = new List<(int Priority, Episode Episode)>();
         foreach (var item in episodes)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (item is not Episode episode || episode.IsLocked || !NeedsTitle(episode))
+            if (item is not Episode episode || IsNameLocked(episode))
             {
                 continue;
             }
@@ -195,14 +203,38 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
             }
 
             var seasonId = episode.Season?.GetProviderId("AnimeClick");
-            var catalog = await GetCachedCatalogAsync(
-                    string.IsNullOrWhiteSpace(seasonId) ? seriesId : seasonId,
-                    configuration,
-                    catalogs,
-                    cancellationToken)
+            string? traversedCard = null;
+            if (episode.ParentIndexNumber is > 1)
+            {
+                var layout = _layoutResolver.Resolve(episode.Path);
+                var airYears = layout?.GetSeasonAirYears();
+                var airYear = airYears?.GetValueOrDefault(episode.ParentIndexNumber.Value);
+                var seasonMapKey = (seriesId, episode.ParentIndexNumber.Value, airYear);
+                if (!seasonMaps.TryGetValue(seasonMapKey, out traversedCard))
+                {
+                    traversedCard = await _seasonResolver
+                        .ResolveCachedAsync(
+                            seriesId,
+                            episode.ParentIndexNumber,
+                            configuration,
+                            cancellationToken,
+                            airYears)
+                        .ConfigureAwait(false);
+                    seasonMaps[seasonMapKey] = traversedCard;
+                }
+            }
+
+            // Match the provider's card priority while staying cache-only: a traversal already
+            // proved during a real refresh wins, then an explicit season ID, then the series card.
+            var cardId = traversedCard
+                ?? (string.IsNullOrWhiteSpace(seasonId) ? seriesId : seasonId);
+            var catalog = await GetCachedCatalogAsync(cardId, configuration, catalogs, cancellationToken)
                 .ConfigureAwait(false);
+
             var reason = AnimeClickLibraryAudit.ClassifyEpisode(
                 episode.GetProviderId("AnimeClick"),
+                episode.Name,
+                NeedsTitle(episode),
                 catalog);
             if (!priority.TryGetValue(reason, out var rank))
             {
@@ -213,12 +245,73 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
             ranked.Add((rank, episode));
         }
 
-        return [.. ranked
+        var ordered = ranked
             .OrderBy(entry => entry.Priority)
-            .ThenBy(entry => entry.Episode.Name, StringComparer.Ordinal)
-            .Take(MaximumEpisodesPerRun)
-            .Select(entry => entry.Episode)];
+
+            // Keep a total order before applying the persisted cursor. Stable ties make the cursor
+            // meaningful across runs instead of depending on the database's incidental row order.
+            .ThenBy(entry => entry.Episode.SeriesName ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(entry => entry.Episode.ParentIndexNumber ?? int.MaxValue)
+            .ThenBy(entry => entry.Episode.IndexNumber ?? int.MaxValue)
+            .ThenBy(entry => entry.Episode.Id)
+            .Select(entry => entry.Episode)
+            .ToList();
+        if (ordered.Count <= MaximumEpisodesPerRun)
+        {
+            return [.. ordered.Select(episode => (BaseItem)episode)];
+        }
+
+        // A hard cap without rotation permanently starves every candidate after the first 200 when
+        // upstream keeps those first rows unresolved. Persist a circular cursor so each weekly run
+        // starts where the previous one stopped while the first run still favors the highest yield.
+        var cursor = await _cache
+            .GetAsync<int>(CandidateCursorCacheKey, cancellationToken)
+            .ConfigureAwait(false);
+        var window = SelectRotatingWindow(ordered, cursor, MaximumEpisodesPerRun);
+        await _cache
+            .SetAsync(
+                CandidateCursorCacheKey,
+                window.NextCursor!.Value,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return [.. window.Items.Select(episode => (BaseItem)episode)];
     }
+
+    /// <summary>
+    /// Selects a bounded circular window without touching persistent state. A null next cursor
+    /// means the full input fits and callers do not need to persist rotation state.
+    /// </summary>
+    internal static RotatingWindow<T> SelectRotatingWindow<T>(
+        IReadOnlyList<T> items,
+        int cursor,
+        int cap)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        if (cap <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cap));
+        }
+
+        if (items.Count <= cap)
+        {
+            return new RotatingWindow<T>([.. items], null);
+        }
+
+        var offset = cursor % items.Count;
+        if (offset < 0)
+        {
+            offset += items.Count;
+        }
+
+        var selected = items
+            .Skip(offset)
+            .Concat(items.Take(offset))
+            .Take(cap)
+            .ToList();
+        return new RotatingWindow<T>(selected, (offset + cap) % items.Count);
+    }
+
+    internal sealed record RotatingWindow<T>(IReadOnlyList<T> Items, int? NextCursor);
 
     /// <summary>The cached catalog for one card, memoized, never fetched.</summary>
     private async Task<AnimeClickEpisodeCatalog?> GetCachedCatalogAsync(
@@ -252,6 +345,11 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
         memo[animeClickId] = catalog;
         return catalog;
     }
+
+    /// <summary>True when Jellyfin must not let an automated refresh alter the title.</summary>
+    internal static bool IsNameLocked(Episode episode)
+        => episode.IsLocked
+            || (episode.LockedFields?.Contains(MetadataField.Name) ?? false);
 
     /// <summary>
     /// True when the stored name carries no information: a number restated as a title, or the

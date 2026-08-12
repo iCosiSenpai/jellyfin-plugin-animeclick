@@ -29,9 +29,13 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<AnimeClickAniListResolver>();
         services.AddSingleton<AnimeClickTmdbClient>();
         services.AddSingleton<AnimeClickAiTranslator>();
+        services.AddSingleton<AnimeClickMetadataRefreshIntentRegistry>();
+        services.AddSingleton<AnimeClickMetadataRefreshScheduler>();
         services.AddSingleton<AnimeClickTranslationQueue>();
         services.AddSingleton<AnimeClickTvdbClient>();
         services.AddSingleton<AnimeClickMetadataFallbackService>();
+        services.AddSingleton<IAnimeClickOverviewResolver, AnimeClickOverviewResolver>();
+        services.AddSingleton<AnimeClickLibraryQualityService>();
     }
 
     public void RegisterServices(IServiceCollection services, IServerApplicationHost applicationHost)

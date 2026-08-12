@@ -3,7 +3,7 @@
 (function () {
     'use strict';
 
-    var V = '0.5.0.0';
+    var V = '0.5.1.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -813,7 +813,8 @@
         NumberingCollision: 'danger',
         NotMatched: 'danger',
         CardNotResolved: 'danger',
-        RowVanished: 'danger'
+        RowVanished: 'danger',
+        Locked: 'warn'
     };
 
     var AUDIT_SHORT = {
@@ -826,7 +827,8 @@
         NumberingCollision: 'Numerazione ripetuta',
         NotMatched: 'Nessun abbinamento',
         CardNotResolved: 'Scheda di stagione da indicare',
-        RowVanished: 'Riga scomparsa'
+        RowVanished: 'Riga scomparsa',
+        Locked: 'Titolo bloccato'
     };
 
     function auditTone(reason) {
@@ -843,10 +845,10 @@
 
         var audit = makeCard(
             'Diagnosi',
-            'Perché mancano i titoli',
+            'Quali titoli vanno sistemati',
             'Legge soltanto le schede già in cache, quindi l’analisi non produce richieste ad AnimeClick. '
-            + 'Per ogni serie indica la causa: un titolo assente perché la scheda non lo pubblica non si risolve '
-            + 'come uno che manca perché l’abbinamento è fallito.'
+            + 'Per ogni serie distingue titoli assenti, segnaposto, bloccati e titoli ormai diversi dalla riga '
+            + 'autorevole AnimeClick.'
         );
         var auditActions = el('div', 'ac-row');
         var auditButton = el('button', 'ac-btn ac-btn-primary', 'Analizza la libreria');
@@ -872,12 +874,120 @@
         audit.body.appendChild(list);
         panel.appendChild(audit.card);
 
+        var quality = makeCard(
+            'Sinossi e trame',
+            'Qualità metadati',
+            'Scansiona soltanto i metadati già presenti in Jellyfin e distingue italiano, inglese, '
+            + 'testo mancante e casi incerti. Non contatta AnimeClick, TMDB, TVDB o il servizio AI. '
+            + 'La riparazione automatica considera solo inglese e mancante, rispetta i lock e usa refresh non distruttivi.'
+        );
+        var qualityActions = el('div', 'ac-row');
+        var qualityAuditButton = el('button', 'ac-btn ac-btn-primary', 'Analizza la qualità');
+        qualityAuditButton.type = 'button';
+        qualityAuditButton.id = 'acBtnQualityAudit';
+        qualityActions.appendChild(qualityAuditButton);
+        var qualityRepairButton = el('button', 'ac-btn ac-btn-ghost', 'Ripara primo lotto');
+        qualityRepairButton.type = 'button';
+        qualityRepairButton.id = 'acBtnQualityRepair';
+        qualityRepairButton.disabled = true;
+        qualityActions.appendChild(qualityRepairButton);
+        var qualityState = el('span', 'ac-state');
+        qualityState.id = 'acQualityState';
+        qualityActions.appendChild(qualityState);
+        quality.body.appendChild(qualityActions);
+
+        var qualitySummary = el('div', 'ac-priority-grid');
+        qualitySummary.id = 'acQualitySummary';
+        qualitySummary.style.display = 'none';
+        quality.body.appendChild(qualitySummary);
+        var qualityList = el('div', 'ac-library-list');
+        qualityList.id = 'acQualityList';
+        quality.body.appendChild(qualityList);
+        panel.appendChild(quality.card);
+
+        qualityAuditButton.addEventListener('click', function () {
+            var button = this;
+            var state = page.querySelector('#acQualityState');
+            var repair = page.querySelector('#acBtnQualityRepair');
+            setBusy(button, true, 'Analizza la qualità', 'Analisi…');
+            repair.disabled = true;
+            repair._acQualityReport = null;
+            state.className = 'ac-state';
+            state.textContent = 'Lettura locale di serie, film ed episodi identificati…';
+            request('GET', 'Plugins/AnimeClick/LibraryQualityAudit').then(function (report) {
+                renderQualityAudit(report);
+                var repairable = valueOf(report, 'repairableCount') || 0;
+                state.className = 'ac-state success';
+                state.textContent = (valueOf(report, 'itemCount') || 0) + ' elementi analizzati · '
+                    + repairable + ' riparabili in sicurezza';
+            }).catch(function (error) {
+                state.className = 'ac-state error';
+                state.textContent = truncate(error.message, 240);
+                toast('Analisi qualità fallita', 'error');
+            }).finally(function () {
+                setBusy(button, false, 'Analizza la qualità', 'Analisi…');
+            });
+        });
+
+        qualityRepairButton.addEventListener('click', function () {
+            var button = this;
+            var report = button._acQualityReport;
+            var itemIds = qualityRepairIds(report);
+            if (!itemIds.length) {
+                toast('Non ci sono metadati inglesi o mancanti riparabili in sicurezza.', 'error');
+                return;
+            }
+
+            var maximum = valueOf(report, 'maximumRepairItems') || itemIds.length;
+            confirmModal(
+                'Ripara il primo lotto',
+                'Accodare il refresh non distruttivo di ' + itemIds.length + ' elementi? '
+                + 'Non verranno sostituite immagini o rimossi metadati; i campi bloccati e i testi incerti restano invariati. '
+                + 'Il limite per richiesta è ' + maximum + '.'
+            ).then(function (confirmed) {
+                if (!confirmed) return;
+
+                var idleLabel = button.textContent;
+                var state = page.querySelector('#acQualityState');
+                var queuedAny = false;
+                setBusy(button, true, idleLabel, 'Accodamento…');
+                state.className = 'ac-state';
+                state.textContent = 'Validazione e accodamento del lotto…';
+                request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: itemIds })
+                    .then(function (result) {
+                        var queued = valueOf(result, 'queuedCount') || 0;
+                        var skipped = valueOf(result, 'skippedCount') || 0;
+                        queuedAny = queued > 0;
+                        state.className = 'ac-state ' + (queuedAny ? 'success' : 'error');
+                        state.textContent = queued + ' refresh accodati'
+                            + (skipped ? ' · ' + skipped + ' saltati dopo la verifica' : '')
+                            + '. Attendi il completamento, poi analizza di nuovo per il lotto successivo.';
+                        toast(
+                            queuedAny ? 'Lotto di riparazione accodato' : 'Nessun elemento è risultato ancora riparabile',
+                            queuedAny ? 'success' : 'error'
+                        );
+                    })
+                    .catch(function (error) {
+                        state.className = 'ac-state error';
+                        state.textContent = truncate(error.message, 240);
+                    })
+                    .finally(function () {
+                        if (queuedAny) {
+                            button.disabled = true;
+                            button.textContent = 'Lotto accodato';
+                        } else {
+                            setBusy(button, false, idleLabel, 'Accodamento…');
+                        }
+                    });
+            });
+        });
+
         var recheck = makeCard(
             'Manutenzione',
             'Ricontrollo dei titoli',
-            'Rilegge la scheda per gli episodi già abbinati che hanno ancora un titolo segnaposto. '
-            + 'È la stessa attività pianificata che gira ogni sette giorni: serve alle serie in corso, '
-            + 'dove la riga esiste dal giorno della trasmissione ma il titolo italiano arriva dopo.'
+            'Rilegge la scheda per gli episodi già abbinati che hanno un titolo segnaposto, derivato dal file '
+            + 'oppure ormai diverso da quello pubblicato su AnimeClick. È la stessa attività pianificata che gira '
+            + 'ogni sette giorni: serve alle serie in corso, dove titolo e slug possono arrivare dopo la prima riga.'
         );
         var recheckActions = el('div', 'ac-row');
         var recheckButton = el('button', 'ac-btn ac-btn-primary', 'Esegui ora il ricontrollo');
@@ -891,7 +1001,7 @@
         panel.appendChild(recheck.card);
 
         panel.appendChild(makeCallout(
-            'Una stagione senza titoli italiani',
+            'Una stagione con titoli da sistemare',
             'AnimeClick pubblica quasi ogni franchise come una scheda per cour, e la catena dei sequel non sempre è '
             + 'dimostrabile. Quando l’analisi segnala «Nessun abbinamento», apri la stagione in Jellyfin e scrivi l’ID '
             + 'AnimeClick di quel cour nel campo AnimeClick della stagione: l’ID di stagione ha la precedenza su '
@@ -935,7 +1045,7 @@
         var missing = valueOf(item, 'missingTitleCount') || 0;
         var total = valueOf(item, 'episodeCount') || 0;
         var counts = missing
-            ? missing + ' episodi senza titolo su ' + total
+            ? missing + ' titoli episodio da sistemare su ' + total
             : total + ' episodi, tutti con titolo';
         var animeClickId = valueOf(item, 'animeClickId');
         if (animeClickId) counts += ' · scheda ' + animeClickId;
@@ -1023,7 +1133,7 @@
         );
         addPriorityTile(
             summary,
-            'Episodi senza titolo',
+            'Titoli episodio da sistemare',
             String(missing),
             episodes ? 'su ' + episodes + ' episodi analizzati' : 'nessun episodio analizzato',
             missing ? 'warn' : 'good'
@@ -1076,7 +1186,7 @@
         });
 
         if (!problems.length) {
-            list.appendChild(el('div', 'ac-empty', 'Tutte le serie hanno i titoli completi.'));
+            list.appendChild(el('div', 'ac-empty', 'Tutte le serie hanno i titoli AnimeClick aggiornati.'));
         }
 
         if (complete.length) {
@@ -1092,6 +1202,169 @@
             done.body.appendChild(doneList);
             list.appendChild(done.details);
         }
+    }
+
+    var QUALITY_TONE = {
+        Italian: 'success',
+        English: 'warn',
+        Missing: 'danger',
+        Unknown: 'neutral'
+    };
+
+    var QUALITY_LABEL = {
+        Italian: 'Italiano',
+        English: 'Inglese probabile',
+        Missing: 'Mancante',
+        Unknown: 'Lingua incerta'
+    };
+
+    function qualityTone(status) {
+        return QUALITY_TONE[status] || 'neutral';
+    }
+
+    function qualityLabel(status) {
+        return QUALITY_LABEL[status] || status || 'Sconosciuto';
+    }
+
+    function qualityRepairIds(report) {
+        if (!report) return [];
+        var maximum = valueOf(report, 'maximumRepairItems') || 100;
+        var ids = [];
+        asArray(valueOf(report, 'series')).forEach(function (group) {
+            asArray(valueOf(group, 'items')).forEach(function (item) {
+                var id = valueOf(item, 'id');
+                if (valueOf(item, 'canRepair') && id && ids.length < maximum) ids.push(id);
+            });
+        });
+        return ids;
+    }
+
+    function qualityItemHeading(item) {
+        var type = valueOf(item, 'itemType');
+        var name = valueOf(item, 'name') || 'Senza nome';
+        if (type !== 'Episode') return (type === 'Movie' ? 'Film · ' : 'Serie · ') + name;
+
+        var season = valueOf(item, 'seasonNumber');
+        var episode = valueOf(item, 'episodeNumber');
+        var coordinate = (season == null ? 'S?' : 'S' + season)
+            + (episode == null ? 'E?' : 'E' + episode);
+        return coordinate + ' · ' + name;
+    }
+
+    function renderQualityItem(item) {
+        var row = el('div', 'ac-library-type');
+        var copy = el('div', 'ac-stack ac-grow');
+        copy.appendChild(el('span', 'ac-library-type-name', qualityItemHeading(item)));
+        var preview = valueOf(item, 'preview');
+        if (preview) copy.appendChild(el('span', 'ac-field-desc', preview));
+        row.appendChild(copy);
+
+        var badges = el('div', 'ac-row');
+        var status = valueOf(item, 'status');
+        var statusBadge = el('span', 'ac-badge ' + qualityTone(status), qualityLabel(status));
+        var confidence = Number(valueOf(item, 'confidence'));
+        if ((status === 'English' || status === 'Unknown') && isFinite(confidence) && confidence > 0) {
+            statusBadge.title = 'Confidenza classificatore: ' + Math.round(confidence * 100) + '%';
+        }
+        badges.appendChild(statusBadge);
+        if (valueOf(item, 'locked')) {
+            badges.appendChild(el('span', 'ac-badge warn', 'Bloccato'));
+        } else if (!valueOf(item, 'canRepair') && (status === 'English' || status === 'Missing')) {
+            var disabled = el('span', 'ac-badge neutral', 'Funzione disattivata');
+            disabled.title = 'Abilita la trama o le sinossi episodio nella configurazione prima di riparare.';
+            badges.appendChild(disabled);
+        }
+        row.appendChild(badges);
+        return row;
+    }
+
+    function renderQualityGroup(group) {
+        var card = el('div', 'ac-library-card');
+        var heading = el('div', 'ac-library-heading');
+        var year = valueOf(group, 'year');
+        heading.appendChild(el(
+            'strong',
+            null,
+            (valueOf(group, 'name') || 'Senza nome') + (year ? ' (' + year + ')' : '')
+        ));
+        var badges = el('div', 'ac-row');
+        var english = valueOf(group, 'englishCount') || 0;
+        var missing = valueOf(group, 'missingCount') || 0;
+        var unknown = valueOf(group, 'unknownCount') || 0;
+        var locked = valueOf(group, 'lockedCount') || 0;
+        if (english) badges.appendChild(el('span', 'ac-badge warn', english + ' EN'));
+        if (missing) badges.appendChild(el('span', 'ac-badge danger', missing + ' mancanti'));
+        if (unknown) badges.appendChild(el('span', 'ac-badge neutral', unknown + ' incerti'));
+        if (locked) badges.appendChild(el('span', 'ac-badge warn', locked + ' bloccati'));
+        heading.appendChild(badges);
+        card.appendChild(heading);
+
+        var items = asArray(valueOf(group, 'items'));
+        card.appendChild(el(
+            'div',
+            'ac-field-desc',
+            items.length + ' elementi da verificare su ' + (valueOf(group, 'itemCount') || items.length)
+        ));
+        items.forEach(function (item) {
+            card.appendChild(renderQualityItem(item));
+        });
+        return card;
+    }
+
+    function renderQualityAudit(report) {
+        var summary = page.querySelector('#acQualitySummary');
+        var list = page.querySelector('#acQualityList');
+        var repairButton = page.querySelector('#acBtnQualityRepair');
+        clear(summary);
+        clear(list);
+        summary.style.display = '';
+
+        var itemCount = valueOf(report, 'itemCount') || 0;
+        var italian = valueOf(report, 'italianCount') || 0;
+        var english = valueOf(report, 'englishCount') || 0;
+        var missing = valueOf(report, 'missingCount') || 0;
+        var unknown = valueOf(report, 'unknownCount') || 0;
+        var locked = valueOf(report, 'lockedCount') || 0;
+        var repairable = valueOf(report, 'repairableCount') || 0;
+        addPriorityTile(summary, 'Italiano', String(italian), 'su ' + itemCount + ' elementi analizzati', 'good');
+        addPriorityTile(summary, 'Inglese probabile', String(english), 'candidato alla riparazione automatica', english ? 'warn' : 'good');
+        addPriorityTile(summary, 'Mancante', String(missing), 'campo vuoto da completare', missing ? 'warn' : 'good');
+        addPriorityTile(summary, 'Lingua incerta', String(unknown), 'mai modificata automaticamente', 'neutral');
+        addPriorityTile(summary, 'Bloccati', String(locked), 'tra i casi da verificare, protetti dai lock Jellyfin', locked ? 'warn' : 'good');
+
+        var candidates = qualityRepairIds(report);
+        repairButton._acQualityReport = report;
+        repairButton.disabled = candidates.length === 0;
+        repairButton.textContent = candidates.length
+            ? 'Ripara primo lotto (' + candidates.length + ')'
+            : 'Niente da riparare';
+        repairButton.title = repairable > candidates.length
+            ? repairable + ' elementi riparabili; il server ne accetta al massimo '
+                + (valueOf(report, 'maximumRepairItems') || candidates.length) + ' per lotto.'
+            : repairable + ' elementi riparabili.';
+
+        if (!itemCount) {
+            list.appendChild(el('div', 'ac-empty', 'Nessuna serie o film identificato con AnimeClick.'));
+            return;
+        }
+
+        var groups = asArray(valueOf(report, 'series'));
+        if (!groups.length) {
+            list.appendChild(el('div', 'ac-empty', 'Tutti i metadati analizzati risultano in italiano.'));
+            return;
+        }
+
+        if (!repairable) {
+            list.appendChild(makeCallout(
+                'Nessuna riparazione automatica sicura',
+                'I casi rimasti sono incerti, bloccati oppure protetti da una funzione disattivata. '
+                + 'L’audit li mostra, ma non li accoda.',
+                'warn'
+            ));
+        }
+        groups.forEach(function (group) {
+            list.appendChild(renderQualityGroup(group));
+        });
     }
 
     /* ===== configuration mapping ===== */
@@ -1819,7 +2092,7 @@
                 var missing = valueOf(report, 'missingTitleCount') || 0;
                 state.className = 'ac-state success';
                 state.textContent = (valueOf(report, 'seriesCount') || 0) + ' serie analizzate · '
-                    + (missing ? missing + ' episodi senza titolo' : 'nessun titolo mancante');
+                    + (missing ? missing + ' titoli episodio da sistemare' : 'nessun titolo da sistemare');
             }).catch(function (error) {
                 state.className = 'ac-state error';
                 state.textContent = truncate(error.message, 240);

@@ -56,10 +56,12 @@ public static class AnimeClickAiProviders
     private const string AnthropicVersion = "2023-06-01";
 
     /// <summary>
-    /// Anthropic requires an explicit output ceiling. A translated synopsis is a few hundred tokens;
-    /// this leaves room for a long one without inviting the model to ramble.
+    /// Anthropic requires an explicit output ceiling. The input is capped at eight thousand
+    /// characters, so 4096 tokens leave ample room for an Italian translation while remaining
+    /// compatible with older/lower-cap models that can still appear in the selectable model list.
+    /// Responses stopped at this limit are rejected by the translator rather than cached truncated.
     /// </summary>
-    private const int MaxOutputTokens = 2000;
+    private const int MaxOutputTokens = 4096;
 
     private static readonly ReadOnlyCollection<AnimeClickAiPreset> PresetList = new(
     [
@@ -316,6 +318,18 @@ public static class AnimeClickAiProviders
     /// </summary>
     public static string ResolveReplyMarker(AnimeClickAiDialect dialect)
         => dialect == AnimeClickAiDialect.Anthropic ? "\"text\":" : "\"content\":";
+
+    /// <summary>
+    /// The key that precedes the reply in the response, when the shape has one. Searching after it
+    /// is what keeps a gateway that echoes the request from having its copy of the system prompt read
+    /// as the answer. Ollama's shape has no such wrapper, so it gets none.
+    /// </summary>
+    public static string? ResolveReplyAnchor(AnimeClickAiDialect dialect) => dialect switch
+    {
+        AnimeClickAiDialect.OpenAi => "\"choices\":",
+        AnimeClickAiDialect.Anthropic => "\"content\":",
+        _ => null
+    };
 
     /// <summary>
     /// The JSON key that names a model in a listing: Ollama's /api/tags uses "name", every

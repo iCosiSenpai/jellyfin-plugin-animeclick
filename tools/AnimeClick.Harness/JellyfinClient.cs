@@ -12,6 +12,15 @@ internal sealed record JellyfinEpisode(
     string? Name,
     string? AnimeClickProviderId);
 
+internal sealed record JellyfinQualityItem(
+    string Name,
+    string ItemType,
+    string? SeriesName,
+    int? SeasonNumber,
+    int? EpisodeNumber,
+    string? Overview,
+    bool Locked);
+
 /// <summary>
 /// Read-only access to the local Jellyfin server. Used to answer the question the offline
 /// report cannot: not "what would the plugin produce" but "where does what is stored differ
@@ -19,6 +28,7 @@ internal sealed record JellyfinEpisode(
 /// </summary>
 internal sealed class JellyfinClient : IDisposable
 {
+    private const int PageSize = 5000;
     private readonly HttpClient _client;
 
     public JellyfinClient(string baseUrl, string token)
@@ -32,6 +42,8 @@ internal sealed class JellyfinClient : IDisposable
             "Authorization",
             $"MediaBrowser Token=\"{token}\"");
     }
+
+    public int GetRequestCount { get; private set; }
 
     public async Task<string> GetServerNameAsync(CancellationToken cancellationToken)
     {
@@ -121,6 +133,97 @@ internal sealed class JellyfinClient : IDisposable
         return episodes;
     }
 
+    /// <summary>
+    /// Reads only metadata already stored by Jellyfin. Series and movies enter the audit when they
+    /// carry an AnimeClick provider id; episodes enter when their parent series does, matching the
+    /// production quality service. No item id, provider id or synopsis leaves this client.
+    /// </summary>
+    public async Task<List<JellyfinQualityItem>> GetLibraryQualityItemsAsync(
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<QualityRow>();
+        var startIndex = 0;
+        while (true)
+        {
+            using var document = await GetJsonAsync(
+                    "Items?includeItemTypes=Series,Movie,Episode&recursive=true"
+                    + "&fields=Overview,ProviderIds,LockedFields,ParentIndexNumber,IndexNumber,SeriesInfo"
+                    + $"&enableImages=false&startIndex={startIndex}&limit={PageSize}",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var page = document.RootElement.GetProperty("Items");
+            var pageCount = 0;
+            foreach (var item in page.EnumerateArray())
+            {
+                pageCount++;
+                rows.Add(new QualityRow(
+                    item.TryGetProperty("Id", out var id) ? id.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty("Name", out var name) ? name.GetString() ?? "?" : "?",
+                    item.TryGetProperty("Type", out var type) ? type.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty("SeriesId", out var seriesId) ? seriesId.GetString() : null,
+                    item.TryGetProperty("SeriesName", out var seriesName) ? seriesName.GetString() : null,
+                    Int(item, "ParentIndexNumber"),
+                    Int(item, "IndexNumber"),
+                    item.TryGetProperty("Overview", out var overview) ? overview.GetString() : null,
+                    IsOverviewLocked(item),
+                    !string.IsNullOrWhiteSpace(ProviderId(item, "AnimeClick"))));
+            }
+
+            startIndex += pageCount;
+            var total = document.RootElement.TryGetProperty("TotalRecordCount", out var totalElement)
+                        && totalElement.TryGetInt32(out var parsedTotal)
+                ? parsedTotal
+                : startIndex;
+            if (pageCount == 0 || pageCount < PageSize || startIndex >= total)
+            {
+                break;
+            }
+        }
+
+        var animeSeriesIds = rows
+            .Where(row => string.Equals(row.ItemType, "Series", StringComparison.OrdinalIgnoreCase)
+                          && row.HasAnimeClickId)
+            .Select(row => row.Id)
+            .Where(id => id.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return rows
+            .Where(row =>
+                (row.HasAnimeClickId
+                 && (string.Equals(row.ItemType, "Series", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(row.ItemType, "Movie", StringComparison.OrdinalIgnoreCase)))
+                || (string.Equals(row.ItemType, "Episode", StringComparison.OrdinalIgnoreCase)
+                    && row.SeriesId is not null
+                    && animeSeriesIds.Contains(row.SeriesId)))
+            .Select(row => new JellyfinQualityItem(
+                row.Name,
+                row.ItemType,
+                row.SeriesName,
+                row.SeasonNumber,
+                row.EpisodeNumber,
+                row.Overview,
+                row.Locked))
+            .ToList();
+    }
+
+    private static bool IsOverviewLocked(JsonElement item)
+    {
+        if (Boolean(item, "LockData") || Boolean(item, "IsLocked"))
+        {
+            return true;
+        }
+
+        return item.TryGetProperty("LockedFields", out var fields)
+               && fields.ValueKind == JsonValueKind.Array
+               && fields.EnumerateArray().Any(field =>
+                   string.Equals(field.GetString(), "Overview", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool Boolean(JsonElement item, string name)
+        => item.TryGetProperty(name, out var value)
+           && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+           && value.GetBoolean();
+
     private static string? ProviderId(JsonElement item, string provider)
     {
         if (!item.TryGetProperty("ProviderIds", out var ids) || ids.ValueKind != JsonValueKind.Object)
@@ -144,6 +247,7 @@ internal sealed class JellyfinClient : IDisposable
 
     private async Task<JsonDocument> GetJsonAsync(string path, CancellationToken cancellationToken)
     {
+        GetRequestCount++;
         using var response = await _client.GetAsync(path, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -151,4 +255,16 @@ internal sealed class JellyfinClient : IDisposable
     }
 
     public void Dispose() => _client.Dispose();
+
+    private sealed record QualityRow(
+        string Id,
+        string Name,
+        string ItemType,
+        string? SeriesId,
+        string? SeriesName,
+        int? SeasonNumber,
+        int? EpisodeNumber,
+        string? Overview,
+        bool Locked,
+        bool HasAnimeClickId);
 }

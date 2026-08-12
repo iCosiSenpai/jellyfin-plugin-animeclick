@@ -59,26 +59,6 @@ public class AnimeClickAiTranslator
     }
 
     /// <summary>
-    /// Compatibility wrapper for episode synopsis translation.
-    /// </summary>
-    public Task<string?> TranslateSynopsisAsync(
-        string englishText,
-        int tmdbId,
-        int season,
-        int episode,
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken)
-        => TranslateMetadataFieldAsync(
-            englishText,
-            $"tmdb-{tmdbId}",
-            $"tmdb:tv:{tmdbId}:s{season}:e{episode}",
-            "episode.overview",
-            "en",
-            "it",
-            configuration,
-            cancellationToken);
-
-    /// <summary>
     /// Translates one metadata field and caches it by source provider/id, field,
     /// languages, model, endpoint, prompt version and source-text hash.
     /// </summary>
@@ -218,7 +198,19 @@ public class AnimeClickAiTranslator
             }
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            var translated = ParseTranslatedContent(json, AnimeClickAiProviders.ResolveReplyMarker(dialect))?.Trim();
+            if (IsResponseTruncated(dialect, json))
+            {
+                _logger.LogWarning(
+                    "AiTranslator: endpoint truncated the translation at its output limit for field={Field} model={Model}",
+                    fieldName,
+                    model);
+                return null;
+            }
+
+            var translated = ParseTranslatedContent(
+                json,
+                AnimeClickAiProviders.ResolveReplyMarker(dialect),
+                AnimeClickAiProviders.ResolveReplyAnchor(dialect))?.Trim();
             if (string.IsNullOrWhiteSpace(translated))
             {
                 return null;
@@ -304,7 +296,10 @@ public class AnimeClickAiTranslator
             {
                 10 => true,
                 127 => true,
-                169 => octets[1] == 254,
+
+                // 169.254/16 is deliberately excluded even though it is link-local: it is also where
+                // cloud providers put their instance metadata service, and nothing about running a
+                // model on your own machine needs to reach 169.254.169.254.
                 172 => octets[1] is >= 16 and <= 31,
                 192 => octets[1] == 168,
                 _ => false
@@ -380,7 +375,7 @@ public class AnimeClickAiTranslator
         string endpoint,
         string apiKey,
         string plainText)
-        => $"translation:v3::{cacheScope}::{fieldName}::{sourceLanguage}-{targetLanguage}"
+        => $"translation:v4::{cacheScope}::{fieldName}::{sourceLanguage}-{targetLanguage}"
             + $"::{ShortHash(sourceIdentity)}::{ShortHash(model)}::{ShortHash(endpoint)}"
             + $"::{ShortHash(apiKey)}::{PromptVersion}::{ShortHash(plainText)}";
 
@@ -429,6 +424,11 @@ public class AnimeClickAiTranslator
             var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec <= 0 ? 90 : timeoutSec, 5, 120));
 
+            // Same ceiling as the production path. Without it a misconfigured endpoint — or a URL
+            // pasted by mistake that points at a large file — is read whole into a string inside the
+            // Jellyfin process, and the connection test becomes a way to exhaust its memory.
+            client.MaxResponseContentBufferSize = MaximumResponseBytes;
+
             using var request = new HttpRequestMessage(HttpMethod.Post, endpointUri)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json")
@@ -446,7 +446,16 @@ public class AnimeClickAiTranslator
                 return result;
             }
 
-            result.Reply = ParseTranslatedContent(responseBody, AnimeClickAiProviders.ResolveReplyMarker(dialect));
+            if (IsResponseTruncated(dialect, responseBody))
+            {
+                result.ErrorMessage = "Il servizio ha interrotto la risposta al limite massimo di output.";
+                return result;
+            }
+
+            result.Reply = ParseTranslatedContent(
+                responseBody,
+                AnimeClickAiProviders.ResolveReplyMarker(dialect),
+                AnimeClickAiProviders.ResolveReplyAnchor(dialect));
             result.Success = !string.IsNullOrWhiteSpace(result.Reply);
 
             if (!result.Success)
@@ -609,10 +618,52 @@ public class AnimeClickAiTranslator
     /// OpenAI and Ollama shapes, "text" for Anthropic's. Deliberately substring-based rather than
     /// deserialized, to avoid pulling in a System.Text.Json version that may conflict with the
     /// host's.
+    /// <para>
+    /// The search starts after <paramref name="anchor"/> when the response contains it. Taking the
+    /// first "content" in the whole document is fragile: a compatible gateway that echoes the request
+    /// back alongside its answer puts the system prompt there, and the plugin would write the Italian
+    /// translation instructions into the episode's synopsis — a plausible-looking wrong value, the
+    /// one outcome this project refuses.
+    /// </para>
     /// </summary>
-    internal static string? ParseTranslatedContent(string json, string marker = "\"content\":")
+    /// <summary>
+    /// Anthropic reports a response cut at the requested ceiling with stop_reason=max_tokens.
+    /// Such text can look grammatical while ending mid-synopsis, so it must never enter cache.
+    /// </summary>
+    internal static bool IsResponseTruncated(AnimeClickAiDialect dialect, string json)
     {
-        var idx = json.IndexOf(marker, StringComparison.Ordinal);
+        if (dialect != AnimeClickAiDialect.Anthropic || string.IsNullOrEmpty(json))
+        {
+            return false;
+        }
+
+        const string marker = "\"stop_reason\":";
+        var markerAt = json.IndexOf(marker, StringComparison.Ordinal);
+        if (markerAt < 0)
+        {
+            return false;
+        }
+
+        var reason = ReadJsonString(json, markerAt + marker.Length);
+        return string.Equals(reason, "max_tokens", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string? ParseTranslatedContent(
+        string json,
+        string marker = "\"content\":",
+        string? anchor = null)
+    {
+        var from = 0;
+        if (!string.IsNullOrEmpty(anchor))
+        {
+            var anchorAt = json.IndexOf(anchor, StringComparison.Ordinal);
+            if (anchorAt >= 0)
+            {
+                from = anchorAt + anchor.Length;
+            }
+        }
+
+        var idx = json.IndexOf(marker, from, StringComparison.Ordinal);
         return idx < 0 ? null : ReadJsonString(json, idx + marker.Length);
     }
 

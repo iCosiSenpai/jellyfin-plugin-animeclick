@@ -225,4 +225,29 @@ internal static class TestFixtures
 </tbody></table>
 </body></html>
 """;
+
+    /// <summary>
+    /// A relations page whose descriptions are ordinary Italian prose. "funziona" and "personaggi"
+    /// both contain the letters of ONA, which a substring test read as a streaming-only release.
+    /// </summary>
+    public const string RelationWithItalianProseHtml = """
+<html><body>
+<div class="media">
+  <h4 class="media-heading"><a href="/anime/9001/seguito-con-descrizione">Seguito con descrizione</a></h4>
+  <span class="label label-success">Sequel</span>
+  <div class="media-body">
+    <p>2021</p>
+    <p>La seconda parte funziona come continuazione diretta e approfondisce i personaggi.</p>
+  </div>
+</div>
+<div class="media">
+  <h4 class="media-heading"><a href="/anime/9002/seguito-dichiarato">Seguito dichiarato</a></h4>
+  <span class="label label-success">Sequel</span>
+  <div class="media-body">
+    <p>2022</p>
+    <p>Serie TV</p>
+  </div>
+</div>
+</body></html>
+""";
 }
