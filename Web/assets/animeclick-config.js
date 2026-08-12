@@ -3,13 +3,15 @@
 (function () {
     'use strict';
 
-    var V = '0.5.1.0';
+    var V = '0.5.2.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
     var aiProviders = [];
     var dirty = false;
     var toastHost;
+    var activeConfirm = null;
+    var confirmModalSequence = 0;
 
     /* ===== utilities ===== */
 
@@ -51,8 +53,39 @@
 
     function setBusy(button, busy, idleLabel, busyLabel) {
         if (!button) return;
+        var shouldReturnFocus = !!busy && document.activeElement === button;
+        if (shouldReturnFocus) {
+            var focusSelector = '[role="status"], .ac-state, .ac-preview-result';
+            var fallback = button.parentElement && button.parentElement.querySelector(focusSelector);
+            var card = typeof button.closest === 'function' ? button.closest('.ac-card') : null;
+            if (!fallback && card) fallback = card.querySelector(focusSelector);
+            button._acReturnFocus = true;
+            button._acFocusFallback = fallback || null;
+            if (fallback) {
+                fallback.tabIndex = -1;
+                fallback.focus();
+            }
+        }
         button.disabled = !!busy;
+        button.setAttribute('aria-busy', busy ? 'true' : 'false');
         button.textContent = busy ? busyLabel : idleLabel;
+        if (!busy && button._acReturnFocus) {
+            var focusFallback = button._acFocusFallback;
+            button._acReturnFocus = false;
+            button._acFocusFallback = null;
+            Promise.resolve().then(function () {
+                var focusStayedManaged = focusFallback
+                    ? document.activeElement === focusFallback
+                    : document.activeElement === document.body;
+                if (!focusStayedManaged) return;
+                if (document.body.contains(button) && !button.disabled && button.getClientRects().length) {
+                    button.focus();
+                } else if (focusFallback && document.body.contains(focusFallback)
+                    && focusFallback.getClientRects().length) {
+                    focusFallback.focus();
+                }
+            });
+        }
     }
 
     function val(id) {
@@ -144,6 +177,9 @@
     function toast(message, type) {
         ensureToastHost();
         var item = el('div', 'ac-toast' + (type ? ' ' + type : ''), message);
+        item.setAttribute('role', type === 'error' ? 'alert' : 'status');
+        item.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+        item.setAttribute('aria-atomic', 'true');
         toastHost.appendChild(item);
         setTimeout(function () {
             item.classList.add('leaving');
@@ -154,7 +190,16 @@
     }
 
     function confirmModal(title, message) {
+        if (activeConfirm) {
+            activeConfirm.cancel.focus();
+            return Promise.resolve(false);
+        }
+
         return new Promise(function (resolve) {
+            var trigger = document.activeElement;
+            var triggerWasDisabled = !!(trigger && trigger.disabled);
+            var pageWasInert = !!(page && page.inert);
+            var sequence = ++confirmModalSequence;
             var veil = el('div', 'ac-modal-veil');
             var modal = el('div', 'ac-modal');
             var heading = el('h3', null, title);
@@ -162,6 +207,17 @@
             var actions = el('div', 'ac-row');
             var cancel = el('button', 'ac-btn ac-btn-ghost', 'Annulla');
             var confirm = el('button', 'ac-btn ac-btn-primary', 'Conferma');
+            var headingId = 'acConfirmTitle' + sequence;
+            var copyId = 'acConfirmCopy' + sequence;
+            var settled = false;
+
+            heading.id = headingId;
+            copy.id = copyId;
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.setAttribute('aria-labelledby', headingId);
+            modal.setAttribute('aria-describedby', copyId);
+            modal.tabIndex = -1;
             cancel.type = 'button';
             confirm.type = 'button';
             actions.appendChild(cancel);
@@ -170,9 +226,49 @@
             modal.appendChild(copy);
             modal.appendChild(actions);
             veil.appendChild(modal);
+
+            function finish(value) {
+                if (settled) return;
+                settled = true;
+                veil.removeEventListener('keydown', onKeyDown);
+                veil.remove();
+                if (page && 'inert' in page) page.inert = pageWasInert;
+                if (trigger && trigger.tagName === 'BUTTON' && !triggerWasDisabled) trigger.disabled = false;
+                activeConfirm = null;
+                if (trigger && typeof trigger.focus === 'function' && document.body.contains(trigger)) trigger.focus();
+                resolve(value);
+            }
+
+            function onKeyDown(event) {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    finish(false);
+                    return;
+                }
+                if (event.key !== 'Tab') return;
+                var first = cancel;
+                var last = confirm;
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            }
+
+            cancel.addEventListener('click', function () { finish(false); });
+            confirm.addEventListener('click', function () { finish(true); });
+            veil.addEventListener('click', function (event) {
+                if (event.target === veil) finish(false);
+            });
+            veil.addEventListener('keydown', onKeyDown);
+
+            if (trigger && trigger.tagName === 'BUTTON' && !triggerWasDisabled) trigger.disabled = true;
+            if (page && 'inert' in page) page.inert = true;
             document.body.appendChild(veil);
-            cancel.onclick = function () { veil.remove(); resolve(false); };
-            confirm.onclick = function () { veil.remove(); resolve(true); };
+            activeConfirm = { cancel: cancel };
+            cancel.focus();
         });
     }
 
@@ -839,6 +935,475 @@
         return AUDIT_SHORT[reason] || reason || 'Sconosciuto';
     }
 
+    var AUDIT_PAGE_SIZE = 16;
+    var QUALITY_ITEM_PAGE_SIZE = 20;
+    var TITLE_ANALYZE_LIMIT = 10;
+    var titleAuditOperationSequence = 0;
+    var titleAuditView = {
+        report: null,
+        query: '',
+        filter: 'problems',
+        visibleLimit: AUDIT_PAGE_SIZE,
+        selected: Object.create(null),
+        open: Object.create(null),
+        busy: false,
+        operationId: 0
+    };
+    var qualityAuditView = {
+        report: null,
+        query: '',
+        filter: 'all',
+        visibleLimit: AUDIT_PAGE_SIZE,
+        selected: Object.create(null),
+        open: Object.create(null),
+        shownItems: Object.create(null),
+        queued: false,
+        busy: false
+    };
+
+    function makeAuditSelect(id, label, options) {
+        var wrap = el('div', 'ac-field');
+        var labelNode = el('label', null, label);
+        labelNode.setAttribute('for', id);
+        var select = el('select', 'ac-select');
+        select.id = id;
+        (options || []).forEach(function (option) {
+            var node = el('option', null, option.label);
+            node.value = option.value;
+            select.appendChild(node);
+        });
+        wrap.appendChild(labelNode);
+        wrap.appendChild(select);
+        return wrap;
+    }
+
+    function makeLiveState(id, cls) {
+        var state = el('span', cls || 'ac-state');
+        state.id = id;
+        state.setAttribute('role', 'status');
+        state.setAttribute('aria-live', 'polite');
+        return state;
+    }
+
+    function beginTitleAuditOperation() {
+        if (titleAuditView.busy) {
+            toast('Attendi il completamento dell’operazione titoli già in corso.', 'error');
+            return 0;
+        }
+        var operationId = ++titleAuditOperationSequence;
+        titleAuditView.operationId = operationId;
+        titleAuditView.busy = true;
+        return operationId;
+    }
+
+    function finishTitleAuditOperation(operationId) {
+        if (titleAuditView.operationId !== operationId) return false;
+        titleAuditView.operationId = 0;
+        titleAuditView.busy = false;
+        updateTitleAuditControls();
+        return true;
+    }
+
+    function resetTitleAuditView(report) {
+        titleAuditView.report = report;
+        titleAuditView.query = '';
+        titleAuditView.filter = 'problems';
+        titleAuditView.visibleLimit = AUDIT_PAGE_SIZE;
+        titleAuditView.selected = Object.create(null);
+        titleAuditView.open = Object.create(null);
+        if (val('acAuditSearch')) val('acAuditSearch').value = '';
+        if (val('acAuditFilter')) val('acAuditFilter').value = 'problems';
+    }
+
+    function resetQualityAuditView(report) {
+        qualityAuditView.report = report;
+        qualityAuditView.query = '';
+        qualityAuditView.filter = 'all';
+        qualityAuditView.visibleLimit = AUDIT_PAGE_SIZE;
+        qualityAuditView.selected = Object.create(null);
+        qualityAuditView.open = Object.create(null);
+        qualityAuditView.shownItems = Object.create(null);
+        qualityAuditView.queued = false;
+        qualityAuditView.busy = false;
+        if (val('acQualitySearch')) val('acQualitySearch').value = '';
+        if (val('acQualityFilter')) val('acQualityFilter').value = 'all';
+    }
+
+    function normalizedSearch(value) {
+        return String(value == null ? '' : value).trim().toLowerCase();
+    }
+
+    function auditSeriesReasons(item) {
+        var reasons = [valueOf(item, 'reason')];
+        asArray(valueOf(item, 'seasons')).forEach(function (season) {
+            reasons.push(valueOf(season, 'reason'));
+        });
+        return reasons.filter(Boolean);
+    }
+
+    function auditSeriesMatches(item) {
+        var missing = valueOf(item, 'missingTitleCount') || 0;
+        var animeClickId = valueOf(item, 'animeClickId');
+        var reasons = auditSeriesReasons(item);
+        var filter = titleAuditView.filter;
+        if (filter === 'problems' && !missing) return false;
+        if (filter === 'analyzable' && (!missing || !animeClickId)) return false;
+        if (filter === 'unidentified' && animeClickId && reasons.indexOf('NotIdentified') < 0) return false;
+        if (filter === 'complete' && missing) return false;
+
+        var query = normalizedSearch(titleAuditView.query);
+        if (!query) return true;
+        var searchable = [
+            valueOf(item, 'name'),
+            valueOf(item, 'year'),
+            animeClickId,
+            reasons.map(auditShort).join(' ')
+        ];
+        asArray(valueOf(item, 'seasons')).forEach(function (season) {
+            searchable.push(valueOf(season, 'animeClickId'));
+        });
+        return normalizedSearch(searchable.join(' ')).indexOf(query) >= 0;
+    }
+
+    function filteredTitleSeries() {
+        return asArray(valueOf(titleAuditView.report, 'series')).filter(auditSeriesMatches);
+    }
+
+    function visibleUnselectedTitleSeries() {
+        return filteredTitleSeries().slice(0, titleAuditView.visibleLimit).filter(function (item) {
+            return titleSeriesIsSelectable(item) && !titleAuditView.selected[valueOf(item, 'id')];
+        });
+    }
+
+    function titleSeriesIsSelectable(item) {
+        return !!valueOf(item, 'id')
+            && !!valueOf(item, 'animeClickId')
+            && (valueOf(item, 'missingTitleCount') || 0) > 0;
+    }
+
+    function selectedTitleItems() {
+        var selected = titleAuditView.selected;
+        return asArray(valueOf(titleAuditView.report, 'series')).filter(function (item) {
+            return !!selected[valueOf(item, 'id')] && titleSeriesIsSelectable(item);
+        }).slice(0, TITLE_ANALYZE_LIMIT);
+    }
+
+    function updateTitleAuditControls() {
+        var busy = titleAuditView.busy;
+        var automatic = val('acBtnRunTitles');
+        if (automatic && automatic.getAttribute('aria-busy') !== 'true') automatic.disabled = busy;
+        var mainAudit = val('acBtnAudit');
+        if (mainAudit && mainAudit.getAttribute('aria-busy') !== 'true') mainAudit.disabled = busy;
+        page.querySelectorAll('.ac-audit-series-action, .ac-audit-entry .ac-checkbox').forEach(function (control) {
+            if (control.getAttribute('aria-busy') !== 'true') control.disabled = busy;
+        });
+
+        if (!titleAuditView.report) return;
+        var filtered = filteredTitleSeries();
+        var shown = Math.min(filtered.length, titleAuditView.visibleLimit);
+        var selected = selectedTitleItems().length;
+        var state = val('acAuditVisibleState');
+        if (state) {
+            state.textContent = shown + ' serie mostrate su ' + filtered.length
+                + (selected ? ' · ' + selected + ' selezionate' : '');
+        }
+        var analyze = val('acBtnAuditSelected');
+        if (analyze && analyze.getAttribute('aria-busy') !== 'true') {
+            analyze.disabled = busy || selected === 0;
+            analyze.textContent = 'Analizza selezionate (' + selected + '/' + TITLE_ANALYZE_LIMIT + ')';
+        }
+        var clearSelection = val('acBtnAuditClearSelection');
+        if (clearSelection) clearSelection.disabled = busy || selected === 0;
+        var selectVisible = val('acBtnAuditSelectVisible');
+        if (selectVisible) {
+            var available = TITLE_ANALYZE_LIMIT - selected;
+            var candidates = visibleUnselectedTitleSeries().length;
+            selectVisible.disabled = busy || available <= 0 || candidates === 0;
+            selectVisible.title = candidates
+                ? Math.min(available, candidates) + ' serie visibili possono essere aggiunte alla selezione.'
+                : 'Nessun’altra serie visibile può essere aggiunta alla selezione.';
+        }
+    }
+
+    function replaceAuditSeries(fresh) {
+        var items = asArray(valueOf(titleAuditView.report, 'series'));
+        var id = valueOf(fresh, 'id');
+        for (var i = 0; i < items.length; i++) {
+            if (valueOf(items[i], 'id') === id) {
+                items[i] = fresh;
+                break;
+            }
+        }
+        delete titleAuditView.selected[id];
+    }
+
+    function analyzeTitleSeries(items, button, askConfirmation) {
+        items = (items || []).filter(function (item) {
+            return askConfirmation
+                ? titleSeriesIsSelectable(item)
+                : !!valueOf(item, 'id') && !!valueOf(item, 'animeClickId');
+        }).slice(0, TITLE_ANALYZE_LIMIT);
+        if (!items.length) {
+            toast('Seleziona almeno una serie identificata da analizzare.', 'error');
+            return;
+        }
+        var prompt = askConfirmation
+            ? confirmModal(
+                'Analizza ' + items.length + ' serie',
+                'Le schede verranno lette una alla volta per non sovraccaricare AnimeClick. '
+                + 'Questa diagnosi non modifica i metadati della libreria.'
+            )
+            : Promise.resolve(true);
+        prompt.then(function (confirmed) {
+            if (!confirmed) return;
+            var operationId = beginTitleAuditOperation();
+            if (!operationId) return;
+            var idleLabel = button.textContent;
+            var state = val('acAuditState');
+            var index = 0;
+            var errors = [];
+            setBusy(button, true, idleLabel, 'Analisi 0/' + items.length + '…');
+            updateTitleAuditControls();
+
+            function next() {
+                if (index >= items.length) return Promise.resolve();
+                var item = items[index];
+                var current = index + 1;
+                button.textContent = 'Analisi ' + current + '/' + items.length + '…';
+                state.className = 'ac-state';
+                state.textContent = 'Lettura di ' + (valueOf(item, 'name') || ('serie ' + current)) + '…';
+                return request('POST', 'Plugins/AnimeClick/LibraryAuditSeries', { itemId: valueOf(item, 'id') })
+                    .then(replaceAuditSeries)
+                    .catch(function (error) {
+                        errors.push((valueOf(item, 'name') || 'Serie') + ': ' + truncate(error.message, 140));
+                    })
+                    .then(function () { index += 1; return next(); });
+            }
+
+            next().then(function () {
+                renderAudit();
+                state.className = 'ac-state ' + (errors.length ? 'error' : 'success');
+                state.textContent = (items.length - errors.length) + ' serie analizzate'
+                    + (errors.length ? ' · ' + errors.length + ' non riuscite · ' + errors[0] : '') + '.';
+                toast(
+                    errors.length ? 'Analisi bulk completata con errori: ' + errors[0] : 'Analisi bulk completata',
+                    errors.length ? 'error' : 'success'
+                );
+            }).finally(function () {
+                if (titleAuditView.operationId !== operationId) return;
+                setBusy(button, false, idleLabel, 'Analisi…');
+                finishTitleAuditOperation(operationId);
+            });
+        });
+    }
+
+    function runAutomaticTitleRefresh(event, button) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        confirmModal(
+            'Ricontrollo automatico dei titoli',
+            'Accodare fino a 200 episodi con titolo mancante, segnaposto o non più aggiornato? '
+            + 'Il lavoro prosegue in background e usa una finestra rotante nelle librerie più grandi. '
+            + 'Se l’attività è già in corso, Jellyfin la riavvia dalla coda.'
+        ).then(function (confirmed) {
+            if (!confirmed) return;
+            var operationId = beginTitleAuditOperation();
+            if (!operationId) return;
+            var state = val('acRunTitlesState');
+            var idleLabel = 'Ricontrollo automatico (max 200)';
+            setBusy(button, true, idleLabel, 'Accodamento…');
+            updateTitleAuditControls();
+            state.className = 'ac-state';
+            state.textContent = 'Accodamento dell’attività globale…';
+            request('POST', 'Plugins/AnimeClick/RunMissingTitlesTask').then(function (response) {
+                state.className = 'ac-state success';
+                state.textContent = (valueOf(response, 'message') || 'Ricontrollo accodato.')
+                    + ' Il completamento dei refresh continua in background.';
+                toast('Ricontrollo automatico avviato', 'success');
+            }).catch(function (error) {
+                state.className = 'ac-state error';
+                state.textContent = truncate(error.message, 240);
+            }).finally(function () {
+                if (titleAuditView.operationId !== operationId) return;
+                setBusy(button, false, idleLabel, 'Accodamento…');
+                finishTitleAuditOperation(operationId);
+            });
+        });
+    }
+
+    function qualityItemMatchesStatus(item) {
+        var filter = qualityAuditView.filter;
+        var status = valueOf(item, 'status');
+        if (filter === 'repairable') return !!valueOf(item, 'canRepair');
+        if (filter === 'locked') return !!valueOf(item, 'locked');
+        if (filter !== 'all') return status === filter;
+        return true;
+    }
+
+    function qualityItemSearchText(item) {
+        var itemType = valueOf(item, 'itemType');
+        var localizedType = itemType === 'Episode' ? 'episodio'
+            : (itemType === 'Movie' ? 'film' : 'serie');
+        return normalizedSearch([
+            qualityItemHeading(item),
+            valueOf(item, 'seriesName'),
+            itemType,
+            localizedType,
+            qualityLabel(valueOf(item, 'status')),
+            valueOf(item, 'locked') ? 'bloccato' : ''
+        ].join(' '));
+    }
+
+    function filteredQualityGroups() {
+        var query = normalizedSearch(qualityAuditView.query);
+        return asArray(valueOf(qualityAuditView.report, 'series')).map(function (group) {
+            var groupMatches = !query || normalizedSearch([
+                valueOf(group, 'name'),
+                valueOf(group, 'year')
+            ].join(' ')).indexOf(query) >= 0;
+            var items = asArray(valueOf(group, 'items')).filter(function (item) {
+                return qualityItemMatchesStatus(item)
+                    && (groupMatches || qualityItemSearchText(item).indexOf(query) >= 0);
+            });
+            return { group: group, items: items };
+        }).filter(function (entry) { return entry.items.length > 0; });
+    }
+
+    function qualityGroupKey(group) {
+        return valueOf(group, 'id') || ((valueOf(group, 'name') || 'group') + '-' + (valueOf(group, 'year') || ''));
+    }
+
+    function visibleQualityRepairItems() {
+        var items = [];
+        filteredQualityGroups().slice(0, qualityAuditView.visibleLimit).forEach(function (entry) {
+            var key = qualityGroupKey(entry.group);
+            if (!qualityAuditView.open[key]) return;
+            var shown = qualityAuditView.shownItems[key] || QUALITY_ITEM_PAGE_SIZE;
+            entry.items.slice(0, shown).forEach(function (item) {
+                if (valueOf(item, 'canRepair')) items.push(item);
+            });
+        });
+        return items;
+    }
+
+    function visibleUnselectedQualityRepairItems() {
+        return visibleQualityRepairItems().filter(function (item) {
+            return !qualityAuditView.selected[valueOf(item, 'id')];
+        });
+    }
+
+    function selectedQualityIds() {
+        return Object.keys(qualityAuditView.selected).filter(function (id) {
+            return !!qualityAuditView.selected[id];
+        });
+    }
+
+    function updateQualityAuditControls() {
+        if (!qualityAuditView.report) return;
+        var groups = filteredQualityGroups();
+        var visible = groups.slice(0, qualityAuditView.visibleLimit);
+        var visibleItems = visible.reduce(function (count, entry) { return count + entry.items.length; }, 0);
+        var visibleRepairable = visibleUnselectedQualityRepairItems().length;
+        var selected = selectedQualityIds().length;
+        var maximum = valueOf(qualityAuditView.report, 'maximumRepairItems') || 100;
+        var available = maximum - selected;
+        var state = val('acQualityVisibleState');
+        if (state) {
+            state.textContent = visible.length + ' gruppi mostrati su ' + groups.length
+                + ' · ' + visibleItems + ' elementi corrispondenti'
+                + (selected ? ' · ' + selected + ' selezionati' : '');
+        }
+        var busy = qualityAuditView.busy;
+        var selectedButton = val('acBtnQualityRepairSelected');
+        if (selectedButton && selectedButton.getAttribute('aria-busy') !== 'true') {
+            selectedButton.disabled = busy || qualityAuditView.queued || selected === 0;
+            selectedButton.textContent = 'Ripara selezionati (' + selected + '/' + maximum + ')';
+        }
+        var clearSelection = val('acBtnQualityClearSelection');
+        if (clearSelection) clearSelection.disabled = busy || qualityAuditView.queued || selected === 0;
+        var selectVisible = val('acBtnQualitySelectVisible');
+        if (selectVisible) {
+            selectVisible.disabled = busy || qualityAuditView.queued || available <= 0 || visibleRepairable === 0;
+            selectVisible.title = visibleRepairable
+                ? Math.min(available, visibleRepairable) + ' elementi aperti e visibili possono essere aggiunti.'
+                : 'Apri un gruppo oppure modifica la selezione per aggiungere altri elementi.';
+        }
+        var automatic = val('acBtnQualityRepair');
+        if (automatic && automatic.getAttribute('aria-busy') !== 'true') {
+            automatic.disabled = busy || qualityAuditView.queued || qualityRepairIds(qualityAuditView.report).length === 0;
+        }
+        var mainAudit = val('acBtnQualityAudit');
+        if (mainAudit && mainAudit.getAttribute('aria-busy') !== 'true') mainAudit.disabled = busy;
+        page.querySelectorAll('.ac-quality-item .ac-checkbox').forEach(function (checkbox) {
+            checkbox.disabled = busy || qualityAuditView.queued;
+        });
+    }
+
+    function qualityRepairIsBlocked() {
+        if (!qualityAuditView.busy && !qualityAuditView.queued) return false;
+        toast(
+            qualityAuditView.busy
+                ? 'Attendi il completamento dell’operazione qualità già in corso.'
+                : 'Un lotto è già stato accodato. Attendi il completamento e analizza di nuovo.',
+            'error'
+        );
+        return true;
+    }
+
+    function queueQualityRepair(itemIds, button, automatic) {
+        if (qualityRepairIsBlocked()) return;
+        if (!itemIds.length) {
+            toast('Non ci sono metadati riparabili nella selezione.', 'error');
+            return;
+        }
+        var maximum = valueOf(qualityAuditView.report, 'maximumRepairItems') || 100;
+        confirmModal(
+            automatic ? 'Ripara il prossimo lotto automatico' : 'Ripara gli elementi selezionati',
+            'Accodare il refresh non distruttivo di ' + itemIds.length + ' elementi? '
+            + 'Il server ricontrolla lingua, lock e configurazione prima di accodarli. '
+            + 'Il limite per richiesta è ' + maximum + '.'
+        ).then(function (confirmed) {
+            if (!confirmed || qualityRepairIsBlocked()) return;
+            var idleLabel = button.textContent;
+            var state = val('acQualityState');
+            var queuedAny = false;
+            qualityAuditView.busy = true;
+            setBusy(button, true, idleLabel, 'Accodamento…');
+            updateQualityAuditControls();
+            state.className = 'ac-state';
+            state.textContent = 'Validazione e accodamento del lotto…';
+            request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: itemIds })
+                .then(function (result) {
+                    var considered = valueOf(result, 'consideredCount') || 0;
+                    var queued = valueOf(result, 'queuedCount') || 0;
+                    var skipped = valueOf(result, 'skippedCount') || 0;
+                    var truncated = !!valueOf(result, 'truncated');
+                    queuedAny = queued > 0;
+                    qualityAuditView.queued = queuedAny;
+                    if (queuedAny) qualityAuditView.selected = Object.create(null);
+                    state.className = 'ac-state ' + (queuedAny ? 'success' : 'error');
+                    state.textContent = queued + ' refresh accodati su ' + considered + ' verificati'
+                        + (skipped ? ' · ' + skipped + ' saltati' : '')
+                        + (truncated ? ' · richiesta limitata a ' + maximum : '')
+                        + '. Attendi il completamento, poi analizza di nuovo.';
+                    toast(
+                        queuedAny ? 'Lotto di riparazione accodato' : 'Nessun elemento è risultato ancora riparabile',
+                        queuedAny ? 'success' : 'error'
+                    );
+                })
+                .catch(function (error) {
+                    state.className = 'ac-state error';
+                    state.textContent = truncate(error.message, 240);
+                })
+                .finally(function () {
+                    qualityAuditView.busy = false;
+                    setBusy(button, false, idleLabel, 'Accodamento…');
+                    if (queuedAny) renderQualityAudit();
+                    else updateQualityAuditControls();
+                });
+        });
+    }
+
     function buildLibreriaPanel() {
         var panel = page.querySelector('#acPanelLibreria');
         clear(panel);
@@ -847,71 +1412,256 @@
             'Diagnosi',
             'Quali titoli vanno sistemati',
             'Legge soltanto le schede già in cache, quindi l’analisi non produce richieste ad AnimeClick. '
-            + 'Per ogni serie distingue titoli assenti, segnaposto, bloccati e titoli ormai diversi dalla riga '
-            + 'autorevole AnimeClick.'
+            + 'Il risultato resta compatto: cerca o filtra le serie, poi apri soltanto quelle che vuoi approfondire.'
         );
-        var auditActions = el('div', 'ac-row');
+        var auditActions = el('div', 'ac-row ac-audit-primary-actions');
         var auditButton = el('button', 'ac-btn ac-btn-primary', 'Analizza la libreria');
         auditButton.type = 'button';
         auditButton.id = 'acBtnAudit';
         auditActions.appendChild(auditButton);
-        var auditState = el('span', 'ac-state');
-        auditState.id = 'acAuditState';
-        auditActions.appendChild(auditState);
+        auditActions.appendChild(makeLiveState('acAuditState'));
         audit.body.appendChild(auditActions);
 
-        var summary = el('div', 'ac-priority-grid');
+        var auditAutomation = el('div', 'ac-audit-automation');
+        var automaticTitles = el('button', 'ac-btn ac-btn-ghost', 'Ricontrollo automatico (max 200)');
+        automaticTitles.type = 'button';
+        automaticTitles.id = 'acBtnRunTitles';
+        automaticTitles.title = 'Accoda l’attività globale settimanale per un massimo di 200 episodi per esecuzione.';
+        auditAutomation.appendChild(automaticTitles);
+        auditAutomation.appendChild(makeLiveState('acRunTitlesState'));
+        audit.body.appendChild(auditAutomation);
+
+        var summary = el('div', 'ac-priority-grid ac-audit-summary');
         summary.id = 'acAuditSummary';
         summary.style.display = 'none';
         audit.body.appendChild(summary);
 
-        var totals = el('div', 'ac-row');
+        var totals = el('div', 'ac-row ac-audit-totals');
         totals.id = 'acAuditTotals';
         audit.body.appendChild(totals);
 
-        var list = el('div', 'ac-library-list');
+        var auditControls = el('div', 'ac-audit-controls');
+        auditControls.id = 'acAuditControls';
+        auditControls.style.display = 'none';
+        var auditToolbar = el('div', 'ac-audit-toolbar');
+        auditToolbar.appendChild(makeField(
+            'acAuditSearch',
+            'Cerca serie',
+            'search',
+            'Nome, anno, ID AnimeClick o causa.',
+            { placeholder: 'Es. Grand Blue, 2026, non identificata', autocomplete: 'off' },
+            false
+        ));
+        auditToolbar.appendChild(makeAuditSelect('acAuditFilter', 'Mostra', [
+            { value: 'problems', label: 'Solo serie da sistemare' },
+            { value: 'analyzable', label: 'Analizzabili in bulk' },
+            { value: 'unidentified', label: 'Non identificate' },
+            { value: 'complete', label: 'Serie complete' },
+            { value: 'all', label: 'Tutte le serie' }
+        ]));
+        auditControls.appendChild(auditToolbar);
+
+        var auditBulk = el('div', 'ac-audit-bulkbar');
+        var selectAuditVisible = el('button', 'ac-btn ac-btn-ghost', 'Seleziona analizzabili visibili');
+        selectAuditVisible.type = 'button';
+        selectAuditVisible.id = 'acBtnAuditSelectVisible';
+        auditBulk.appendChild(selectAuditVisible);
+        var clearAuditSelection = el('button', 'ac-btn ac-btn-ghost', 'Azzera selezione');
+        clearAuditSelection.type = 'button';
+        clearAuditSelection.id = 'acBtnAuditClearSelection';
+        clearAuditSelection.disabled = true;
+        auditBulk.appendChild(clearAuditSelection);
+        var analyzeSelected = el('button', 'ac-btn ac-btn-primary', 'Analizza selezionate (0/' + TITLE_ANALYZE_LIMIT + ')');
+        analyzeSelected.type = 'button';
+        analyzeSelected.id = 'acBtnAuditSelected';
+        analyzeSelected.disabled = true;
+        auditBulk.appendChild(analyzeSelected);
+        auditControls.appendChild(auditBulk);
+        auditControls.appendChild(makeLiveState('acAuditVisibleState', 'ac-state ac-audit-result-state'));
+        audit.body.appendChild(auditControls);
+
+        var list = el('div', 'ac-library-list ac-audit-list');
         list.id = 'acAuditList';
         audit.body.appendChild(list);
         panel.appendChild(audit.card);
 
+        val('acAuditSearch').addEventListener('input', function () {
+            titleAuditView.query = this.value;
+            titleAuditView.visibleLimit = AUDIT_PAGE_SIZE;
+            renderAudit();
+        });
+        val('acAuditFilter').addEventListener('change', function () {
+            titleAuditView.filter = this.value;
+            titleAuditView.visibleLimit = AUDIT_PAGE_SIZE;
+            renderAudit();
+        });
+        selectAuditVisible.addEventListener('click', function () {
+            var returnFocus = document.activeElement === selectAuditVisible;
+            var candidates = visibleUnselectedTitleSeries();
+            var available = TITLE_ANALYZE_LIMIT - selectedTitleItems().length;
+            var added = 0;
+            candidates.forEach(function (item) {
+                var id = valueOf(item, 'id');
+                if (available > 0) {
+                    titleAuditView.selected[id] = true;
+                    available -= 1;
+                    added += 1;
+                }
+            });
+            if (added < candidates.length) {
+                toast('Selezione fermata al limite di ' + TITLE_ANALYZE_LIMIT + ' serie per analisi bulk.', 'success');
+            }
+            renderAudit();
+            if (returnFocus && selectAuditVisible.disabled) {
+                if (!analyzeSelected.disabled) analyzeSelected.focus();
+                else val('acAuditSearch').focus();
+            }
+        });
+        clearAuditSelection.addEventListener('click', function () {
+            var returnFocus = document.activeElement === clearAuditSelection;
+            titleAuditView.selected = Object.create(null);
+            renderAudit();
+            if (returnFocus) {
+                if (!selectAuditVisible.disabled) selectAuditVisible.focus();
+                else val('acAuditSearch').focus();
+            }
+        });
+        analyzeSelected.addEventListener('click', function () {
+            analyzeTitleSeries(selectedTitleItems(), this, true);
+        });
+        automaticTitles.addEventListener('click', function (event) {
+            runAutomaticTitleRefresh(event, this);
+        }, true);
+
         var quality = makeCard(
             'Sinossi e trame',
             'Qualità metadati',
-            'Scansiona soltanto i metadati già presenti in Jellyfin e distingue italiano, inglese, '
-            + 'testo mancante e casi incerti. Non contatta AnimeClick, TMDB, TVDB o il servizio AI. '
-            + 'La riparazione automatica considera solo inglese e mancante, rispetta i lock e usa refresh non distruttivi.'
+            'Scansiona soltanto i metadati già presenti in Jellyfin. Filtri e sezioni comprimibili evitano '
+            + 'elenchi infiniti; puoi scegliere gli elementi da riparare oppure lasciare al plugin il prossimo lotto sicuro.'
         );
-        var qualityActions = el('div', 'ac-row');
+        var qualityActions = el('div', 'ac-row ac-audit-primary-actions');
         var qualityAuditButton = el('button', 'ac-btn ac-btn-primary', 'Analizza la qualità');
         qualityAuditButton.type = 'button';
         qualityAuditButton.id = 'acBtnQualityAudit';
         qualityActions.appendChild(qualityAuditButton);
-        var qualityRepairButton = el('button', 'ac-btn ac-btn-ghost', 'Ripara primo lotto');
-        qualityRepairButton.type = 'button';
-        qualityRepairButton.id = 'acBtnQualityRepair';
-        qualityRepairButton.disabled = true;
-        qualityActions.appendChild(qualityRepairButton);
-        var qualityState = el('span', 'ac-state');
-        qualityState.id = 'acQualityState';
-        qualityActions.appendChild(qualityState);
+        qualityActions.appendChild(makeLiveState('acQualityState'));
         quality.body.appendChild(qualityActions);
 
-        var qualitySummary = el('div', 'ac-priority-grid');
+        var qualitySummary = el('div', 'ac-priority-grid ac-audit-summary');
         qualitySummary.id = 'acQualitySummary';
         qualitySummary.style.display = 'none';
         quality.body.appendChild(qualitySummary);
-        var qualityList = el('div', 'ac-library-list');
+
+        var qualityControls = el('div', 'ac-audit-controls');
+        qualityControls.id = 'acQualityControls';
+        qualityControls.style.display = 'none';
+        var qualityToolbar = el('div', 'ac-audit-toolbar');
+        qualityToolbar.appendChild(makeField(
+            'acQualitySearch',
+            'Cerca metadato',
+            'search',
+            'Serie, film, episodio o stato.',
+            { placeholder: 'Es. 3D Kanojo, S1E5, inglese', autocomplete: 'off' },
+            false
+        ));
+        qualityToolbar.appendChild(makeAuditSelect('acQualityFilter', 'Mostra', [
+            { value: 'all', label: 'Tutte le anomalie' },
+            { value: 'repairable', label: 'Solo riparabili' },
+            { value: 'English', label: 'Inglese probabile' },
+            { value: 'Missing', label: 'Sinossi mancante' },
+            { value: 'Unknown', label: 'Lingua incerta' },
+            { value: 'locked', label: 'Elementi bloccati' }
+        ]));
+        qualityControls.appendChild(qualityToolbar);
+
+        var qualityBulk = el('div', 'ac-audit-bulkbar');
+        var selectQualityVisible = el('button', 'ac-btn ac-btn-ghost', 'Seleziona riparabili visibili');
+        selectQualityVisible.type = 'button';
+        selectQualityVisible.id = 'acBtnQualitySelectVisible';
+        qualityBulk.appendChild(selectQualityVisible);
+        var clearQualitySelection = el('button', 'ac-btn ac-btn-ghost', 'Azzera selezione');
+        clearQualitySelection.type = 'button';
+        clearQualitySelection.id = 'acBtnQualityClearSelection';
+        clearQualitySelection.disabled = true;
+        qualityBulk.appendChild(clearQualitySelection);
+        var repairSelected = el('button', 'ac-btn ac-btn-primary', 'Ripara selezionati (0/100)');
+        repairSelected.type = 'button';
+        repairSelected.id = 'acBtnQualityRepairSelected';
+        repairSelected.disabled = true;
+        qualityBulk.appendChild(repairSelected);
+        var qualityRepairButton = el('button', 'ac-btn ac-btn-ghost', 'Ripara prossimo lotto automatico');
+        qualityRepairButton.type = 'button';
+        qualityRepairButton.id = 'acBtnQualityRepair';
+        qualityRepairButton.disabled = true;
+        qualityBulk.appendChild(qualityRepairButton);
+        qualityControls.appendChild(qualityBulk);
+        qualityControls.appendChild(makeLiveState('acQualityVisibleState', 'ac-state ac-audit-result-state'));
+        quality.body.appendChild(qualityControls);
+
+        var qualityList = el('div', 'ac-library-list ac-audit-list');
         qualityList.id = 'acQualityList';
         quality.body.appendChild(qualityList);
         panel.appendChild(quality.card);
 
+        val('acQualitySearch').addEventListener('input', function () {
+            qualityAuditView.query = this.value;
+            qualityAuditView.visibleLimit = AUDIT_PAGE_SIZE;
+            renderQualityAudit();
+        });
+        val('acQualityFilter').addEventListener('change', function () {
+            qualityAuditView.filter = this.value;
+            qualityAuditView.visibleLimit = AUDIT_PAGE_SIZE;
+            renderQualityAudit();
+        });
+        selectQualityVisible.addEventListener('click', function () {
+            var returnFocus = document.activeElement === selectQualityVisible;
+            var maximum = valueOf(qualityAuditView.report, 'maximumRepairItems') || 100;
+            var available = maximum - selectedQualityIds().length;
+            var candidates = visibleUnselectedQualityRepairItems();
+            var added = 0;
+            candidates.forEach(function (item) {
+                var id = valueOf(item, 'id');
+                if (available > 0 && id) {
+                    qualityAuditView.selected[id] = true;
+                    available -= 1;
+                    added += 1;
+                }
+            });
+            if (added < candidates.length) {
+                toast('Selezione fermata al limite di ' + maximum + ' elementi per richiesta.', 'success');
+            }
+            renderQualityAudit();
+            if (returnFocus && selectQualityVisible.disabled) {
+                if (!repairSelected.disabled) repairSelected.focus();
+                else val('acQualitySearch').focus();
+            }
+        });
+        clearQualitySelection.addEventListener('click', function () {
+            var returnFocus = document.activeElement === clearQualitySelection;
+            qualityAuditView.selected = Object.create(null);
+            renderQualityAudit();
+            if (returnFocus) {
+                if (!selectQualityVisible.disabled) selectQualityVisible.focus();
+                else val('acQualitySearch').focus();
+            }
+        });
+        repairSelected.addEventListener('click', function () {
+            queueQualityRepair(selectedQualityIds(), this, false);
+        });
+        qualityRepairButton.addEventListener('click', function () {
+            queueQualityRepair(qualityRepairIds(qualityAuditView.report), this, true);
+        });
+
         qualityAuditButton.addEventListener('click', function () {
             var button = this;
-            var state = page.querySelector('#acQualityState');
-            var repair = page.querySelector('#acBtnQualityRepair');
+            var state = val('acQualityState');
             setBusy(button, true, 'Analizza la qualità', 'Analisi…');
-            repair.disabled = true;
-            repair._acQualityReport = null;
+            qualityAuditView.report = null;
+            qualityAuditView.busy = true;
+            qualityControls.style.display = 'none';
+            clear(qualitySummary);
+            qualitySummary.style.display = 'none';
+            clear(qualityList);
             state.className = 'ac-state';
             state.textContent = 'Lettura locale di serie, film ed episodi identificati…';
             request('GET', 'Plugins/AnimeClick/LibraryQualityAudit').then(function (report) {
@@ -925,87 +1675,24 @@
                 state.textContent = truncate(error.message, 240);
                 toast('Analisi qualità fallita', 'error');
             }).finally(function () {
+                qualityAuditView.busy = false;
                 setBusy(button, false, 'Analizza la qualità', 'Analisi…');
+                if (qualityAuditView.report) updateQualityAuditControls();
             });
         });
 
-        qualityRepairButton.addEventListener('click', function () {
-            var button = this;
-            var report = button._acQualityReport;
-            var itemIds = qualityRepairIds(report);
-            if (!itemIds.length) {
-                toast('Non ci sono metadati inglesi o mancanti riparabili in sicurezza.', 'error');
-                return;
-            }
-
-            var maximum = valueOf(report, 'maximumRepairItems') || itemIds.length;
-            confirmModal(
-                'Ripara il primo lotto',
-                'Accodare il refresh non distruttivo di ' + itemIds.length + ' elementi? '
-                + 'Non verranno sostituite immagini o rimossi metadati; i campi bloccati e i testi incerti restano invariati. '
-                + 'Il limite per richiesta è ' + maximum + '.'
-            ).then(function (confirmed) {
-                if (!confirmed) return;
-
-                var idleLabel = button.textContent;
-                var state = page.querySelector('#acQualityState');
-                var queuedAny = false;
-                setBusy(button, true, idleLabel, 'Accodamento…');
-                state.className = 'ac-state';
-                state.textContent = 'Validazione e accodamento del lotto…';
-                request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: itemIds })
-                    .then(function (result) {
-                        var queued = valueOf(result, 'queuedCount') || 0;
-                        var skipped = valueOf(result, 'skippedCount') || 0;
-                        queuedAny = queued > 0;
-                        state.className = 'ac-state ' + (queuedAny ? 'success' : 'error');
-                        state.textContent = queued + ' refresh accodati'
-                            + (skipped ? ' · ' + skipped + ' saltati dopo la verifica' : '')
-                            + '. Attendi il completamento, poi analizza di nuovo per il lotto successivo.';
-                        toast(
-                            queuedAny ? 'Lotto di riparazione accodato' : 'Nessun elemento è risultato ancora riparabile',
-                            queuedAny ? 'success' : 'error'
-                        );
-                    })
-                    .catch(function (error) {
-                        state.className = 'ac-state error';
-                        state.textContent = truncate(error.message, 240);
-                    })
-                    .finally(function () {
-                        if (queuedAny) {
-                            button.disabled = true;
-                            button.textContent = 'Lotto accodato';
-                        } else {
-                            setBusy(button, false, idleLabel, 'Accodamento…');
-                        }
-                    });
-            });
-        });
-
-        var recheck = makeCard(
-            'Manutenzione',
-            'Ricontrollo dei titoli',
-            'Rilegge la scheda per gli episodi già abbinati che hanno un titolo segnaposto, derivato dal file '
-            + 'oppure ormai diverso da quello pubblicato su AnimeClick. È la stessa attività pianificata che gira '
-            + 'ogni sette giorni: serve alle serie in corso, dove titolo e slug possono arrivare dopo la prima riga.'
-        );
-        var recheckActions = el('div', 'ac-row');
-        var recheckButton = el('button', 'ac-btn ac-btn-primary', 'Esegui ora il ricontrollo');
-        recheckButton.type = 'button';
-        recheckButton.id = 'acBtnRunTitles';
-        recheckActions.appendChild(recheckButton);
-        var recheckState = el('span', 'ac-state');
-        recheckState.id = 'acRunTitlesState';
-        recheckActions.appendChild(recheckState);
-        recheck.body.appendChild(recheckActions);
-        panel.appendChild(recheck.card);
+        panel.appendChild(makeCallout(
+            'Bulk sicuro, senza modifiche alla cieca',
+            '«Analizza selezionate» legge al massimo 10 serie una alla volta e non modifica la libreria. '
+            + '«Ricontrollo automatico» accoda fino a 200 episodi. Le riparazioni delle sinossi sono limitate a 100 '
+            + 'elementi e il server ricontrolla sempre lingua, lock e configurazione prima del refresh.',
+            'good'
+        ));
 
         panel.appendChild(makeCallout(
             'Una stagione con titoli da sistemare',
-            'AnimeClick pubblica quasi ogni franchise come una scheda per cour, e la catena dei sequel non sempre è '
-            + 'dimostrabile. Quando l’analisi segnala «Nessun abbinamento», apri la stagione in Jellyfin e scrivi l’ID '
-            + 'AnimeClick di quel cour nel campo AnimeClick della stagione: l’ID di stagione ha la precedenza su '
-            + 'quello della serie per il riconoscimento degli episodi, mentre le sinossi continuano a seguire la serie.',
+            'Quando l’analisi segnala «Nessun abbinamento», apri la stagione in Jellyfin e scrivi l’ID AnimeClick '
+            + 'di quel cour nel campo AnimeClick della stagione. L’ID di stagione ha la precedenza su quello della serie.',
             'warn'
         ));
     }
@@ -1034,52 +1721,79 @@
     }
 
     function renderAuditSeries(item) {
-        var card = el('div', 'ac-library-card');
-        var heading = el('div', 'ac-library-heading');
-        var year = valueOf(item, 'year');
-        heading.appendChild(el('strong', null, valueOf(item, 'name') + (year ? ' (' + year + ')' : '')));
-        var reason = valueOf(item, 'reason');
-        heading.appendChild(el('span', 'ac-badge ' + auditTone(reason), auditShort(reason)));
-        card.appendChild(heading);
+        var id = valueOf(item, 'id');
+        var selectable = titleSeriesIsSelectable(item);
+        var wrapper = el('div', 'ac-audit-entry' + (selectable ? ' is-selectable' : ''));
 
+        if (selectable) {
+            var selector = el('label', 'ac-audit-selector');
+            var checkbox = el('input', 'ac-checkbox');
+            checkbox.type = 'checkbox';
+            checkbox.checked = !!titleAuditView.selected[id];
+            checkbox.disabled = titleAuditView.busy;
+            checkbox.setAttribute('aria-label', 'Seleziona ' + (valueOf(item, 'name') || 'serie') + ' per l’analisi bulk');
+            checkbox.addEventListener('change', function () {
+                if (checkbox.checked && selectedTitleItems().length >= TITLE_ANALYZE_LIMIT) {
+                    checkbox.checked = false;
+                    toast('Puoi analizzare al massimo ' + TITLE_ANALYZE_LIMIT + ' serie per volta.', 'error');
+                    return;
+                }
+                if (checkbox.checked) titleAuditView.selected[id] = true;
+                else delete titleAuditView.selected[id];
+                updateTitleAuditControls();
+            });
+            selector.appendChild(checkbox);
+            selector.appendChild(el('span', 'ac-visually-hidden', 'Seleziona per analisi bulk'));
+            wrapper.appendChild(selector);
+        }
+
+        var details = el('details', 'ac-details ac-audit-group');
+        details.open = !!titleAuditView.open[id];
+        var summary = el('summary', 'ac-audit-group-summary');
+        var heading = el('div', 'ac-audit-summary-line');
+        var title = el('div', 'ac-audit-summary-copy');
+        var year = valueOf(item, 'year');
+        title.appendChild(el('strong', null, (valueOf(item, 'name') || 'Senza nome') + (year ? ' (' + year + ')' : '')));
         var missing = valueOf(item, 'missingTitleCount') || 0;
         var total = valueOf(item, 'episodeCount') || 0;
-        var counts = missing
-            ? missing + ' titoli episodio da sistemare su ' + total
-            : total + ' episodi, tutti con titolo';
+        title.appendChild(el('span', 'ac-field-desc', missing
+            ? missing + ' titoli da sistemare su ' + total
+            : total + ' episodi completi'));
+        heading.appendChild(title);
+        var reason = valueOf(item, 'reason');
+        heading.appendChild(el('span', 'ac-badge ' + auditTone(reason), auditShort(reason)));
+        summary.appendChild(heading);
+        details.appendChild(summary);
+
+        var body = el('div', 'ac-details-body ac-audit-group-body');
         var animeClickId = valueOf(item, 'animeClickId');
-        if (animeClickId) counts += ' · scheda ' + animeClickId;
+        var counts = animeClickId ? 'Scheda ' + animeClickId : 'Nessuna scheda AnimeClick associata';
         var rows = valueOf(item, 'cardRowCount');
-        if (rows) counts += ' · ' + rows + ' righe lette dalle schede';
-        card.appendChild(el('div', 'ac-field-desc', counts));
-        card.appendChild(el('div', 'ac-note', valueOf(item, 'reasonLabel') || ''));
+        if (rows) counts += ' · ' + rows + ' righe lette';
+        body.appendChild(el('div', 'ac-field-desc', counts));
+        body.appendChild(el('div', 'ac-note', valueOf(item, 'reasonLabel') || ''));
 
         var chips = auditSeasonChips(item);
-        if (chips) card.appendChild(chips);
+        if (chips) body.appendChild(chips);
 
-        var actions = el('div', 'ac-row');
+        var actions = el('div', 'ac-row ac-audit-item-actions');
         if (animeClickId) {
-            var analyze = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Analizza');
+            var analyze = el('button', 'ac-btn ac-btn-sm ac-btn-ghost ac-audit-series-action', 'Analizza questa serie');
             analyze.type = 'button';
             analyze.title = 'Rilegge la scheda da AnimeClick e ricalcola la causa per questa serie.';
             analyze.addEventListener('click', function () {
-                setBusy(analyze, true, 'Analizza', 'Lettura…');
-                request('POST', 'Plugins/AnimeClick/LibraryAuditSeries', { itemId: valueOf(item, 'id') })
-                    .then(function (fresh) {
-                        card.parentNode.replaceChild(renderAuditSeries(fresh), card);
-                    })
-                    .catch(function (error) {
-                        setBusy(analyze, false, 'Analizza', 'Lettura…');
-                        toast(truncate(error.message, 240), 'error');
-                    });
+                analyzeTitleSeries([item], analyze, false);
             });
             actions.appendChild(analyze);
 
-            var purge = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Svuota cache');
+            var purge = el('button', 'ac-btn ac-btn-sm ac-btn-ghost ac-audit-series-action', 'Svuota cache');
             purge.type = 'button';
             purge.title = 'Invalida le schede memorizzate per questa serie, così il prossimo refresh le rilegge.';
             purge.addEventListener('click', function () {
+                var operationId = beginTitleAuditOperation();
+                if (!operationId) return;
                 setBusy(purge, true, 'Svuota cache', 'Svuotamento…');
+                updateTitleAuditControls();
                 request('POST', 'Plugins/AnimeClick/ClearCache', { animeClickId: animeClickId })
                     .then(function (response) {
                         toast('Cache svuotata · ' + (valueOf(response, 'removed') || 0) + ' elementi', 'success');
@@ -1088,83 +1802,94 @@
                         toast(truncate(error.message, 240), 'error');
                     })
                     .finally(function () {
+                        if (titleAuditView.operationId !== operationId) return;
                         setBusy(purge, false, 'Svuota cache', 'Svuotamento…');
+                        finishTitleAuditOperation(operationId);
                     });
             });
             actions.appendChild(purge);
         } else {
-            var identify = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Identifica in Strumenti');
+            var identify = el('button', 'ac-btn ac-btn-sm ac-btn-ghost ac-audit-series-action', 'Identifica in Strumenti');
             identify.type = 'button';
             identify.addEventListener('click', function () {
-                val('acItemId').value = valueOf(item, 'id');
+                val('acItemId').value = id;
                 val('acAnimeClickId').value = '';
                 activateTab(page.querySelector('#acTabStrumenti'), true);
                 toast('ID elemento compilato: cerca l’ID AnimeClick e conferma.', 'success');
             });
             actions.appendChild(identify);
         }
-
-        card.appendChild(actions);
-        return card;
+        body.appendChild(actions);
+        details.appendChild(body);
+        details.addEventListener('toggle', function () {
+            titleAuditView.open[id] = details.open;
+        });
+        wrapper.appendChild(details);
+        return wrapper;
     }
 
     function renderAudit(report) {
-        var summary = page.querySelector('#acAuditSummary');
-        var totals = page.querySelector('#acAuditTotals');
-        var list = page.querySelector('#acAuditList');
+        if (report && report !== titleAuditView.report) resetTitleAuditView(report);
+        report = titleAuditView.report;
+        if (!report) return;
+
+        var summary = val('acAuditSummary');
+        var totals = val('acAuditTotals');
+        var controls = val('acAuditControls');
+        var list = val('acAuditList');
         clear(summary);
         clear(totals);
         clear(list);
 
         var series = asArray(valueOf(report, 'series'));
-        var missing = valueOf(report, 'missingTitleCount') || 0;
         var episodes = valueOf(report, 'episodeCount') || 0;
+        var missing = series.reduce(function (count, item) {
+            return count + (valueOf(item, 'missingTitleCount') || 0);
+        }, 0);
         var complete = series.filter(function (item) {
             return !(valueOf(item, 'missingTitleCount') || 0);
         });
 
         summary.style.display = '';
+        summary.setAttribute('aria-label', 'Riepilogo analisi titoli');
         addPriorityTile(
             summary,
             'Serie',
             String(series.length),
-            complete.length + ' complete, ' + (series.length - complete.length) + ' con episodi da sistemare',
+            complete.length + ' complete · ' + (series.length - complete.length) + ' da verificare',
             series.length === complete.length ? 'good' : 'neutral'
         );
         addPriorityTile(
             summary,
-            'Titoli episodio da sistemare',
+            'Titoli da sistemare',
             String(missing),
             episodes ? 'su ' + episodes + ' episodi analizzati' : 'nessun episodio analizzato',
             missing ? 'warn' : 'good'
         );
-        var actionable = 0;
-        asArray(valueOf(report, 'totals')).forEach(function (entry) {
-            var reason = valueOf(entry, 'reason');
-            if (reason === 'PendingRefresh' || reason === 'RowVanished') {
-                actionable += valueOf(entry, 'episodeCount') || 0;
-            }
-        });
         addPriorityTile(
             summary,
-            'Recuperabili subito',
-            String(actionable),
-            actionable ? 'il titolo esiste già su AnimeClick: usa «Esegui ora il ricontrollo»' : 'niente da recuperare con un ricontrollo',
-            actionable ? 'warn' : 'good'
+            'Analisi bulk',
+            'Max ' + TITLE_ANALYZE_LIMIT,
+            'serie identificate lette in sequenza per ogni operazione',
+            'neutral'
         );
 
-        asArray(valueOf(report, 'totals')).forEach(function (entry) {
-            var reason = valueOf(entry, 'reason');
+        var reasonTotals = Object.create(null);
+        series.forEach(function (item) {
+            var reason = valueOf(item, 'reason') || 'Unknown';
             if (reason === 'Ok') return;
-            var badge = el(
-                'span',
-                'ac-badge ' + auditTone(reason),
-                auditShort(reason) + ' · ' + valueOf(entry, 'seriesCount') + ' serie'
-            );
-            badge.title = valueOf(entry, 'episodeCount') + ' episodi';
+            if (!reasonTotals[reason]) reasonTotals[reason] = { series: 0, episodes: 0 };
+            reasonTotals[reason].series += 1;
+            reasonTotals[reason].episodes += valueOf(item, 'missingTitleCount') || 0;
+        });
+        Object.keys(reasonTotals).forEach(function (reason) {
+            var entry = reasonTotals[reason];
+            var badge = el('span', 'ac-badge ' + auditTone(reason), auditShort(reason) + ' · ' + entry.series + ' serie');
+            badge.title = entry.episodes + ' episodi';
             totals.appendChild(badge);
         });
 
+        controls.style.display = '';
         if (!valueOf(report, 'episodeTitlesEnabled')) {
             list.appendChild(makeCallout(
                 'Titoli episodio disattivati',
@@ -1175,33 +1900,38 @@
 
         if (!series.length) {
             list.appendChild(el('div', 'ac-empty', 'Nessuna serie usa AnimeClick come provider di metadati.'));
+            updateTitleAuditControls();
             return;
         }
 
-        var problems = series.filter(function (item) {
-            return (valueOf(item, 'missingTitleCount') || 0) > 0;
-        });
-        problems.forEach(function (item) {
-            list.appendChild(renderAuditSeries(item));
-        });
-
-        if (!problems.length) {
-            list.appendChild(el('div', 'ac-empty', 'Tutte le serie hanno i titoli AnimeClick aggiornati.'));
-        }
-
-        if (complete.length) {
-            var done = makeDetails('Serie complete (' + complete.length + ')', null);
-            var doneList = el('div', 'ac-library-list');
-            complete.forEach(function (item) {
-                var row = el('div', 'ac-library-type');
-                var year = valueOf(item, 'year');
-                row.appendChild(el('span', 'ac-library-type-name', valueOf(item, 'name') + (year ? ' (' + year + ')' : '')));
-                row.appendChild(el('span', 'ac-badge success', (valueOf(item, 'episodeCount') || 0) + ' episodi'));
-                doneList.appendChild(row);
+        var filtered = filteredTitleSeries();
+        var visible = filtered.slice(0, titleAuditView.visibleLimit);
+        if (!visible.length) {
+            list.appendChild(el('div', 'ac-empty', titleAuditView.query
+                ? 'Nessuna serie corrisponde alla ricerca e al filtro scelti.'
+                : 'Nessuna serie rientra nel filtro scelto.'));
+        } else {
+            var fragment = document.createDocumentFragment();
+            visible.forEach(function (item) {
+                fragment.appendChild(renderAuditSeries(item));
             });
-            done.body.appendChild(doneList);
-            list.appendChild(done.details);
+            list.appendChild(fragment);
         }
+
+        if (visible.length < filtered.length) {
+            var loadMore = el('button', 'ac-btn ac-btn-ghost ac-load-more', 'Mostra altre '
+                + Math.min(AUDIT_PAGE_SIZE, filtered.length - visible.length) + ' serie');
+            loadMore.type = 'button';
+            loadMore.addEventListener('click', function () {
+                var previous = visible.length;
+                titleAuditView.visibleLimit += AUDIT_PAGE_SIZE;
+                renderAudit();
+                var summaries = list.querySelectorAll('.ac-audit-entry .ac-audit-group-summary');
+                if (summaries[previous]) summaries[previous].focus();
+            });
+            list.appendChild(loadMore);
+        }
+        updateTitleAuditControls();
     }
 
     var QUALITY_TONE = {
@@ -1252,14 +1982,38 @@
     }
 
     function renderQualityItem(item) {
-        var row = el('div', 'ac-library-type');
-        var copy = el('div', 'ac-stack ac-grow');
+        var id = valueOf(item, 'id');
+        var selectable = !!valueOf(item, 'canRepair') && !!id;
+        var row = el('div', 'ac-library-type ac-quality-item' + (selectable ? ' is-selectable' : ''));
+        if (selectable) {
+            var selector = el('label', 'ac-quality-selector');
+            var checkbox = el('input', 'ac-checkbox');
+            checkbox.type = 'checkbox';
+            checkbox.checked = !!qualityAuditView.selected[id];
+            checkbox.disabled = qualityAuditView.busy || qualityAuditView.queued;
+            checkbox.setAttribute('aria-label', 'Seleziona ' + qualityItemHeading(item) + ' per la riparazione');
+            checkbox.addEventListener('change', function () {
+                var maximum = valueOf(qualityAuditView.report, 'maximumRepairItems') || 100;
+                if (checkbox.checked && selectedQualityIds().length >= maximum) {
+                    checkbox.checked = false;
+                    toast('Puoi riparare al massimo ' + maximum + ' elementi per richiesta.', 'error');
+                    return;
+                }
+                if (checkbox.checked) qualityAuditView.selected[id] = true;
+                else delete qualityAuditView.selected[id];
+                updateQualityAuditControls();
+            });
+            selector.appendChild(checkbox);
+            row.appendChild(selector);
+        }
+
+        var copy = el('div', 'ac-stack ac-grow ac-quality-copy');
         copy.appendChild(el('span', 'ac-library-type-name', qualityItemHeading(item)));
         var preview = valueOf(item, 'preview');
         if (preview) copy.appendChild(el('span', 'ac-field-desc', preview));
         row.appendChild(copy);
 
-        var badges = el('div', 'ac-row');
+        var badges = el('div', 'ac-row ac-quality-badges');
         var status = valueOf(item, 'status');
         var statusBadge = el('span', 'ac-badge ' + qualityTone(status), qualityLabel(status));
         var confidence = Number(valueOf(item, 'confidence'));
@@ -1278,46 +2032,97 @@
         return row;
     }
 
-    function renderQualityGroup(group) {
-        var card = el('div', 'ac-library-card');
-        var heading = el('div', 'ac-library-heading');
+    function renderQualityGroup(group, items) {
+        items = items || asArray(valueOf(group, 'items'));
+        var key = qualityGroupKey(group);
+        var details = el('details', 'ac-details ac-audit-group ac-quality-group');
+        details.open = !!qualityAuditView.open[key];
+        var summary = el('summary', 'ac-audit-group-summary');
+        var heading = el('div', 'ac-audit-summary-line');
+        var title = el('div', 'ac-audit-summary-copy');
         var year = valueOf(group, 'year');
-        heading.appendChild(el(
-            'strong',
-            null,
-            (valueOf(group, 'name') || 'Senza nome') + (year ? ' (' + year + ')' : '')
-        ));
-        var badges = el('div', 'ac-row');
-        var english = valueOf(group, 'englishCount') || 0;
-        var missing = valueOf(group, 'missingCount') || 0;
-        var unknown = valueOf(group, 'unknownCount') || 0;
-        var locked = valueOf(group, 'lockedCount') || 0;
+        title.appendChild(el('strong', null, (valueOf(group, 'name') || 'Senza nome') + (year ? ' (' + year + ')' : '')));
+        title.appendChild(el('span', 'ac-field-desc', items.length + ' elementi corrispondenti su '
+            + (valueOf(group, 'itemCount') || items.length)));
+        heading.appendChild(title);
+
+        var badges = el('div', 'ac-row ac-quality-badges');
+        var english = items.filter(function (item) { return valueOf(item, 'status') === 'English'; }).length;
+        var missing = items.filter(function (item) { return valueOf(item, 'status') === 'Missing'; }).length;
+        var unknown = items.filter(function (item) { return valueOf(item, 'status') === 'Unknown'; }).length;
+        var locked = items.filter(function (item) { return !!valueOf(item, 'locked'); }).length;
+        var repairable = items.filter(function (item) { return !!valueOf(item, 'canRepair'); }).length;
         if (english) badges.appendChild(el('span', 'ac-badge warn', english + ' EN'));
         if (missing) badges.appendChild(el('span', 'ac-badge danger', missing + ' mancanti'));
         if (unknown) badges.appendChild(el('span', 'ac-badge neutral', unknown + ' incerti'));
         if (locked) badges.appendChild(el('span', 'ac-badge warn', locked + ' bloccati'));
+        if (repairable) badges.appendChild(el('span', 'ac-badge success', repairable + ' riparabili'));
         heading.appendChild(badges);
-        card.appendChild(heading);
+        summary.appendChild(heading);
+        details.appendChild(summary);
 
-        var items = asArray(valueOf(group, 'items'));
-        card.appendChild(el(
-            'div',
-            'ac-field-desc',
-            items.length + ' elementi da verificare su ' + (valueOf(group, 'itemCount') || items.length)
-        ));
-        items.forEach(function (item) {
-            card.appendChild(renderQualityItem(item));
+        var body = el('div', 'ac-details-body ac-audit-group-body');
+        details.appendChild(body);
+        var shown = qualityAuditView.shownItems[key] || QUALITY_ITEM_PAGE_SIZE;
+        qualityAuditView.shownItems[key] = shown;
+        var loaded = false;
+
+        function renderItems() {
+            loaded = true;
+            clear(body);
+            var fragment = document.createDocumentFragment();
+            items.slice(0, shown).forEach(function (item) {
+                fragment.appendChild(renderQualityItem(item));
+            });
+            body.appendChild(fragment);
+            if (shown < items.length) {
+                var loadMore = el('button', 'ac-btn ac-btn-ghost ac-load-more', 'Mostra altri '
+                    + Math.min(QUALITY_ITEM_PAGE_SIZE, items.length - shown) + ' elementi');
+                loadMore.type = 'button';
+                loadMore.addEventListener('click', function () {
+                    var previous = shown;
+                    shown += QUALITY_ITEM_PAGE_SIZE;
+                    qualityAuditView.shownItems[key] = shown;
+                    renderItems();
+                    var rows = body.querySelectorAll('.ac-quality-item');
+                    var firstNew = rows[previous];
+                    if (firstNew) {
+                        var focusTarget = firstNew.querySelector('input:not([disabled]), button:not([disabled])');
+                        if (!focusTarget) {
+                            firstNew.tabIndex = -1;
+                            focusTarget = firstNew;
+                        }
+                        focusTarget.focus();
+                    }
+                    updateQualityAuditControls();
+                });
+                body.appendChild(loadMore);
+            }
+        }
+
+        details.addEventListener('toggle', function () {
+            qualityAuditView.open[key] = details.open;
+            if (details.open && !loaded) renderItems();
+            updateQualityAuditControls();
         });
-        return card;
+        if (details.open) renderItems();
+        return details;
     }
 
     function renderQualityAudit(report) {
-        var summary = page.querySelector('#acQualitySummary');
-        var list = page.querySelector('#acQualityList');
-        var repairButton = page.querySelector('#acBtnQualityRepair');
+        if (report && report !== qualityAuditView.report) resetQualityAuditView(report);
+        report = qualityAuditView.report;
+        if (!report) return;
+
+        var summary = val('acQualitySummary');
+        var controls = val('acQualityControls');
+        var list = val('acQualityList');
+        var repairButton = val('acBtnQualityRepair');
         clear(summary);
         clear(list);
         summary.style.display = '';
+        summary.setAttribute('aria-label', 'Riepilogo qualità metadati');
+        controls.style.display = '';
 
         var itemCount = valueOf(report, 'itemCount') || 0;
         var italian = valueOf(report, 'italianCount') || 0;
@@ -1327,34 +2132,37 @@
         var locked = valueOf(report, 'lockedCount') || 0;
         var repairable = valueOf(report, 'repairableCount') || 0;
         addPriorityTile(summary, 'Italiano', String(italian), 'su ' + itemCount + ' elementi analizzati', 'good');
-        addPriorityTile(summary, 'Inglese probabile', String(english), 'candidato alla riparazione automatica', english ? 'warn' : 'good');
+        addPriorityTile(summary, 'Inglese', String(english), 'candidato alla riparazione automatica', english ? 'warn' : 'good');
         addPriorityTile(summary, 'Mancante', String(missing), 'campo vuoto da completare', missing ? 'warn' : 'good');
-        addPriorityTile(summary, 'Lingua incerta', String(unknown), 'mai modificata automaticamente', 'neutral');
-        addPriorityTile(summary, 'Bloccati', String(locked), 'tra i casi da verificare, protetti dai lock Jellyfin', locked ? 'warn' : 'good');
+        addPriorityTile(summary, 'Incerto', String(unknown), 'mai modificato automaticamente', 'neutral');
+        addPriorityTile(summary, 'Bloccato', String(locked), 'protetto dai lock Jellyfin', locked ? 'warn' : 'good');
 
         var candidates = qualityRepairIds(report);
-        repairButton._acQualityReport = report;
-        repairButton.disabled = candidates.length === 0;
-        repairButton.textContent = candidates.length
-            ? 'Ripara primo lotto (' + candidates.length + ')'
-            : 'Niente da riparare';
-        repairButton.title = repairable > candidates.length
-            ? repairable + ' elementi riparabili; il server ne accetta al massimo '
-                + (valueOf(report, 'maximumRepairItems') || candidates.length) + ' per lotto.'
-            : repairable + ' elementi riparabili.';
+        if (repairButton.getAttribute('aria-busy') !== 'true') {
+            repairButton.disabled = qualityAuditView.busy || qualityAuditView.queued || candidates.length === 0;
+            repairButton.textContent = candidates.length
+                ? 'Ripara lotto automatico (' + candidates.length + ')'
+                : 'Niente da riparare';
+            repairButton.title = repairable > candidates.length
+                ? repairable + ' elementi riparabili; il server ne accetta al massimo '
+                    + (valueOf(report, 'maximumRepairItems') || candidates.length) + ' per lotto.'
+                : repairable + ' elementi riparabili.';
+        }
 
         if (!itemCount) {
             list.appendChild(el('div', 'ac-empty', 'Nessuna serie o film identificato con AnimeClick.'));
+            updateQualityAuditControls();
             return;
         }
 
-        var groups = asArray(valueOf(report, 'series'));
-        if (!groups.length) {
+        var allGroups = asArray(valueOf(report, 'series'));
+        if (!allGroups.length) {
             list.appendChild(el('div', 'ac-empty', 'Tutti i metadati analizzati risultano in italiano.'));
+            updateQualityAuditControls();
             return;
         }
 
-        if (!repairable) {
+        if (!repairable && qualityAuditView.filter === 'all' && !qualityAuditView.query) {
             list.appendChild(makeCallout(
                 'Nessuna riparazione automatica sicura',
                 'I casi rimasti sono incerti, bloccati oppure protetti da una funzione disattivata. '
@@ -1362,9 +2170,35 @@
                 'warn'
             ));
         }
-        groups.forEach(function (group) {
-            list.appendChild(renderQualityGroup(group));
-        });
+
+        var filtered = filteredQualityGroups();
+        var visible = filtered.slice(0, qualityAuditView.visibleLimit);
+        if (!visible.length) {
+            list.appendChild(el('div', 'ac-empty', qualityAuditView.query
+                ? 'Nessun metadato corrisponde alla ricerca e al filtro scelti.'
+                : 'Nessun metadato rientra nel filtro scelto.'));
+        } else {
+            var fragment = document.createDocumentFragment();
+            visible.forEach(function (entry) {
+                fragment.appendChild(renderQualityGroup(entry.group, entry.items));
+            });
+            list.appendChild(fragment);
+        }
+
+        if (visible.length < filtered.length) {
+            var loadMore = el('button', 'ac-btn ac-btn-ghost ac-load-more', 'Mostra altri '
+                + Math.min(AUDIT_PAGE_SIZE, filtered.length - visible.length) + ' gruppi');
+            loadMore.type = 'button';
+            loadMore.addEventListener('click', function () {
+                var previous = visible.length;
+                qualityAuditView.visibleLimit += AUDIT_PAGE_SIZE;
+                renderQualityAudit();
+                var summaries = list.querySelectorAll('.ac-quality-group > .ac-audit-group-summary');
+                if (summaries[previous]) summaries[previous].focus();
+            });
+            list.appendChild(loadMore);
+        }
+        updateQualityAuditControls();
     }
 
     /* ===== configuration mapping ===== */
@@ -2082,9 +2916,18 @@
         });
 
         page.querySelector('#acBtnAudit').addEventListener('click', function () {
+            var operationId = beginTitleAuditOperation();
+            if (!operationId) return;
             var button = this;
             var state = page.querySelector('#acAuditState');
+            titleAuditView.report = null;
+            val('acAuditControls').style.display = 'none';
+            val('acAuditSummary').style.display = 'none';
+            clear(val('acAuditSummary'));
+            clear(val('acAuditTotals'));
+            clear(val('acAuditList'));
             setBusy(button, true, 'Analizza la libreria', 'Analisi…');
+            updateTitleAuditControls();
             state.className = 'ac-state';
             state.textContent = 'Lettura della libreria e delle schede in cache…';
             request('GET', 'Plugins/AnimeClick/LibraryAudit').then(function (report) {
@@ -2098,7 +2941,9 @@
                 state.textContent = truncate(error.message, 240);
                 toast('Analisi fallita', 'error');
             }).finally(function () {
+                if (titleAuditView.operationId !== operationId) return;
                 setBusy(button, false, 'Analizza la libreria', 'Analisi…');
+                finishTitleAuditOperation(operationId);
             });
         });
 

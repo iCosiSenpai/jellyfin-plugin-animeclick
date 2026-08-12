@@ -110,39 +110,33 @@ jobs:
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            Questo rilascio rende affidabile la manutenzione delle librerie aggiornate
-            settimanalmente: individua sinossi inglesi o mancanti, ripara soltanto il campo
-            necessario e rende più rigoroso l'abbinamento fra file, stagioni e righe AnimeClick.
+            Questo rilascio rende l’audit della libreria leggibile e operativo anche quando
+            Jellyfin contiene molte serie o centinaia di anomalie, su desktop e su mobile.
 
-            **Audit qualità e riparazione sicura delle sinossi**
-            - La scheda **Libreria** distingue sinossi italiane, inglesi, mancanti, ambigue e
-              bloccate, aggregandole per serie senza modificare i metadati durante l'analisi.
-            - La riparazione usa un refresh di validazione correlato all'elemento e limitato a
-              `Overview`: titoli, generi, studi e valori bloccati non vengono riscritti.
-            - Una traduzione arrivata in ritardo viene accettata solo se la sinossi osservata
-              all'avvio non è cambiata; valori manuali o nativi più recenti restano prioritari.
+            **Audit compatto e navigabile**
+            - Ricerca e filtri separano rapidamente serie da analizzare, elementi riparabili,
+              metadati mancanti, incerti o bloccati.
+            - I risultati sono paginati in gruppi da 16, le sezioni si aprono solo quando servono
+              e gli elementi interni vengono caricati 20 alla volta, evitando elenchi ingestibili.
+            - Conteggi, motivazioni e stato della selezione restano visibili senza perdere il
+              contesto o il focus durante filtri, paginazione e aggiornamenti.
 
-            **Abbinamento di episodi e stagioni più rigoroso**
-            - ID numerici, legacy e percent-encoded vengono normalizzati prima del confronto.
-            - Le righe appartenenti a opere diverse, gli anchor obsoleti e le collisioni fra
-              speciali non possono più spostare una stagione o sottrarre il titolo a un episodio.
-            - Le librerie che contengono solo una stagione successiva e le serie in corso vengono
-              ricalcolate senza inferire la mappa dal solo numero di episodi.
+            **Azioni bulk sicure e automazione esplicita**
+            - Si possono analizzare fino a 10 serie selezionate, una alla volta, senza modificare
+              i metadati della libreria.
+            - Il ricontrollo globale dei titoli, sempre accessibile anche prima dell’audit, accoda
+              fino a 200 episodi usando la finestra rotante del task periodico.
+            - Le sinossi riparabili possono essere selezionate fra gli elementi realmente aperti
+              e visibili; ogni richiesta resta limitata a 100 e il server rivalida lingua, lock e
+              configurazione prima di accodare qualsiasi refresh.
 
-            **Coda traduzioni AI e cache resilienti**
-            - Una singola traduzione serve tutti i percorsi Jellyfin in attesa e riavvia la
-              normale catena delle sorgenti, invece di applicare direttamente un risultato
-              tardivo.
-            - Pubblicazione, clear mirati e invalidazione delle cache sono serializzati per non
-              perdere callback né cancellare lavori non correlati; i namespace cache sono stati
-              incrementati per escludere mappe prodotte dalle regole precedenti.
-            - Anthropic usa un limite compatibile di 4096 token e rifiuta risposte dichiarate
-              troncate, evitando di salvare sinossi incomplete.
-
-            **Ricontrollo periodico più utile**
-            Il task dei titoli mancanti ruota la finestra di lavoro e privilegia gli elementi
-            realmente riparabili, così i nuovi episodi settimanali non restano esclusi dietro
-            agli stessi record irrisolvibili.
+            **Mobile, accessibilità e concorrenza**
+            - Layout, barre bulk e dialoghi si adattano fino ai viewport più stretti senza uscire
+              dallo schermo; tema chiaro e scuro rispettano contrasto e focus visibile.
+            - Il dialogo di conferma è unico, navigabile da tastiera, chiudibile con Escape e
+              ripristina il focus senza sovrapporre operazioni.
+            - Stati busy con ownership impediscono invii concorrenti e completamenti fuori ordine;
+              annunci live e trasferimento del focus mantengono comprensibile ogni operazione.
 
             **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
             **Versione:** `${{ env.VERSION }}`
