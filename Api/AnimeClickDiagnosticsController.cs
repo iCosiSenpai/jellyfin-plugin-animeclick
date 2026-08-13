@@ -521,18 +521,22 @@ public class AnimeClickDiagnosticsController : ControllerBase
     /// deliberately local: it does not contact AnimeClick, TMDB, TVDB or the configured AI service.
     /// </summary>
     [HttpGet("LibraryQualityAudit")]
-    public ActionResult<AnimeClickLibraryQualityReport> LibraryQualityAudit()
+    public async Task<ActionResult<AnimeClickLibraryQualityReport>> LibraryQualityAudit(
+        CancellationToken cancellationToken)
     {
-        var report = _qualityService.Audit();
+        var report = await _qualityService.AuditAsync(cancellationToken).ConfigureAwait(false);
         _logger.LogInformation(
-            "AnimeClick local metadata audit: groups={Groups} items={Items} english={English} missing={Missing} unknown={Unknown} locked={Locked} repairable={Repairable}",
+            "AnimeClick local metadata audit: groups={Groups} items={Items} english={English} missing={Missing} unknown={Unknown} locked={Locked} repairable={Repairable} waiting={Waiting} noSource={NoSource} attempted={Attempted}",
             report.GroupCount,
             report.ItemCount,
             report.EnglishCount,
             report.MissingCount,
             report.UnknownCount,
             report.LockedCount,
-            report.RepairableCount);
+            report.RepairableCount,
+            report.WaitingTranslationCount,
+            report.NoSourceCount,
+            report.AttemptedCount);
         return Ok(report);
     }
 
@@ -541,20 +545,29 @@ public class AnimeClickDiagnosticsController : ControllerBase
     /// the current library state, and only English or missing unlocked fields remain eligible.
     /// </summary>
     [HttpPost("LibraryQualityRepair")]
-    public ActionResult<AnimeClickLibraryQualityRepairResult> LibraryQualityRepair(
-        [FromBody] LibraryQualityRepairRequest request)
+    public async Task<ActionResult<AnimeClickLibraryQualityRepairResult>> LibraryQualityRepair(
+        [FromBody] LibraryQualityRepairRequest request,
+        CancellationToken cancellationToken)
     {
         if (request is null || request.ItemIds is null || request.ItemIds.Count == 0)
         {
             return BadRequest(new { error = "itemIds must contain at least one Jellyfin item ID" });
         }
 
-        return Ok(_qualityService.QueueRepair(request.ItemIds));
+        return Ok(await _qualityService
+            .QueueRepairAsync(request.ItemIds, request.Force, cancellationToken)
+            .ConfigureAwait(false));
     }
 
     public sealed class LibraryQualityRepairRequest
     {
         public List<string> ItemIds { get; set; } = [];
+
+        /// <summary>
+        /// Re-attempts items whose recorded attempt found no source. Off by default: without it a
+        /// batch would keep being spent on the same unfixable items.
+        /// </summary>
+        public bool Force { get; set; }
     }
 
     /// <summary>

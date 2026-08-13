@@ -225,9 +225,11 @@ public class AnimeClickOrchestrationTests
         var libraryManager = CreateLibraryManager(items);
         var queued = new List<QueuedRefresh>();
         var scheduler = CreateScheduler(libraryManager, queued);
+        using var temporary = new TemporaryAnimeClickCache();
         var service = new AnimeClickLibraryQualityService(
             libraryManager,
             scheduler,
+            CreateLedger(temporary),
             NullLogger<AnimeClickLibraryQualityService>.Instance);
 
         var report = service.Audit();
@@ -240,15 +242,160 @@ public class AnimeClickOrchestrationTests
         Assert.Equal(1, report.UnknownCount);
         Assert.Equal(1, report.LockedCount);
         Assert.Equal(2, report.RepairableCount);
+        Assert.Equal(0, report.AttemptedCount);
+        Assert.Equal(0, report.SuppressedCount);
 
         var repair = service.QueueRepair(items.Select(item => item.Id.ToString("N")));
         Assert.Equal(5, repair.RequestedCount);
         Assert.Equal(5, repair.ConsideredCount);
         Assert.Equal(2, repair.QueuedCount);
         Assert.Equal(3, repair.SkippedCount);
+        Assert.Equal(0, repair.SuppressedCount);
         Assert.False(repair.Truncated);
         Assert.Equal(2, queued.Count);
         Assert.All(queued, call => Assert.Equal(MetadataField.Overview, call.Field));
+    }
+
+    [Fact]
+    public void LibraryQualityAuditStopsOfferingAnItemNoSourceCanFill()
+    {
+        var withoutSource = CreateMovie(1, "Missing", string.Empty);
+        var stillFixable = CreateMovie(2, "English", EnglishOverview);
+        var items = new List<BaseItem> { withoutSource, stillFixable };
+        var libraryManager = CreateLibraryManager(items);
+        var queued = new List<QueuedRefresh>();
+        using var temporary = new TemporaryAnimeClickCache();
+        var ledger = CreateLedger(temporary);
+        ledger.Record(withoutSource.Id, AnimeClickRepairOutcome.NoSource, "no-english-source");
+        var service = new AnimeClickLibraryQualityService(
+            libraryManager,
+            CreateScheduler(libraryManager, queued),
+            ledger,
+            NullLogger<AnimeClickLibraryQualityService>.Instance);
+
+        var report = service.Audit();
+        var inspected = report.Series
+            .SelectMany(group => group.Items)
+            .ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
+        var suppressed = inspected[withoutSource.Id.ToString("N")];
+
+        Assert.False(suppressed.CanRepair);
+        Assert.True(suppressed.LanguageRepairable);
+        Assert.True(suppressed.Suppressed);
+        Assert.Equal("no-source", suppressed.RepairState);
+        Assert.Equal(1, suppressed.AttemptCount);
+        Assert.True(inspected[stillFixable.Id.ToString("N")].CanRepair);
+        Assert.Equal(1, report.RepairableCount);
+        Assert.Equal(1, report.NoSourceCount);
+        Assert.Equal(1, report.SuppressedCount);
+        Assert.Equal(1, report.AttemptedCount);
+
+        // A batch is no longer spent on it, but an explicit retry still reaches it.
+        var held = service.QueueRepair([withoutSource.Id.ToString("N")]);
+        Assert.Equal(0, held.QueuedCount);
+        Assert.Equal(1, held.SuppressedCount);
+        Assert.Equal(0, held.SkippedCount);
+        Assert.False(held.Forced);
+        Assert.Empty(queued);
+
+        var forced = service.QueueRepair([withoutSource.Id.ToString("N")], force: true);
+        Assert.Equal(1, forced.QueuedCount);
+        Assert.Equal(0, forced.SuppressedCount);
+        Assert.True(forced.Forced);
+        Assert.Single(queued);
+    }
+
+    [Fact]
+    public void LibraryQualityAuditKeepsWaitingTranslationsOutOfTheActionableSet()
+    {
+        var waiting = CreateMovie(1, "Missing", string.Empty);
+        var libraryManager = CreateLibraryManager([waiting]);
+        var queued = new List<QueuedRefresh>();
+        using var temporary = new TemporaryAnimeClickCache();
+        var ledger = CreateLedger(temporary);
+        ledger.Record(waiting.Id, AnimeClickRepairOutcome.WaitingTranslation, "ai-deferred");
+        var service = new AnimeClickLibraryQualityService(
+            libraryManager,
+            CreateScheduler(libraryManager, queued),
+            ledger,
+            NullLogger<AnimeClickLibraryQualityService>.Instance);
+
+        var report = service.Audit();
+        var item = report.Series.Single().Items.Single();
+
+        Assert.False(item.CanRepair);
+        Assert.True(item.Suppressed);
+        Assert.Equal("waiting-translation", item.RepairState);
+        Assert.Equal(1, report.WaitingTranslationCount);
+        Assert.Equal(0, report.NoSourceCount);
+        Assert.Equal(0, report.RepairableCount);
+    }
+
+    [Fact]
+    public void RepairLedgerSuppressesForABoundedWindowOnly()
+    {
+        using var temporary = new TemporaryAnimeClickCache();
+        var ledger = CreateLedger(temporary);
+        var itemId = Guid.NewGuid();
+        ledger.Record(itemId, AnimeClickRepairOutcome.NoSource, "no-english-source");
+
+        Assert.True(ledger.IsSuppressed(itemId, DateTimeOffset.UtcNow, out var fresh));
+        Assert.Equal(1, fresh.Attempts);
+
+        // Sources do get filled in over time, so the exclusion has to expire on its own.
+        var afterWindow = DateTimeOffset.UtcNow
+            + AnimeClickRepairLedger.NoSourceSuppression
+            + TimeSpan.FromMinutes(1);
+        Assert.False(ledger.IsSuppressed(itemId, afterWindow, out _));
+
+        // A clock moved backwards must not resurrect an item that was just attempted.
+        Assert.True(ledger.IsSuppressed(itemId, DateTimeOffset.UtcNow.AddDays(-30), out _));
+
+        ledger.Record(itemId, AnimeClickRepairOutcome.Applied, "native-animeclick");
+        Assert.False(ledger.IsSuppressed(itemId, DateTimeOffset.UtcNow, out var applied));
+        Assert.Equal(2, applied.Attempts);
+        Assert.Equal(nameof(AnimeClickRepairOutcome.Applied), applied.Outcome);
+    }
+
+    [Fact]
+    public async Task RepairLedgerSurvivesARestart()
+    {
+        using var temporary = new TemporaryAnimeClickCache();
+        var itemId = Guid.NewGuid();
+        var first = CreateLedger(temporary);
+        first.Record(itemId, AnimeClickRepairOutcome.NoSource, "no-english-source");
+        await first.FlushAsync(CancellationToken.None);
+
+        var second = CreateLedger(temporary);
+        await second.EnsureLoadedAsync(CancellationToken.None);
+
+        Assert.Equal(1, second.Count);
+        Assert.True(second.TryGetAttempt(itemId, out var attempt));
+        Assert.Equal(nameof(AnimeClickRepairOutcome.NoSource), attempt.Outcome);
+        Assert.Equal("no-english-source", attempt.Detail);
+    }
+
+    [Fact]
+    public void FallbackOutcomesMapToTheStateTheAuditStores()
+    {
+        Assert.Equal(
+            AnimeClickRepairOutcome.WaitingTranslation,
+            AnimeClickOverviewResolver.MapFallbackOutcome("ai-deferred"));
+        Assert.Equal(
+            AnimeClickRepairOutcome.NoSource,
+            AnimeClickOverviewResolver.MapFallbackOutcome("no-english-source"));
+        Assert.Equal(
+            AnimeClickRepairOutcome.NoSource,
+            AnimeClickOverviewResolver.MapFallbackOutcome("no-external-source"));
+        Assert.Equal(
+            AnimeClickRepairOutcome.NoSource,
+            AnimeClickOverviewResolver.MapFallbackOutcome("anime-unavailable"));
+        Assert.Equal(
+            AnimeClickRepairOutcome.Disabled,
+            AnimeClickOverviewResolver.MapFallbackOutcome("disabled"));
+        Assert.Equal(
+            AnimeClickRepairOutcome.Error,
+            AnimeClickOverviewResolver.MapFallbackOutcome("error"));
     }
 
     [Fact]
@@ -259,9 +406,11 @@ public class AnimeClickOrchestrationTests
             .ToList();
         var libraryManager = CreateLibraryManager(items);
         var queued = new List<QueuedRefresh>();
+        using var temporary = new TemporaryAnimeClickCache();
         var service = new AnimeClickLibraryQualityService(
             libraryManager,
             CreateScheduler(libraryManager, queued),
+            CreateLedger(temporary),
             NullLogger<AnimeClickLibraryQualityService>.Instance);
 
         var result = service.QueueRepair(items.Select(item => item.Id.ToString("N")));
@@ -299,9 +448,12 @@ public class AnimeClickOrchestrationTests
             "library-quality-repair",
             overview: null);
         var resolver = new StubOverviewResolver(ItalianOverview);
+        using var temporary = new TemporaryAnimeClickCache();
+        var ledger = CreateLedger(temporary);
         var provider = new AnimeClickMovieAuthorityProvider(
             intentRegistry,
             resolver,
+            ledger,
             NullLogger<AnimeClickMovieAuthorityProvider>.Instance);
         var options = new MetadataRefreshOptions(directoryService)
         {
@@ -322,6 +474,68 @@ public class AnimeClickOrchestrationTests
         Assert.Equal("456", item.GetProviderId("Tmdb"));
         Assert.Equal(1, resolver.Calls);
         Assert.False(provider.HasChanged(item, directoryService));
+        Assert.True(ledger.TryGetAttempt(item.Id, out var attempt));
+        Assert.Equal(nameof(AnimeClickRepairOutcome.Applied), attempt.Outcome);
+    }
+
+    [Fact]
+    public async Task OverviewOnlyAuthorityRecordsWhyNothingCouldBeWritten()
+    {
+        var withoutSource = new Movie { Id = Guid.NewGuid(), Overview = EnglishOverview };
+        var awaitingTranslation = new Movie { Id = Guid.NewGuid(), Overview = EnglishOverview };
+        var directoryService = new DirectoryService(TestDoubles.Proxy<IFileSystem>());
+        var intentRegistry = new AnimeClickMetadataRefreshIntentRegistry();
+        using var temporary = new TemporaryAnimeClickCache();
+        var ledger = CreateLedger(temporary);
+
+        intentRegistry.Register(
+            directoryService,
+            withoutSource,
+            MetadataField.Overview,
+            "library-quality-repair",
+            overview: null);
+        var exhausted = new AnimeClickMovieAuthorityProvider(
+            intentRegistry,
+            new StubOverviewResolver(AnimeClickOverviewResolution.None(
+                AnimeClickRepairOutcome.NoSource,
+                "no-english-source")),
+            ledger,
+            NullLogger<AnimeClickMovieAuthorityProvider>.Instance);
+
+        var noSourceUpdate = await exhausted.FetchAsync(
+            withoutSource,
+            new MetadataRefreshOptions(directoryService),
+            CancellationToken.None);
+
+        Assert.Equal(ItemUpdateType.None, noSourceUpdate);
+        Assert.Equal(EnglishOverview, withoutSource.Overview);
+        Assert.True(ledger.TryGetAttempt(withoutSource.Id, out var noSource));
+        Assert.Equal(nameof(AnimeClickRepairOutcome.NoSource), noSource.Outcome);
+        Assert.Equal("no-english-source", noSource.Detail);
+
+        var deferredDirectoryService = new DirectoryService(TestDoubles.Proxy<IFileSystem>());
+        intentRegistry.Register(
+            deferredDirectoryService,
+            awaitingTranslation,
+            MetadataField.Overview,
+            "library-quality-repair",
+            overview: null);
+        var deferred = new AnimeClickMovieAuthorityProvider(
+            intentRegistry,
+            new StubOverviewResolver(AnimeClickOverviewResolution.None(
+                AnimeClickRepairOutcome.WaitingTranslation,
+                "ai-deferred")),
+            ledger,
+            NullLogger<AnimeClickMovieAuthorityProvider>.Instance);
+
+        var waitingUpdate = await deferred.FetchAsync(
+            awaitingTranslation,
+            new MetadataRefreshOptions(deferredDirectoryService),
+            CancellationToken.None);
+
+        Assert.Equal(ItemUpdateType.None, waitingUpdate);
+        Assert.True(ledger.TryGetAttempt(awaitingTranslation.Id, out var waiting));
+        Assert.Equal(nameof(AnimeClickRepairOutcome.WaitingTranslation), waiting.Outcome);
     }
 
     [Fact]
@@ -337,9 +551,11 @@ public class AnimeClickOrchestrationTests
             "background-translation-completed",
             ItalianOverview);
         var resolver = new StubOverviewResolver("must not be used");
+        using var temporary = new TemporaryAnimeClickCache();
         var provider = new AnimeClickMovieAuthorityProvider(
             intentRegistry,
             resolver,
+            CreateLedger(temporary),
             NullLogger<AnimeClickMovieAuthorityProvider>.Instance);
 
         var update = await provider.FetchAsync(
@@ -365,9 +581,12 @@ public class AnimeClickOrchestrationTests
             "background-translation-completed",
             ItalianOverview);
         var resolver = new StubOverviewResolver("must not be used");
+        using var temporary = new TemporaryAnimeClickCache();
+        var ledger = CreateLedger(temporary);
         var provider = new AnimeClickMovieAuthorityProvider(
             intentRegistry,
             resolver,
+            ledger,
             NullLogger<AnimeClickMovieAuthorityProvider>.Instance);
 
         const string manualOverview =
@@ -381,6 +600,8 @@ public class AnimeClickOrchestrationTests
         Assert.Equal(ItemUpdateType.None, update);
         Assert.Equal(manualOverview, item.Overview);
         Assert.Equal(0, resolver.Calls);
+        Assert.True(ledger.TryGetAttempt(item.Id, out var attempt));
+        Assert.Equal(nameof(AnimeClickRepairOutcome.Blocked), attempt.Outcome);
     }
 
     [Fact]
@@ -535,21 +756,33 @@ public class AnimeClickOrchestrationTests
 
     private sealed class StubOverviewResolver : IAnimeClickOverviewResolver
     {
-        private readonly string? _overview;
+        private readonly AnimeClickOverviewResolution _resolution;
 
         public StubOverviewResolver(string? overview)
+            : this(string.IsNullOrWhiteSpace(overview)
+                ? AnimeClickOverviewResolution.None(AnimeClickRepairOutcome.NoSource, "no-english-source")
+                : AnimeClickOverviewResolution.Found(overview, "native-animeclick"))
         {
-            _overview = overview;
+        }
+
+        public StubOverviewResolver(AnimeClickOverviewResolution resolution)
+        {
+            _resolution = resolution;
         }
 
         public int Calls { get; private set; }
 
-        public Task<string?> ResolveAsync(BaseItem item, CancellationToken cancellationToken)
+        public Task<AnimeClickOverviewResolution> ResolveAsync(
+            BaseItem item,
+            CancellationToken cancellationToken)
         {
             Calls++;
-            return Task.FromResult(_overview);
+            return Task.FromResult(_resolution);
         }
     }
+
+    private static AnimeClickRepairLedger CreateLedger(TemporaryAnimeClickCache cache)
+        => new(cache.Cache, NullLogger<AnimeClickRepairLedger>.Instance);
 
     private sealed record QueuedRefresh(
         Guid Id,

@@ -3,7 +3,7 @@
 (function () {
     'use strict';
 
-    var V = '0.5.2.0';
+    var V = '0.5.3.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -1236,8 +1236,20 @@
         var status = valueOf(item, 'status');
         if (filter === 'repairable') return !!valueOf(item, 'canRepair');
         if (filter === 'locked') return !!valueOf(item, 'locked');
+        if (filter === 'waiting-translation' || filter === 'no-source') {
+            return valueOf(item, 'repairState') === filter;
+        }
         if (filter !== 'all') return status === filter;
         return true;
+    }
+
+    function qualityRepairStateLabel(state) {
+        if (state === 'waiting-translation') return 'traduzione in corso';
+        if (state === 'no-source') return 'senza fonte disponibile';
+        if (state === 'blocked') return 'valore cambiato';
+        if (state === 'error') return 'errore';
+        if (state === 'applied') return 'riparato';
+        return '';
     }
 
     function qualityItemSearchText(item) {
@@ -1250,6 +1262,7 @@
             itemType,
             localizedType,
             qualityLabel(valueOf(item, 'status')),
+            qualityRepairStateLabel(valueOf(item, 'repairState')),
             valueOf(item, 'locked') ? 'bloccato' : ''
         ].join(' '));
     }
@@ -1332,6 +1345,12 @@
         if (automatic && automatic.getAttribute('aria-busy') !== 'true') {
             automatic.disabled = busy || qualityAuditView.queued || qualityRepairIds(qualityAuditView.report).length === 0;
         }
+        var retry = val('acBtnQualityRetryNoSource');
+        if (retry && retry.getAttribute('aria-busy') !== 'true') {
+            retry.disabled = busy
+                || qualityAuditView.queued
+                || qualitySuppressedIds(qualityAuditView.report).length === 0;
+        }
         var mainAudit = val('acBtnQualityAudit');
         if (mainAudit && mainAudit.getAttribute('aria-busy') !== 'true') mainAudit.disabled = busy;
         page.querySelectorAll('.ac-quality-item .ac-checkbox').forEach(function (checkbox) {
@@ -1350,17 +1369,28 @@
         return true;
     }
 
-    function queueQualityRepair(itemIds, button, automatic) {
+    function queueQualityRepair(itemIds, button, automatic, force) {
         if (qualityRepairIsBlocked()) return;
         if (!itemIds.length) {
-            toast('Non ci sono metadati riparabili nella selezione.', 'error');
+            toast(
+                force
+                    ? 'Nessun elemento è stato escluso per mancanza di fonti.'
+                    : 'Non ci sono metadati riparabili nella selezione.',
+                'error'
+            );
             return;
         }
         var maximum = valueOf(qualityAuditView.report, 'maximumRepairItems') || 100;
         confirmModal(
-            automatic ? 'Ripara il prossimo lotto automatico' : 'Ripara gli elementi selezionati',
+            force
+                ? 'Riprova gli elementi senza fonte'
+                : (automatic ? 'Ripara il prossimo lotto automatico' : 'Ripara gli elementi selezionati'),
             'Accodare il refresh non distruttivo di ' + itemIds.length + ' elementi? '
             + 'Il server ricontrolla lingua, lock e configurazione prima di accodarli. '
+            + (force
+                ? 'Questi elementi erano stati esclusi perché nessuna fonte aveva la sinossi: '
+                    + 'la ricerca viene rifatta comunque. '
+                : '')
             + 'Il limite per richiesta è ' + maximum + '.'
         ).then(function (confirmed) {
             if (!confirmed || qualityRepairIsBlocked()) return;
@@ -1372,11 +1402,15 @@
             updateQualityAuditControls();
             state.className = 'ac-state';
             state.textContent = 'Validazione e accodamento del lotto…';
-            request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: itemIds })
+            request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', {
+                itemIds: itemIds,
+                force: !!force
+            })
                 .then(function (result) {
                     var considered = valueOf(result, 'consideredCount') || 0;
                     var queued = valueOf(result, 'queuedCount') || 0;
                     var skipped = valueOf(result, 'skippedCount') || 0;
+                    var suppressed = valueOf(result, 'suppressedCount') || 0;
                     var truncated = !!valueOf(result, 'truncated');
                     queuedAny = queued > 0;
                     qualityAuditView.queued = queuedAny;
@@ -1384,8 +1418,10 @@
                     state.className = 'ac-state ' + (queuedAny ? 'success' : 'error');
                     state.textContent = queued + ' refresh accodati su ' + considered + ' verificati'
                         + (skipped ? ' · ' + skipped + ' saltati' : '')
+                        + (suppressed ? ' · ' + suppressed + ' già senza fonte' : '')
                         + (truncated ? ' · richiesta limitata a ' + maximum : '')
-                        + '. Attendi il completamento, poi analizza di nuovo.';
+                        + '. Attendi il completamento, poi analizza di nuovo: '
+                        + 'ogni esito viene registrato e mostrato sulla riga.';
                     toast(
                         queuedAny ? 'Lotto di riparazione accodato' : 'Nessun elemento è risultato ancora riparabile',
                         queuedAny ? 'success' : 'error'
@@ -1570,6 +1606,8 @@
             { value: 'English', label: 'Inglese probabile' },
             { value: 'Missing', label: 'Sinossi mancante' },
             { value: 'Unknown', label: 'Lingua incerta' },
+            { value: 'waiting-translation', label: 'Traduzione in corso' },
+            { value: 'no-source', label: 'Senza fonte disponibile' },
             { value: 'locked', label: 'Elementi bloccati' }
         ]));
         qualityControls.appendChild(qualityToolbar);
@@ -1594,6 +1632,11 @@
         qualityRepairButton.id = 'acBtnQualityRepair';
         qualityRepairButton.disabled = true;
         qualityBulk.appendChild(qualityRepairButton);
+        var qualityRetryButton = el('button', 'ac-btn ac-btn-ghost', 'Riprova senza fonte');
+        qualityRetryButton.type = 'button';
+        qualityRetryButton.id = 'acBtnQualityRetryNoSource';
+        qualityRetryButton.disabled = true;
+        qualityBulk.appendChild(qualityRetryButton);
         qualityControls.appendChild(qualityBulk);
         qualityControls.appendChild(makeLiveState('acQualityVisibleState', 'ac-state ac-audit-result-state'));
         quality.body.appendChild(qualityControls);
@@ -1651,6 +1694,9 @@
         qualityRepairButton.addEventListener('click', function () {
             queueQualityRepair(qualityRepairIds(qualityAuditView.report), this, true);
         });
+        qualityRetryButton.addEventListener('click', function () {
+            queueQualityRepair(qualitySuppressedIds(qualityAuditView.report), this, true, true);
+        });
 
         qualityAuditButton.addEventListener('click', function () {
             var button = this;
@@ -1667,9 +1713,13 @@
             request('GET', 'Plugins/AnimeClick/LibraryQualityAudit').then(function (report) {
                 renderQualityAudit(report);
                 var repairable = valueOf(report, 'repairableCount') || 0;
+                var waiting = valueOf(report, 'waitingTranslationCount') || 0;
+                var withoutSource = valueOf(report, 'noSourceCount') || 0;
                 state.className = 'ac-state success';
                 state.textContent = (valueOf(report, 'itemCount') || 0) + ' elementi analizzati · '
-                    + repairable + ' riparabili in sicurezza';
+                    + repairable + ' riparabili in sicurezza'
+                    + (waiting ? ' · ' + waiting + ' in traduzione' : '')
+                    + (withoutSource ? ' · ' + withoutSource + ' senza fonte disponibile' : '');
             }).catch(function (error) {
                 state.className = 'ac-state error';
                 state.textContent = truncate(error.message, 240);
@@ -1956,17 +2006,45 @@
         return QUALITY_LABEL[status] || status || 'Sconosciuto';
     }
 
-    function qualityRepairIds(report) {
+    // One item per group per pass, not the first N in report order. Taking them in order let a
+    // single long series with no available source fill the whole batch: every automatic run spent
+    // its 100 slots on the same hopeless episodes, so nothing else in the library ever improved.
+    function collectQualityIds(report, predicate) {
         if (!report) return [];
         var maximum = valueOf(report, 'maximumRepairItems') || 100;
-        var ids = [];
-        asArray(valueOf(report, 'series')).forEach(function (group) {
-            asArray(valueOf(group, 'items')).forEach(function (item) {
-                var id = valueOf(item, 'id');
-                if (valueOf(item, 'canRepair') && id && ids.length < maximum) ids.push(id);
+        var buckets = asArray(valueOf(report, 'series')).map(function (group) {
+            return asArray(valueOf(group, 'items')).filter(function (item) {
+                return predicate(item) && valueOf(item, 'id');
             });
-        });
+        }).filter(function (items) { return items.length > 0; });
+
+        var ids = [];
+        var depth = 0;
+        while (ids.length < maximum) {
+            var progressed = false;
+            for (var index = 0; index < buckets.length && ids.length < maximum; index++) {
+                if (depth < buckets[index].length) {
+                    ids.push(valueOf(buckets[index][depth], 'id'));
+                    progressed = true;
+                }
+            }
+            if (!progressed) break;
+            depth += 1;
+        }
         return ids;
+    }
+
+    function qualityRepairIds(report) {
+        return collectQualityIds(report, function (item) { return !!valueOf(item, 'canRepair'); });
+    }
+
+    // Items a previous attempt proved to have no source. Offered separately, behind an explicit
+    // retry, because sources do get filled in and a cached negative should not be permanent.
+    function qualitySuppressedIds(report) {
+        return collectQualityIds(report, function (item) {
+            return !!valueOf(item, 'suppressed')
+                && valueOf(item, 'repairState') === 'no-source';
+        });
     }
 
     function qualityItemHeading(item) {
@@ -2023,10 +2101,37 @@
         badges.appendChild(statusBadge);
         if (valueOf(item, 'locked')) {
             badges.appendChild(el('span', 'ac-badge warn', 'Bloccato'));
-        } else if (!valueOf(item, 'canRepair') && (status === 'English' || status === 'Missing')) {
+        } else if (!valueOf(item, 'languageRepairable') && (status === 'English' || status === 'Missing')) {
             var disabled = el('span', 'ac-badge neutral', 'Funzione disattivata');
             disabled.title = 'Abilita la trama o le sinossi episodio nella configurazione prima di riparare.';
             badges.appendChild(disabled);
+        }
+
+        // Why an item is still here after a repair. Without this the row looked identical before and
+        // after a batch, and the only honest reading was "il pulsante non fa niente".
+        var repairState = valueOf(item, 'repairState');
+        var attempts = valueOf(item, 'attemptCount') || 0;
+        var attemptSuffix = attempts ? ' Tentativi: ' + attempts + '.' : '';
+        if (repairState === 'waiting-translation') {
+            var waiting = el('span', 'ac-badge neutral', 'Traduzione in corso');
+            waiting.title = 'La traduzione AI è già accodata: si applica da sola quando il modello risponde.'
+                + attemptSuffix;
+            badges.appendChild(waiting);
+        } else if (repairState === 'no-source') {
+            var noSource = el('span', 'ac-badge neutral', 'Nessuna fonte');
+            noSource.title = 'AnimeClick, TheTVDB e TMDB non hanno questa sinossi, quindi non c’è niente da scrivere. '
+                + 'Usa «Riprova senza fonte» per ricontrollare.' + attemptSuffix;
+            badges.appendChild(noSource);
+        } else if (repairState === 'blocked') {
+            var blocked = el('span', 'ac-badge warn', 'Valore cambiato');
+            blocked.title = 'Il testo è cambiato mentre la riparazione era in corso, quindi non è stato sovrascritto.'
+                + attemptSuffix;
+            badges.appendChild(blocked);
+        } else if (repairState === 'error') {
+            var failed = el('span', 'ac-badge danger', 'Errore');
+            failed.title = 'L’ultimo tentativo è terminato con un errore; i dettagli sono nel log di Jellyfin.'
+                + attemptSuffix;
+            badges.appendChild(failed);
         }
         row.appendChild(badges);
         return row;
@@ -2131,13 +2236,44 @@
         var unknown = valueOf(report, 'unknownCount') || 0;
         var locked = valueOf(report, 'lockedCount') || 0;
         var repairable = valueOf(report, 'repairableCount') || 0;
+        var waitingTranslation = valueOf(report, 'waitingTranslationCount') || 0;
+        var noSource = valueOf(report, 'noSourceCount') || 0;
         addPriorityTile(summary, 'Italiano', String(italian), 'su ' + itemCount + ' elementi analizzati', 'good');
         addPriorityTile(summary, 'Inglese', String(english), 'candidato alla riparazione automatica', english ? 'warn' : 'good');
         addPriorityTile(summary, 'Mancante', String(missing), 'campo vuoto da completare', missing ? 'warn' : 'good');
         addPriorityTile(summary, 'Incerto', String(unknown), 'mai modificato automaticamente', 'neutral');
         addPriorityTile(summary, 'Bloccato', String(locked), 'protetto dai lock Jellyfin', locked ? 'warn' : 'good');
+        addPriorityTile(
+            summary,
+            'Traduzione in corso',
+            String(waitingTranslation),
+            'si applicano da sole quando il modello risponde',
+            'neutral'
+        );
+        addPriorityTile(
+            summary,
+            'Senza fonte',
+            String(noSource),
+            'nessuna sinossi su AnimeClick, TheTVDB o TMDB',
+            'neutral'
+        );
 
         var candidates = qualityRepairIds(report);
+        var suppressedCandidates = qualitySuppressedIds(report);
+        var retryButton = val('acBtnQualityRetryNoSource');
+        if (retryButton && retryButton.getAttribute('aria-busy') !== 'true') {
+            retryButton.disabled = qualityAuditView.busy
+                || qualityAuditView.queued
+                || suppressedCandidates.length === 0;
+            retryButton.textContent = suppressedCandidates.length
+                ? 'Riprova senza fonte (' + suppressedCandidates.length + ')'
+                : 'Riprova senza fonte';
+            retryButton.title = suppressedCandidates.length
+                ? 'Ricontrolla gli elementi per cui nessuna fonte aveva la sinossi. Utile dopo aver aggiunto '
+                    + 'una chiave TMDB/TheTVDB o configurato la traduzione AI.'
+                : 'Nessun elemento è stato escluso per mancanza di fonti.';
+        }
+
         if (repairButton.getAttribute('aria-busy') !== 'true') {
             repairButton.disabled = qualityAuditView.busy || qualityAuditView.queued || candidates.length === 0;
             repairButton.textContent = candidates.length
@@ -2145,7 +2281,8 @@
                 : 'Niente da riparare';
             repairButton.title = repairable > candidates.length
                 ? repairable + ' elementi riparabili; il server ne accetta al massimo '
-                    + (valueOf(report, 'maximumRepairItems') || candidates.length) + ' per lotto.'
+                    + (valueOf(report, 'maximumRepairItems') || candidates.length) + ' per lotto, '
+                    + 'distribuiti fra serie diverse.'
                 : repairable + ' elementi riparabili.';
         }
 
@@ -2165,8 +2302,13 @@
         if (!repairable && qualityAuditView.filter === 'all' && !qualityAuditView.query) {
             list.appendChild(makeCallout(
                 'Nessuna riparazione automatica sicura',
-                'I casi rimasti sono incerti, bloccati oppure protetti da una funzione disattivata. '
-                + 'L’audit li mostra, ma non li accoda.',
+                noSource || waitingTranslation
+                    ? 'Restano ' + noSource + ' elementi per cui nessuna fonte ha la sinossi e '
+                        + waitingTranslation + ' in attesa della traduzione AI. I primi tornano '
+                        + 'disponibili da soli dopo qualche giorno, oppure subito con «Riprova senza fonte»; '
+                        + 'i secondi si applicano appena il modello risponde.'
+                    : 'I casi rimasti sono incerti, bloccati oppure protetti da una funzione disattivata. '
+                        + 'L’audit li mostra, ma non li accoda.',
                 'warn'
             ));
         }
