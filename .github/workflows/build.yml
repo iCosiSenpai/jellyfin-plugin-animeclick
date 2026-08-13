@@ -110,25 +110,33 @@ jobs:
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            Completare le sinossi è un clic solo.
+            Meno numeri, meno pulsanti, nessun tetto arbitrario.
 
-            **Una sola azione, invece del ciclo manuale**
-            - «Completa tutte le sinossi» avvia un'attività che procede a lotti da 100, distribuiti fra
-              serie diverse, e si ferma da sola quando non resta niente su cui agire. Prima la pagina
-              poteva accodare un lotto per volta, e su una libreria reale significava ripetere quattro
-              o cinque volte «ripara, attendi, analizza».
-            - Il lavoro continua a pagina chiusa e l'avanzamento è visibile in Attività pianificate,
-              dove l'operazione può anche essere annullata.
-            - La stessa attività è pianificata ogni settimana, quindi le sinossi pubblicate dopo
-              l'ultimo controllo arrivano da sole.
+            **Niente più «max 200»**
+            - Il ricontrollo dei titoli lavora l'intero arretrato in una sola esecuzione. Quello che
+              protegge AnimeClick non era il tetto ma il ritardo fra le richieste, che resta l'unica
+              manopola e ora è dichiarato al posto di un numero magico.
+            - Rimossa anche la finestra rotante, che serviva soltanto a spartire quel tetto fra
+              settimane diverse.
 
-            **Cosa non cambia**
-            - Nessun testo italiano viene sovrascritto, i campi bloccati restano intatti e ogni
-              elemento è rivalidato dal server prima del refresh.
-            - Gli elementi in attesa di una traduzione AI non vengono riaccodati: si applicano quando
-              il modello risponde. Quelli per cui nessuna fonte ha la sinossi restano esclusi, con il
-              pulsante «Riprova senza fonte» per forzarli.
-            - La selezione manuale degli elementi resta disponibile per intervenire su casi precisi.
+            **Numeri che dicono la verità**
+            - I titoli mancanti sono divisi in tre: quelli che un ricontrollo può recuperare, quelli in
+              attesa che AnimeClick pubblichi il titolo, e quelli che nessuna richiesta cambierà —
+              tipicamente le schede che elencano gli episodi come «Episodio 01», senza titolo.
+              Un totale unico che non scendeva mai faceva sembrare rotto il plugin.
+            - La qualità metadati mostra al massimo quattro contatori invece di sette, e l'elenco
+              parte da ciò che ha bisogno di attenzione: gli elementi con lingua incerta, che il
+              plugin non tocca mai, non riempiono più la pagina.
+
+            **Contatori cliccabili**
+            - Ogni contatore e ogni causa filtrano l'elenco sottostante con un clic, invece di
+              obbligare a cercare la voce corrispondente in un menu.
+
+            **Una scelta in meno**
+            - La selezione manuale degli elementi resta solo dove è un giudizio umano, cioè sui titoli
+              con esito incerto; per le sinossi era attrito inutile, perché gli stessi elementi li
+              prende comunque l'azione automatica. Le caselle non appaiono più accanto alle schede che
+              non possono migliorare.
 
             **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
             **Versione:** `${{ env.VERSION }}`

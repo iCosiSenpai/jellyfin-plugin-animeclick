@@ -310,6 +310,15 @@ public class AnimeClickDiagnosticsController : ControllerBase
             }
 
             row.MissingTitleCount = reasons.Count;
+
+            // Three separate numbers, because they mean three different things to the user: what a
+            // recheck can still fix, what is only waiting for AnimeClick to publish, and what no
+            // request will ever change.
+            row.RecoverableTitleCount = reasons.Count(AnimeClickLibraryAudit.IsRecoverableByRecheck);
+            row.WaitingTitleCount = reasons.Count(AnimeClickLibraryAudit.IsWaitingForSource);
+            row.UnavailableTitleCount = row.MissingTitleCount
+                - row.RecoverableTitleCount
+                - row.WaitingTitleCount;
             var reason = reasons.Count == 0
                 ? AnimeClickAuditReason.Ok
                 : AnimeClickLibraryAudit.Summarize(reasons);
@@ -321,6 +330,9 @@ public class AnimeClickDiagnosticsController : ControllerBase
         response.SeriesCount = response.Series.Count;
         response.EpisodeCount = response.Series.Sum(item => item.EpisodeCount);
         response.MissingTitleCount = response.Series.Sum(item => item.MissingTitleCount);
+        response.RecoverableTitleCount = response.Series.Sum(item => item.RecoverableTitleCount);
+        response.WaitingTitleCount = response.Series.Sum(item => item.WaitingTitleCount);
+        response.UnavailableTitleCount = response.Series.Sum(item => item.UnavailableTitleCount);
         response.Totals = response.Series
             .GroupBy(item => item.Reason)
             .Select(group => new LibraryAuditReasonCount
@@ -1492,6 +1504,18 @@ public sealed class LibraryAuditResponse
 
     public int MissingTitleCount { get; set; }
 
+    /// <summary>Episodes a recheck can still fix.</summary>
+    public int RecoverableTitleCount { get; set; }
+
+    /// <summary>Episodes whose row exists but whose title AnimeClick has not published yet.</summary>
+    public int WaitingTitleCount { get; set; }
+
+    /// <summary>
+    /// Episodes no request can fix: the card lists them without titles, the numbering is ambiguous,
+    /// the field is locked, or the season needs its own card ID.
+    /// </summary>
+    public int UnavailableTitleCount { get; set; }
+
     public List<LibraryAuditReasonCount> Totals { get; set; } = [];
 
     public List<LibraryAuditSeriesItem> Series { get; set; } = [];
@@ -1519,6 +1543,15 @@ public sealed class LibraryAuditSeriesItem
     public int EpisodeCount { get; set; }
 
     public int MissingTitleCount { get; set; }
+
+    /// <summary>Of the missing ones, those a recheck can still fix.</summary>
+    public int RecoverableTitleCount { get; set; }
+
+    /// <summary>Of the missing ones, those only waiting for AnimeClick to publish the title.</summary>
+    public int WaitingTitleCount { get; set; }
+
+    /// <summary>Of the missing ones, those no request can change.</summary>
+    public int UnavailableTitleCount { get; set; }
 
     /// <summary>Rows read from the card. Only filled by the single-series, network-allowed audit.</summary>
     public int? CardRowCount { get; set; }

@@ -522,6 +522,35 @@
 .ac-priority-tile.neutral { border-top: 2px solid var(--ac-text-faint); }
 .ac-priority-value { font-size: 1.2em; letter-spacing: -0.01em; }
 
+/* Tiles and badges that filter the list under them: a number you can act on directly. */
+.ac-priority-tile-filter {
+    width: 100%;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+.ac-priority-tile-filter:hover { background: var(--ac-surface-2); }
+.ac-priority-tile-filter:active { transform: translateY(1px); }
+.ac-priority-tile-filter.is-active {
+    border-color: var(--ac-accent);
+    background: var(--ac-surface-2);
+}
+.ac-priority-tile-filter.is-active::after {
+    content: 'filtro attivo';
+    justify-self: start;
+    font-size: 0.68em; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--ac-accent);
+}
+.ac-badge-filter {
+    border: 1px solid transparent;
+    font-family: inherit;
+    cursor: pointer;
+}
+.ac-badge-filter:hover { border-color: var(--ac-border-strong); }
+.ac-badge-filter.is-active { border-color: var(--ac-accent); }
+
 .ac-provider-row {
     display: flex;
     justify-content: space-between;

@@ -35,12 +35,6 @@ namespace AnimeClick.Plugin.Tasks;
 /// </summary>
 public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
 {
-    /// <summary>
-    /// Upper bound on the episodes queued by one run. Every one of them costs at least one
-    /// AnimeClick request, paced by the plugin's own one-second gate, so an unbounded task on a
-    /// large library would hammer the site for hours.
-    /// </summary>
-    private const int MaximumEpisodesPerRun = 200;
     private const string CandidateCursorCacheKey = "taskState::missingEpisodeTitlesCursor:v1";
 
     private readonly ILibraryManager _libraryManager;
@@ -84,7 +78,9 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
         + "o rimasti in una lingua diversa dopo che AnimeClick ha pubblicato il titolo italiano. "
         + "Confronta l'identità numerica stabile della riga, rispetta i campi bloccati e salta "
         + "le schede che non possono migliorare. "
-        + $"Ogni esecuzione ne accoda al massimo {MaximumEpisodesPerRun}.";
+        + "Lavora l'intero arretrato in una sola esecuzione: le richieste ad AnimeClick sono "
+        + "distanziate dal ritardo configurato nella pagina del plugin (un secondo per default), "
+        + "quindi il tempo dipende da quanti episodi restano, non da un tetto arbitrario.";
 
     /// <inheritdoc />
     public string Category => "AnimeClick";
@@ -145,9 +141,9 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
         }
 
         _logger.LogInformation(
-            "AnimeClick: accodato il ricontrollo del titolo per {Queued} episodi (tetto {Cap} per esecuzione)",
+            "AnimeClick: accodato il ricontrollo del titolo per {Queued} episodi, ritmo {DelayMs} ms per richiesta",
             queued,
-            MaximumEpisodesPerRun);
+            configuration.RequestDelayMilliseconds);
         progress.Report(100);
     }
 
@@ -161,6 +157,12 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
     /// changes. And taking them in library order spent the whole budget on the cards that publish no
     /// titles at all: a hundred and eighteen episodes here, week after week, none of which can ever
     /// gain one. So the audit's own classification decides, and its verdict orders the queue.
+    /// </para>
+    /// <para>
+    /// The two-hundred cap that followed is gone as well. What protects AnimeClick is the configured
+    /// delay between requests, applied to every call the plugin makes; the cap only guaranteed that
+    /// work was left undone, and made the reported backlog stop shrinking for no reason the user
+    /// could see. The whole candidate list is queued, still highest-yield first.
     /// </para>
     /// </summary>
     private async Task<List<BaseItem>> FindCandidatesAsync(
@@ -248,70 +250,20 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
         var ordered = ranked
             .OrderBy(entry => entry.Priority)
 
-            // Keep a total order before applying the persisted cursor. Stable ties make the cursor
-            // meaningful across runs instead of depending on the database's incidental row order.
+            // A stable total order keeps the log readable across runs instead of depending on the
+            // database's incidental row order.
             .ThenBy(entry => entry.Episode.SeriesName ?? string.Empty, StringComparer.Ordinal)
             .ThenBy(entry => entry.Episode.ParentIndexNumber ?? int.MaxValue)
             .ThenBy(entry => entry.Episode.IndexNumber ?? int.MaxValue)
             .ThenBy(entry => entry.Episode.Id)
             .Select(entry => entry.Episode)
             .ToList();
-        if (ordered.Count <= MaximumEpisodesPerRun)
-        {
-            return [.. ordered.Select(episode => (BaseItem)episode)];
-        }
 
-        // A hard cap without rotation permanently starves every candidate after the first 200 when
-        // upstream keeps those first rows unresolved. Persist a circular cursor so each weekly run
-        // starts where the previous one stopped while the first run still favors the highest yield.
-        var cursor = await _cache
-            .GetAsync<int>(CandidateCursorCacheKey, cancellationToken)
-            .ConfigureAwait(false);
-        var window = SelectRotatingWindow(ordered, cursor, MaximumEpisodesPerRun);
-        await _cache
-            .SetAsync(
-                CandidateCursorCacheKey,
-                window.NextCursor!.Value,
-                cancellationToken)
-            .ConfigureAwait(false);
-        return [.. window.Items.Select(episode => (BaseItem)episode)];
+        // The rotation cursor existed only to share a capped budget between runs. With the cap gone
+        // there is nothing to rotate, and the stale key is dropped so it cannot resurface later.
+        _cache.ClearKey(CandidateCursorCacheKey);
+        return [.. ordered.Select(episode => (BaseItem)episode)];
     }
-
-    /// <summary>
-    /// Selects a bounded circular window without touching persistent state. A null next cursor
-    /// means the full input fits and callers do not need to persist rotation state.
-    /// </summary>
-    internal static RotatingWindow<T> SelectRotatingWindow<T>(
-        IReadOnlyList<T> items,
-        int cursor,
-        int cap)
-    {
-        ArgumentNullException.ThrowIfNull(items);
-        if (cap <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(cap));
-        }
-
-        if (items.Count <= cap)
-        {
-            return new RotatingWindow<T>([.. items], null);
-        }
-
-        var offset = cursor % items.Count;
-        if (offset < 0)
-        {
-            offset += items.Count;
-        }
-
-        var selected = items
-            .Skip(offset)
-            .Concat(items.Take(offset))
-            .Take(cap)
-            .ToList();
-        return new RotatingWindow<T>(selected, (offset + cap) % items.Count);
-    }
-
-    internal sealed record RotatingWindow<T>(IReadOnlyList<T> Items, int? NextCursor);
 
     /// <summary>The cached catalog for one card, memoized, never fetched.</summary>
     private async Task<AnimeClickEpisodeCatalog?> GetCachedCatalogAsync(
