@@ -49,6 +49,12 @@ public sealed class AnimeClickRepairAttempt
     public DateTimeOffset AttemptedAt { get; set; }
 
     public int Attempts { get; set; }
+
+    /// <summary>
+    /// Plugin version that produced this attempt. A newer version may know how to resolve what an
+    /// older one could not, so its "no source" verdicts must not be inherited.
+    /// </summary>
+    public string PluginVersion { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -143,7 +149,8 @@ public sealed class AnimeClickRepairLedger : IDisposable
                 {
                     if (pair.Value is null
                         || !Guid.TryParse(pair.Key, out var itemId)
-                        || IsExpired(pair.Value, now))
+                        || IsExpired(pair.Value, now)
+                        || IsStaleVerdict(pair.Value))
                     {
                         continue;
                     }
@@ -179,14 +186,16 @@ public sealed class AnimeClickRepairLedger : IDisposable
                 Outcome = outcome.ToString(),
                 Detail = detail ?? string.Empty,
                 AttemptedAt = now,
-                Attempts = 1
+                Attempts = 1,
+                PluginVersion = CurrentPluginVersion
             },
             (_, existing) => new AnimeClickRepairAttempt
             {
                 Outcome = outcome.ToString(),
                 Detail = detail ?? string.Empty,
                 AttemptedAt = now,
-                Attempts = existing.Attempts + 1
+                Attempts = existing.Attempts + 1,
+                PluginVersion = CurrentPluginVersion
             });
 
         ScheduleFlush();
@@ -303,6 +312,23 @@ public sealed class AnimeClickRepairLedger : IDisposable
 
     private static bool IsExpired(AnimeClickRepairAttempt attempt, DateTimeOffset now)
         => Age(attempt, now) > Retention;
+
+    /// <summary>
+    /// The current plugin version, read from the assembly so it is also correct under test.
+    /// </summary>
+    internal static string CurrentPluginVersion { get; } =
+        typeof(AnimeClickRepairLedger).Assembly.GetName().Version?.ToString() ?? "unknown";
+
+    /// <summary>
+    /// True for a "no source" verdict issued by a different plugin version. Each release can add a
+    /// source or a way of matching one — 0.5.4.0 taught the chain to read absolute episode numbers,
+    /// which alone turned hundreds of "no source" answers into real synopses — so inheriting those
+    /// verdicts would keep hiding episodes that are now resolvable. Everything else is kept: an
+    /// applied repair or a lock does not become wrong across an upgrade.
+    /// </summary>
+    private static bool IsStaleVerdict(AnimeClickRepairAttempt attempt)
+        => string.Equals(attempt.Outcome, nameof(AnimeClickRepairOutcome.NoSource), StringComparison.Ordinal)
+            && !string.Equals(attempt.PluginVersion, CurrentPluginVersion, StringComparison.Ordinal);
 
     private void ScheduleFlush()
     {

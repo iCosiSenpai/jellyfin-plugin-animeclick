@@ -110,34 +110,27 @@ jobs:
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            L’audit della qualità dei metadati ora ricorda l’esito di ogni riparazione. Prima
-            classificava soltanto la lingua del testo salvato: un elemento per cui nessuna fonte
-            ha la sinossi restava proposto come riparabile a ogni analisi, ogni lotto lo accodava
-            di nuovo, niente cambiava e i totali non si muovevano mai.
+            Le sinossi degli episodi tornano anche per gli anime lunghi tenuti in una sola stagione.
 
-            **Esiti registrati e riportati**
-            - Ogni tentativo salva il proprio risultato: applicato, in attesa della traduzione AI,
-              nessuna fonte disponibile, valore cambiato durante l’operazione oppure errore.
-            - Lo stato compare sulla riga dell’elemento, con numero di tentativi, e nel riepilogo
-              con due nuovi totali: «Traduzione in corso» e «Senza fonte».
-            - Il registro sopravvive al riavvio di Jellyfin, quindi l’audit non ricomincia a
-              proporre ciò che ha già escluso.
+            **Numerazione assoluta riconosciuta**
+            - Una libreria che archivia una serie lunga come un'unica stagione chiede «S1E49», mentre
+              TheTVDB e TMDB archiviano lo stesso episodio nella stagione 2: la ricerca non trovava
+              niente e l'intera catena dichiarava che nessuna fonte aveva quell'episodio, per
+              centinaia di puntate che invece esistono, spesso già in italiano.
+            - TheTVDB pubblica il numero assoluto insieme a ogni episodio: ora viene letto dallo
+              stesso elenco che il plugin già scaricava, quindi il recupero non costa nessuna
+              richiesta in più.
+            - Su TMDB il numero assoluto viene tradotto nella coppia stagione/episodio reale usando
+              la lunghezza delle stagioni, letta una volta e messa in cache.
+            - La ricerca per numero assoluto scatta soltanto quando la coordinata richiesta non può
+              esistere, cioè oltre la fine della prima stagione: un episodio davvero mancante non
+              viene mai riempito con la sinossi di un altro.
 
-            **Lotti che non girano a vuoto**
-            - Gli elementi la cui ultima ricerca non ha trovato alcuna fonte restano fuori dal
-              lotto automatico per una settimana, poi tornano disponibili da soli perché le fonti
-              vengono riempite col tempo.
-            - Il pulsante «Riprova senza fonte» li ricontrolla subito, utile dopo aver aggiunto una
-              chiave TMDB/TheTVDB o configurato la traduzione AI.
-            - Le sinossi in attesa di traduzione non vengono riaccodate: si applicano da sole
-              quando il modello risponde.
-
-            **Lotto automatico distribuito fra le serie**
-            - La selezione automatica prende un elemento per gruppo a rotazione invece dei primi
-              cento in ordine di report: una singola serie lunga e senza fonti non può più occupare
-              tutti i posti disponibili impedendo al resto della libreria di migliorare.
-            - Nuovi filtri «Traduzione in corso» e «Senza fonte disponibile», e la ricerca trova
-              gli elementi anche per stato della riparazione.
+            **Verdetti «nessuna fonte» riprovati dopo un aggiornamento**
+            - Il registro delle riparazioni introdotto in 0.5.3.0 non eredita più i verdetti «nessuna
+              fonte disponibile» emessi da una versione precedente: un rilascio che aggiunge una
+              fonte, come questo, riprova da solo senza bisogno di forzare nulla.
+            - Gli esiti già applicati e i blocchi restano invariati.
 
             **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
             **Versione:** `${{ env.VERSION }}`

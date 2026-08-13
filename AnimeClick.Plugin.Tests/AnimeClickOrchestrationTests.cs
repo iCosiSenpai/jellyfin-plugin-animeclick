@@ -373,6 +373,145 @@ public class AnimeClickOrchestrationTests
         Assert.True(second.TryGetAttempt(itemId, out var attempt));
         Assert.Equal(nameof(AnimeClickRepairOutcome.NoSource), attempt.Outcome);
         Assert.Equal("no-english-source", attempt.Detail);
+        Assert.Equal(AnimeClickRepairLedger.CurrentPluginVersion, attempt.PluginVersion);
+    }
+
+    [Fact]
+    public async Task RepairLedgerGivesANewVersionAFreshChanceOnNoSourceVerdicts()
+    {
+        using var temporary = new TemporaryAnimeClickCache();
+        var fromOldVersion = Guid.NewGuid();
+        var appliedByOldVersion = Guid.NewGuid();
+        var stored = new Dictionary<string, AnimeClickRepairAttempt>
+        {
+            [fromOldVersion.ToString("N")] = new()
+            {
+                Outcome = nameof(AnimeClickRepairOutcome.NoSource),
+                Detail = "no-english-source",
+                AttemptedAt = DateTimeOffset.UtcNow,
+                Attempts = 3,
+                PluginVersion = "0.0.0.1"
+            },
+            [appliedByOldVersion.ToString("N")] = new()
+            {
+                Outcome = nameof(AnimeClickRepairOutcome.Applied),
+                Detail = "native-tvdb",
+                AttemptedAt = DateTimeOffset.UtcNow,
+                Attempts = 1,
+                PluginVersion = "0.0.0.1"
+            }
+        };
+        await temporary.Cache.SetAsync(
+            AnimeClickRepairLedger.CacheKey,
+            stored,
+            CancellationToken.None);
+
+        var ledger = CreateLedger(temporary);
+        await ledger.EnsureLoadedAsync(CancellationToken.None);
+
+        // A release that adds a source must not inherit the previous verdict of "nothing exists".
+        Assert.False(ledger.TryGetAttempt(fromOldVersion, out _));
+        Assert.False(ledger.IsSuppressed(fromOldVersion, DateTimeOffset.UtcNow, out _));
+        Assert.True(ledger.TryGetAttempt(appliedByOldVersion, out var applied));
+        Assert.Equal(nameof(AnimeClickRepairOutcome.Applied), applied.Outcome);
+    }
+
+    [Fact]
+    public void TvdbFallsBackToTheAbsoluteNumberOnlyWhenTheCoordinateCannotExist()
+    {
+        // Two seasons of three, plus the absolute numbering TheTVDB publishes alongside them.
+        var episodes = new List<TvdbEpisodeRecord>
+        {
+            new() { SeasonNumber = 1, Number = 1, AbsoluteNumber = 1, Overview = "S1E1" },
+            new() { SeasonNumber = 1, Number = 2, AbsoluteNumber = 2, Overview = null },
+            new() { SeasonNumber = 1, Number = 3, AbsoluteNumber = 3, Overview = "S1E3" },
+            new() { SeasonNumber = 2, Number = 1, AbsoluteNumber = 4, Overview = "S2E1" },
+            new() { SeasonNumber = 2, Number = 2, AbsoluteNumber = 5, Overview = "S2E2" }
+        };
+
+        // A library that keeps everything in one season asks past the end of season 1.
+        Assert.Equal("S2E1", AnimeClickTvdbClient.SelectOverview(episodes, 1, 4));
+        Assert.Equal("S2E2", AnimeClickTvdbClient.SelectOverview(episodes, 1, 5));
+
+        // Inside season 1 the request is plausible as written and is answered as before, including
+        // when the episode exists but carries no overview.
+        Assert.Equal("S1E1", AnimeClickTvdbClient.SelectOverview(episodes, 1, 1));
+        Assert.Null(AnimeClickTvdbClient.SelectOverview(episodes, 1, 2));
+        Assert.Equal("S2E1", AnimeClickTvdbClient.SelectOverview(episodes, 2, 1));
+
+        // Beyond the run, and for any season past the first, nothing is guessed.
+        Assert.Null(AnimeClickTvdbClient.SelectOverview(episodes, 1, 9));
+        Assert.Null(AnimeClickTvdbClient.SelectOverview(episodes, 3, 4));
+        Assert.Null(AnimeClickTvdbClient.SelectOverview(episodes, 0, 4));
+    }
+
+    [Fact]
+    public void TvdbEpisodePagesCarryTheAbsoluteNumber()
+    {
+        const string json = """
+        {
+          "data": {
+            "episodes": [
+              { "seasonNumber": 1, "number": 48, "absoluteNumber": 48, "overview": "quarantotto" },
+              { "seasonNumber": 2, "number": 1, "absoluteNumber": 49, "overview": "quarantanove" },
+              { "seasonNumber": 0, "number": 1, "absoluteNumber": 0, "overview": "speciale" }
+            ]
+          }
+        }
+        """;
+
+        var records = AnimeClickTvdbClient.ParseEpisodesFromPage(json);
+
+        Assert.Equal(3, records.Count);
+        Assert.Equal(48, records[0].AbsoluteNumber);
+        Assert.Equal(49, records[1].AbsoluteNumber);
+        Assert.Null(records[2].AbsoluteNumber);
+        Assert.Equal("quarantanove", AnimeClickTvdbClient.SelectOverview(records, 1, 49));
+    }
+
+    [Fact]
+    public void TmdbMapsAnAbsoluteNumberOntoItsOwnSeasons()
+    {
+        // Real season lengths of a long-running anime whose library keeps one season of 175 files.
+        var counts = new List<int> { 48, 48, 54, 25, 51, 39, 12, 51 };
+
+        Assert.Equal((2, 1), AnimeClickTmdbClient.MapAbsoluteEpisode(counts, 49));
+        Assert.Equal((3, 4), AnimeClickTmdbClient.MapAbsoluteEpisode(counts, 100));
+        Assert.Equal((3, 52), AnimeClickTmdbClient.MapAbsoluteEpisode(counts, 148));
+        Assert.Equal((4, 25), AnimeClickTmdbClient.MapAbsoluteEpisode(counts, 175));
+        Assert.Equal((1, 48), AnimeClickTmdbClient.MapAbsoluteEpisode(counts, 48));
+        Assert.Null(AnimeClickTmdbClient.MapAbsoluteEpisode(counts, 329));
+        Assert.Null(AnimeClickTmdbClient.MapAbsoluteEpisode(counts, 0));
+        // A season TMDB lists as empty is skipped for counting but still occupies its own number.
+        Assert.Equal((3, 3), AnimeClickTmdbClient.MapAbsoluteEpisode([2, 0, 4], 5));
+    }
+
+    [Fact]
+    public void TmdbSeasonStructureIgnoresSpecialsAndRejectsGaps()
+    {
+        const string json = """
+        {
+          "seasons": [
+            { "season_number": 0, "episode_count": 9 },
+            { "season_number": 2, "episode_count": 48 },
+            { "season_number": 1, "episode_count": 48 }
+          ]
+        }
+        """;
+
+        Assert.Equal([48, 48], AnimeClickTmdbClient.ParseSeasonEpisodeCounts(json));
+
+        // Season 2 missing: every later season would shift, so no mapping is attempted at all.
+        const string withGap = """
+        {
+          "seasons": [
+            { "season_number": 1, "episode_count": 48 },
+            { "season_number": 3, "episode_count": 54 }
+          ]
+        }
+        """;
+        Assert.Empty(AnimeClickTmdbClient.ParseSeasonEpisodeCounts(withGap));
+        Assert.Empty(AnimeClickTmdbClient.ParseSeasonEpisodeCounts("{}"));
     }
 
     [Fact]

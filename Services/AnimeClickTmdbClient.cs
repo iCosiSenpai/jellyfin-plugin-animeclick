@@ -162,7 +162,66 @@ public class AnimeClickTmdbClient
             configuration,
             cancellationToken);
 
+    /// <summary>
+    /// Fetches an episode overview, retrying against the season/episode pair that an absolute
+    /// episode number really points to when the requested coordinate cannot exist.
+    ///
+    /// A library that stores a long-running anime as one season asks for "S1E49"; TMDB splits the
+    /// same run into seasons of 48, 48, 54… and answers 404. The synopsis chain then declared that
+    /// no source had the episode, for hundreds of episodes that are simply filed elsewhere.
+    /// </summary>
     public async Task<string?> GetEpisodeOverviewAsync(
+        int tmdbId,
+        int season,
+        int episode,
+        string language,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        var direct = await GetEpisodeOverviewDirectAsync(
+                tmdbId,
+                season,
+                episode,
+                language,
+                configuration,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(direct))
+        {
+            return direct;
+        }
+
+        var mapped = await ResolveAbsoluteEpisodeAsync(
+                tmdbId,
+                season,
+                episode,
+                configuration,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (mapped is null)
+        {
+            return direct;
+        }
+
+        _logger.LogDebug(
+            "TmdbClient: tmdb={Tmdb} S{Season}E{Episode} letto come episodio assoluto {Absolute} -> S{MappedSeason}E{MappedEpisode}",
+            tmdbId,
+            season,
+            episode,
+            episode,
+            mapped.Value.Season,
+            mapped.Value.Episode);
+        return await GetEpisodeOverviewDirectAsync(
+                tmdbId,
+                mapped.Value.Season,
+                mapped.Value.Episode,
+                language,
+                configuration,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<string?> GetEpisodeOverviewDirectAsync(
         int tmdbId,
         int season,
         int episode,
@@ -385,6 +444,209 @@ public class AnimeClickTmdbClient
                 season,
                 episode);
             return EpisodeTranslationsFetchResult.Incomplete;
+        }
+    }
+
+    /// <summary>
+    /// Translates a requested coordinate into the season/episode pair TMDB really uses, when the
+    /// requested one cannot exist. Returns null whenever the request is plausible as written, so a
+    /// genuinely missing S1E5 is never answered with the fifth episode of the whole run.
+    /// </summary>
+    private async Task<(int Season, int Episode)?> ResolveAbsoluteEpisodeAsync(
+        int tmdbId,
+        int season,
+        int episode,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (season != 1 || episode < 1)
+        {
+            return null;
+        }
+
+        var counts = await GetSeasonEpisodeCountsAsync(tmdbId, configuration, cancellationToken)
+            .ConfigureAwait(false);
+        if (counts is null || counts.Count < 2 || episode <= counts[0])
+        {
+            return null;
+        }
+
+        return MapAbsoluteEpisode(counts, episode);
+    }
+
+    /// <summary>
+    /// Maps an absolute episode number onto TMDB's own seasons, given each season's episode count
+    /// in season order starting at season 1 (testable, no network).
+    /// </summary>
+    internal static (int Season, int Episode)? MapAbsoluteEpisode(
+        IReadOnlyList<int> seasonEpisodeCounts,
+        int absoluteNumber)
+    {
+        if (seasonEpisodeCounts is null || absoluteNumber < 1)
+        {
+            return null;
+        }
+
+        var remaining = absoluteNumber;
+        for (var index = 0; index < seasonEpisodeCounts.Count; index++)
+        {
+            var count = seasonEpisodeCounts[index];
+            if (count <= 0)
+            {
+                continue;
+            }
+
+            if (remaining <= count)
+            {
+                return (index + 1, remaining);
+            }
+
+            remaining -= count;
+        }
+
+        // Past the end of everything TMDB knows: the number is not an absolute episode either.
+        return null;
+    }
+
+    /// <summary>
+    /// Episode counts for seasons 1..n, cached per series. Season 0 is excluded: specials are not
+    /// part of the absolute run, and counting them would shift every mapping.
+    /// </summary>
+    private async Task<List<int>?> GetSeasonEpisodeCountsAsync(
+        int tmdbId,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(configuration.TmdbApiKey))
+        {
+            return null;
+        }
+
+        var cacheKey = $"tmdbSeasonCounts:v1::{tmdbId}";
+        var cached = await _cache
+            .GetAsync<List<int>>(cacheKey, configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (cached is { Count: > 0 })
+        {
+            return cached;
+        }
+
+        var gate = _episodeGates.Get("seasons::" + cacheKey);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            cached = await _cache
+                .GetAsync<List<int>>(cacheKey, configuration.CacheHours, cancellationToken)
+                .ConfigureAwait(false);
+            if (cached is { Count: > 0 })
+            {
+                return cached;
+            }
+
+            var client = BuildClient(configuration);
+            await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
+            using var response = await client
+                .GetAsync(BuildTvUrl(configuration.TmdbApiKey, tmdbId), cancellationToken)
+                .ConfigureAwait(false);
+            if (RequestThrottle.IsRateLimited(response.StatusCode))
+            {
+                var pause = Throttle.NoticeRateLimit(response);
+                _logger.LogWarning(
+                    "TmdbClient: TMDB ha risposto {Status} sulla struttura stagioni; pausa di {Pause}",
+                    response.StatusCode,
+                    pause);
+                return null;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            var counts = ParseSeasonEpisodeCounts(json);
+            if (counts.Count == 0)
+            {
+                return null;
+            }
+
+            await _cache.SetAsync(cacheKey, counts, cancellationToken).ConfigureAwait(false);
+            return counts;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TmdbClient: season structure fetch failed for tmdb={Tmdb}", tmdbId);
+            return null;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>Builds the TMDB tv detail URL (testable, no network).</summary>
+    internal static string BuildTvUrl(string apiKey, int tmdbId)
+        => $"{BaseUrl}/tv/{tmdbId.ToString(CultureInfo.InvariantCulture)}"
+           + $"?api_key={Uri.EscapeDataString(apiKey)}";
+
+    /// <summary>
+    /// Reads the episode count of every season from season 1 upwards, in season order
+    /// (testable, no network).
+    /// </summary>
+    internal static List<int> ParseSeasonEpisodeCounts(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("seasons", out var seasons)
+                || seasons.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var ordered = new SortedDictionary<int, int>();
+            foreach (var item in seasons.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object
+                    || !item.TryGetProperty("season_number", out var numberElement)
+                    || numberElement.ValueKind != JsonValueKind.Number
+                    || !numberElement.TryGetInt32(out var seasonNumber)
+                    || seasonNumber < 1
+                    || !item.TryGetProperty("episode_count", out var countElement)
+                    || countElement.ValueKind != JsonValueKind.Number
+                    || !countElement.TryGetInt32(out var episodeCount)
+                    || episodeCount < 0)
+                {
+                    continue;
+                }
+
+                ordered[seasonNumber] = episodeCount;
+            }
+
+            // A gap in the season numbers would shift every later season, so an incomplete
+            // structure is rejected instead of producing a plausible-looking wrong mapping.
+            var expected = 1;
+            var counts = new List<int>(ordered.Count);
+            foreach (var pair in ordered)
+            {
+                if (pair.Key != expected)
+                {
+                    return [];
+                }
+
+                counts.Add(pair.Value);
+                expected++;
+            }
+
+            return counts;
+        }
+        catch (JsonException)
+        {
+            return [];
         }
     }
 
