@@ -196,6 +196,28 @@ public static class AnimeClickLibraryAudit
             : reason;
 
     /// <summary>
+    /// True when a recheck can still produce the title: either the row already carries it, or the
+    /// evidence has to be read before anything can be concluded.
+    ///
+    /// Separating this from the rest is what keeps the report honest. Counting every episode without
+    /// a title as "to fix" put the cards that publish no titles at all — the majority of the backlog
+    /// on a real library — permanently in the same bucket as real work, so the number never moved
+    /// and the only reasonable conclusion was that the plugin did nothing.
+    /// </summary>
+    public static bool IsRecoverableByRecheck(AnimeClickAuditReason reason)
+        => reason is AnimeClickAuditReason.PendingRefresh
+            or AnimeClickAuditReason.RowVanished
+            or AnimeClickAuditReason.CatalogNotCached
+            or AnimeClickAuditReason.NotMatched;
+
+    /// <summary>
+    /// True when the row exists and AnimeClick has simply not published its title yet: nothing to
+    /// do now, and nothing wrong either.
+    /// </summary>
+    public static bool IsWaitingForSource(AnimeClickAuditReason reason)
+        => reason == AnimeClickAuditReason.TitleNotPublished;
+
+    /// <summary>
     /// The headline cause for a series: the most actionable one among the episodes that need a
     /// title. Reporting the most frequent instead would bury a single real failure under a pile of
     /// episodes the source will never title.

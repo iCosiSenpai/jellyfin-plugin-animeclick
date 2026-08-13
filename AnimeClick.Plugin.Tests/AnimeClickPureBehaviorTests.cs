@@ -240,33 +240,26 @@ public class AnimeClickPureBehaviorTests
     }
 
     [Fact]
-    public void RotatingWindowCoversEveryCandidateWithoutStarvation()
+    public void TitleCausesSeparateWhatARecheckCanFixFromWhatTheSourceNeverPublished()
     {
-        var values = Enumerable.Range(0, 450).ToList();
+        // A recheck applies a title that already exists upstream, or proves what is there.
+        Assert.True(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.PendingRefresh));
+        Assert.True(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.RowVanished));
+        Assert.True(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.CatalogNotCached));
+        Assert.True(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.NotMatched));
 
-        var first = AnimeClickRefreshMissingTitlesTask.SelectRotatingWindow(values, 0, 200);
-        var second = AnimeClickRefreshMissingTitlesTask.SelectRotatingWindow(values, first.NextCursor!.Value, 200);
-        var third = AnimeClickRefreshMissingTitlesTask.SelectRotatingWindow(values, second.NextCursor!.Value, 200);
-        var negative = AnimeClickRefreshMissingTitlesTask.SelectRotatingWindow(values, -50, 200);
+        // A card that lists its episodes without titles has nothing to give: counting these as
+        // "to fix" made the backlog look permanent and the plugin look broken.
+        Assert.False(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.CardHasNoTitles));
+        Assert.False(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.NumberingCollision));
+        Assert.False(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.Locked));
+        Assert.False(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.NotIdentified));
+        Assert.False(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.CardNotResolved));
+        Assert.False(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.Ok));
 
-        Assert.Equal(Enumerable.Range(0, 200), first.Items);
-        Assert.Equal(200, first.NextCursor);
-        Assert.Equal(Enumerable.Range(200, 200), second.Items);
-        Assert.Equal(400, second.NextCursor);
-        Assert.Equal(Enumerable.Range(400, 50).Concat(Enumerable.Range(0, 150)), third.Items);
-        Assert.Equal(150, third.NextCursor);
-        Assert.Equal(third.Items, negative.Items);
-    }
-
-    [Fact]
-    public void RotatingWindowDoesNotRequestPersistenceWhenEverythingFits()
-    {
-        var values = Enumerable.Range(0, 200).ToList();
-        var window = AnimeClickRefreshMissingTitlesTask.SelectRotatingWindow(values, 137, 200);
-
-        Assert.Equal(values, window.Items);
-        Assert.Null(window.NextCursor);
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => AnimeClickRefreshMissingTitlesTask.SelectRotatingWindow(values, 0, 0));
+        // TitleNotPublished is a wait, not a failure: it is neither actionable now nor hopeless.
+        Assert.False(AnimeClickLibraryAudit.IsRecoverableByRecheck(AnimeClickAuditReason.TitleNotPublished));
+        Assert.True(AnimeClickLibraryAudit.IsWaitingForSource(AnimeClickAuditReason.TitleNotPublished));
+        Assert.False(AnimeClickLibraryAudit.IsWaitingForSource(AnimeClickAuditReason.CardHasNoTitles));
     }
 }

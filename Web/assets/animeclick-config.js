@@ -3,7 +3,7 @@
 (function () {
     'use strict';
 
-    var V = '0.5.5.0';
+    var V = '0.5.6.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -465,6 +465,35 @@
         tile.appendChild(el('span', 'ac-kicker', label));
         tile.appendChild(el('strong', 'ac-priority-value', value));
         tile.appendChild(el('span', 'ac-note', copy));
+        container.appendChild(tile);
+    }
+
+    // A tile that filters the list below when it maps to one. Reading a number and then hunting for
+    // the matching entry in a select was the clumsiest part of the page.
+    function addQualityTile(container, label, value, copy, tone, filter) {
+        if (!filter) {
+            addPriorityTile(container, label, String(value), copy, tone);
+            return;
+        }
+
+        var active = qualityAuditView.filter === filter;
+        var tile = el(
+            'button',
+            'ac-priority-tile ac-priority-tile-filter' + (tone ? ' ' + tone : '') + (active ? ' is-active' : '')
+        );
+        tile.type = 'button';
+        tile.setAttribute('aria-pressed', active ? 'true' : 'false');
+        tile.title = active ? 'Filtro attivo: clic per rimuoverlo' : 'Mostra solo questi elementi';
+        tile.appendChild(el('span', 'ac-kicker', label));
+        tile.appendChild(el('strong', 'ac-priority-value', String(value)));
+        tile.appendChild(el('span', 'ac-note', copy));
+        tile.addEventListener('click', function () {
+            qualityAuditView.filter = active ? 'attention' : filter;
+            qualityAuditView.visibleLimit = AUDIT_PAGE_SIZE;
+            var select = val('acQualityFilter');
+            if (select) select.value = qualityAuditView.filter;
+            renderQualityAudit();
+        });
         container.appendChild(tile);
     }
 
@@ -952,7 +981,10 @@
     var qualityAuditView = {
         report: null,
         query: '',
-        filter: 'all',
+
+        // Not "all": the uncertain items are the largest group and the plugin never touches them, so
+        // showing them by default buried the handful of rows that actually need attention.
+        filter: 'attention',
         visibleLimit: AUDIT_PAGE_SIZE,
         selected: Object.create(null),
         open: Object.create(null),
@@ -1018,7 +1050,7 @@
     function resetQualityAuditView(report) {
         qualityAuditView.report = report;
         qualityAuditView.query = '';
-        qualityAuditView.filter = 'all';
+        qualityAuditView.filter = 'attention';
         qualityAuditView.visibleLimit = AUDIT_PAGE_SIZE;
         qualityAuditView.selected = Object.create(null);
         qualityAuditView.open = Object.create(null);
@@ -1026,7 +1058,7 @@
         qualityAuditView.queued = false;
         qualityAuditView.busy = false;
         if (val('acQualitySearch')) val('acQualitySearch').value = '';
-        if (val('acQualityFilter')) val('acQualityFilter').value = 'all';
+        if (val('acQualityFilter')) val('acQualityFilter').value = 'attention';
     }
 
     function normalizedSearch(value) {
@@ -1047,7 +1079,7 @@
         var reasons = auditSeriesReasons(item);
         var filter = titleAuditView.filter;
         if (filter === 'problems' && !missing) return false;
-        if (filter === 'analyzable' && (!missing || !animeClickId)) return false;
+        if (filter === 'analyzable' && !titleSeriesIsSelectable(item)) return false;
         if (filter === 'unidentified' && animeClickId && reasons.indexOf('NotIdentified') < 0) return false;
         if (filter === 'complete' && missing) return false;
 
@@ -1075,10 +1107,24 @@
         });
     }
 
+    // Rereading the card only helps where the cached verdict may be wrong. A card that lists its
+    // episodes without titles has already been proved at the source, so offering a checkbox next to
+    // it just invited work that cannot succeed.
+    var TITLE_ANALYZABLE_REASONS = {
+        CatalogNotCached: true,
+        NotMatched: true,
+        RowVanished: true,
+        PendingRefresh: true,
+        NumberingCollision: true
+    };
+
     function titleSeriesIsSelectable(item) {
         return !!valueOf(item, 'id')
             && !!valueOf(item, 'animeClickId')
-            && (valueOf(item, 'missingTitleCount') || 0) > 0;
+            && (valueOf(item, 'missingTitleCount') || 0) > 0
+            && auditSeriesReasons(item).some(function (reason) {
+                return !!TITLE_ANALYZABLE_REASONS[reason];
+            });
     }
 
     function selectedTitleItems() {
@@ -1200,26 +1246,29 @@
     function runAutomaticTitleRefresh(event, button) {
         event.preventDefault();
         event.stopImmediatePropagation();
+        var recoverable = valueOf(titleAuditView.report, 'recoverableTitleCount');
         confirmModal(
-            'Ricontrollo automatico dei titoli',
-            'Accodare fino a 200 episodi con titolo mancante, segnaposto o non più aggiornato? '
-            + 'Il lavoro prosegue in background e usa una finestra rotante nelle librerie più grandi. '
-            + 'Se l’attività è già in corso, Jellyfin la riavvia dalla coda.'
+            'Sistema tutti i titoli',
+            'Ricontrollare'
+            + (recoverable ? ' i ' + recoverable + ' episodi recuperabili' : ' gli episodi recuperabili')
+            + '? Non c\'è nessun tetto: l\'attività lavora tutto l\'arretrato, distanziando le richieste '
+            + 'ad AnimeClick con il ritardo configurato. Il lavoro prosegue in background e '
+            + 'l\'avanzamento è visibile in Attività pianificate.'
         ).then(function (confirmed) {
             if (!confirmed) return;
             var operationId = beginTitleAuditOperation();
             if (!operationId) return;
             var state = val('acRunTitlesState');
-            var idleLabel = 'Ricontrollo automatico (max 200)';
+            var idleLabel = 'Sistema tutti i titoli';
             setBusy(button, true, idleLabel, 'Accodamento…');
             updateTitleAuditControls();
             state.className = 'ac-state';
-            state.textContent = 'Accodamento dell’attività globale…';
+            state.textContent = 'Avvio del ricontrollo dei titoli…';
             request('POST', 'Plugins/AnimeClick/RunMissingTitlesTask').then(function (response) {
                 state.className = 'ac-state success';
-                state.textContent = (valueOf(response, 'message') || 'Ricontrollo accodato.')
+                state.textContent = (valueOf(response, 'message') || 'Ricontrollo avviato.')
                     + ' Il completamento dei refresh continua in background.';
-                toast('Ricontrollo automatico avviato', 'success');
+                toast('Ricontrollo dei titoli avviato', 'success');
             }).catch(function (error) {
                 state.className = 'ac-state error';
                 state.textContent = truncate(error.message, 240);
@@ -1234,6 +1283,7 @@
     function qualityItemMatchesStatus(item) {
         var filter = qualityAuditView.filter;
         var status = valueOf(item, 'status');
+        if (filter === 'attention') return status === 'English' || status === 'Missing';
         if (filter === 'repairable') return !!valueOf(item, 'canRepair');
         if (filter === 'locked') return !!valueOf(item, 'locked');
         if (filter === 'waiting-translation' || filter === 'no-source') {
@@ -1286,29 +1336,11 @@
         return valueOf(group, 'id') || ((valueOf(group, 'name') || 'group') + '-' + (valueOf(group, 'year') || ''));
     }
 
-    function visibleQualityRepairItems() {
-        var items = [];
-        filteredQualityGroups().slice(0, qualityAuditView.visibleLimit).forEach(function (entry) {
-            var key = qualityGroupKey(entry.group);
-            if (!qualityAuditView.open[key]) return;
-            var shown = qualityAuditView.shownItems[key] || QUALITY_ITEM_PAGE_SIZE;
-            entry.items.slice(0, shown).forEach(function (item) {
-                if (valueOf(item, 'canRepair')) items.push(item);
-            });
-        });
-        return items;
-    }
-
-    function visibleUnselectedQualityRepairItems() {
-        return visibleQualityRepairItems().filter(function (item) {
-            return !qualityAuditView.selected[valueOf(item, 'id')];
-        });
-    }
-
     function selectedQualityIds() {
-        return Object.keys(qualityAuditView.selected).filter(function (id) {
-            return !!qualityAuditView.selected[id];
-        });
+        // Manual per-item selection lives only in the titles audit now: there it decides which cards
+        // are re-read, which is a judgement call. For synopses it was pure friction, since the same
+        // items the user could tick are the ones the automatic run takes anyway.
+        return [];
     }
 
     function updateQualityAuditControls() {
@@ -1316,31 +1348,12 @@
         var groups = filteredQualityGroups();
         var visible = groups.slice(0, qualityAuditView.visibleLimit);
         var visibleItems = visible.reduce(function (count, entry) { return count + entry.items.length; }, 0);
-        var visibleRepairable = visibleUnselectedQualityRepairItems().length;
-        var selected = selectedQualityIds().length;
-        var maximum = valueOf(qualityAuditView.report, 'maximumRepairItems') || 100;
-        var available = maximum - selected;
         var state = val('acQualityVisibleState');
         if (state) {
             state.textContent = visible.length + ' gruppi mostrati su ' + groups.length
-                + ' · ' + visibleItems + ' elementi corrispondenti'
-                + (selected ? ' · ' + selected + ' selezionati' : '');
+                + ' · ' + visibleItems + ' elementi corrispondenti';
         }
         var busy = qualityAuditView.busy;
-        var selectedButton = val('acBtnQualityRepairSelected');
-        if (selectedButton && selectedButton.getAttribute('aria-busy') !== 'true') {
-            selectedButton.disabled = busy || qualityAuditView.queued || selected === 0;
-            selectedButton.textContent = 'Ripara selezionati (' + selected + '/' + maximum + ')';
-        }
-        var clearSelection = val('acBtnQualityClearSelection');
-        if (clearSelection) clearSelection.disabled = busy || qualityAuditView.queued || selected === 0;
-        var selectVisible = val('acBtnQualitySelectVisible');
-        if (selectVisible) {
-            selectVisible.disabled = busy || qualityAuditView.queued || available <= 0 || visibleRepairable === 0;
-            selectVisible.title = visibleRepairable
-                ? Math.min(available, visibleRepairable) + ' elementi aperti e visibili possono essere aggiunti.'
-                : 'Apri un gruppo oppure modifica la selezione per aggiungere altri elementi.';
-        }
         var automatic = val('acBtnQualityRepair');
         if (automatic && automatic.getAttribute('aria-busy') !== 'true') {
             // The server task walks the whole backlog, so a batch already queued no longer blocks it.
@@ -1483,13 +1496,14 @@
         clear(panel);
 
         var audit = makeCard(
-            'Diagnosi',
-            'Quali titoli vanno sistemati',
-            'Legge soltanto le schede già in cache, quindi l’analisi non produce richieste ad AnimeClick. '
-            + 'Il risultato resta compatto: cerca o filtra le serie, poi apri soltanto quelle che vuoi approfondire.'
+            'Titoli episodio',
+            'Cosa manca e cosa si può recuperare',
+            'Per sistemare tutto basta «Sistema tutti i titoli»: nessun tetto, richieste distanziate, '
+            + 'prosegue in background. L\'analisi legge solo le schede in cache e non contatta AnimeClick; '
+            + 'clic su un contatore per filtrare.'
         );
         var auditActions = el('div', 'ac-row ac-audit-primary-actions');
-        var auditButton = el('button', 'ac-btn ac-btn-primary', 'Analizza la libreria');
+        var auditButton = el('button', 'ac-btn ac-btn-ghost', 'Analizza la libreria');
         auditButton.type = 'button';
         auditButton.id = 'acBtnAudit';
         auditActions.appendChild(auditButton);
@@ -1497,10 +1511,11 @@
         audit.body.appendChild(auditActions);
 
         var auditAutomation = el('div', 'ac-audit-automation');
-        var automaticTitles = el('button', 'ac-btn ac-btn-ghost', 'Ricontrollo automatico (max 200)');
+        var automaticTitles = el('button', 'ac-btn ac-btn-primary', 'Sistema tutti i titoli');
         automaticTitles.type = 'button';
         automaticTitles.id = 'acBtnRunTitles';
-        automaticTitles.title = 'Accoda l’attività globale settimanale per un massimo di 200 episodi per esecuzione.';
+        automaticTitles.title = 'Ricontrolla ogni episodio recuperabile, senza tetti. Le richieste ad AnimeClick '
+            + 'sono distanziate dal ritardo configurato nella scheda Strumenti.';
         auditAutomation.appendChild(automaticTitles);
         auditAutomation.appendChild(makeLiveState('acRunTitlesState'));
         audit.body.appendChild(auditAutomation);
@@ -1609,10 +1624,10 @@
 
         var quality = makeCard(
             'Sinossi e trame',
-            'Qualità metadati',
-            'Scansiona soltanto i metadati già presenti in Jellyfin. Per sistemare tutto basta un clic: '
-            + '«Completa tutte le sinossi» procede a lotti finché non resta niente da fare e continua '
-            + 'anche a pagina chiusa. Filtri e selezione servono solo se vuoi intervenire su casi precisi.'
+            'Cosa manca e cosa si può completare',
+            'Per sistemare tutto basta «Completa tutte le sinossi»: procede a lotti, si ferma da solo e '
+            + 'prosegue a pagina chiusa. L\'elenco mostra solo ciò che ha bisogno di attenzione; '
+            + 'clic su un contatore per filtrare.'
         );
         var qualityActions = el('div', 'ac-row ac-audit-primary-actions');
         var qualityAuditButton = el('button', 'ac-btn ac-btn-primary', 'Analizza la qualità');
@@ -1640,32 +1655,17 @@
             false
         ));
         qualityToolbar.appendChild(makeAuditSelect('acQualityFilter', 'Mostra', [
-            { value: 'all', label: 'Tutte le anomalie' },
-            { value: 'repairable', label: 'Solo riparabili' },
-            { value: 'English', label: 'Inglese probabile' },
-            { value: 'Missing', label: 'Sinossi mancante' },
-            { value: 'Unknown', label: 'Lingua incerta' },
-            { value: 'waiting-translation', label: 'Traduzione in corso' },
+            { value: 'attention', label: 'Da sistemare o in attesa' },
+            { value: 'repairable', label: 'Riparabili adesso' },
             { value: 'no-source', label: 'Senza fonte disponibile' },
-            { value: 'locked', label: 'Elementi bloccati' }
+            { value: 'waiting-translation', label: 'Traduzione in corso' },
+            { value: 'Unknown', label: 'Lingua incerta (non toccati)' },
+            { value: 'locked', label: 'Elementi bloccati' },
+            { value: 'all', label: 'Tutto' }
         ]));
         qualityControls.appendChild(qualityToolbar);
 
         var qualityBulk = el('div', 'ac-audit-bulkbar');
-        var selectQualityVisible = el('button', 'ac-btn ac-btn-ghost', 'Seleziona riparabili visibili');
-        selectQualityVisible.type = 'button';
-        selectQualityVisible.id = 'acBtnQualitySelectVisible';
-        qualityBulk.appendChild(selectQualityVisible);
-        var clearQualitySelection = el('button', 'ac-btn ac-btn-ghost', 'Azzera selezione');
-        clearQualitySelection.type = 'button';
-        clearQualitySelection.id = 'acBtnQualityClearSelection';
-        clearQualitySelection.disabled = true;
-        qualityBulk.appendChild(clearQualitySelection);
-        var repairSelected = el('button', 'ac-btn ac-btn-ghost', 'Ripara selezionati (0/100)');
-        repairSelected.type = 'button';
-        repairSelected.id = 'acBtnQualityRepairSelected';
-        repairSelected.disabled = true;
-        qualityBulk.appendChild(repairSelected);
         var qualityRepairButton = el('button', 'ac-btn ac-btn-primary', 'Completa tutte le sinossi');
         qualityRepairButton.type = 'button';
         qualityRepairButton.id = 'acBtnQualityRepair';
@@ -1695,41 +1695,6 @@
             qualityAuditView.filter = this.value;
             qualityAuditView.visibleLimit = AUDIT_PAGE_SIZE;
             renderQualityAudit();
-        });
-        selectQualityVisible.addEventListener('click', function () {
-            var returnFocus = document.activeElement === selectQualityVisible;
-            var maximum = valueOf(qualityAuditView.report, 'maximumRepairItems') || 100;
-            var available = maximum - selectedQualityIds().length;
-            var candidates = visibleUnselectedQualityRepairItems();
-            var added = 0;
-            candidates.forEach(function (item) {
-                var id = valueOf(item, 'id');
-                if (available > 0 && id) {
-                    qualityAuditView.selected[id] = true;
-                    available -= 1;
-                    added += 1;
-                }
-            });
-            if (added < candidates.length) {
-                toast('Selezione fermata al limite di ' + maximum + ' elementi per richiesta.', 'success');
-            }
-            renderQualityAudit();
-            if (returnFocus && selectQualityVisible.disabled) {
-                if (!repairSelected.disabled) repairSelected.focus();
-                else val('acQualitySearch').focus();
-            }
-        });
-        clearQualitySelection.addEventListener('click', function () {
-            var returnFocus = document.activeElement === clearQualitySelection;
-            qualityAuditView.selected = Object.create(null);
-            renderQualityAudit();
-            if (returnFocus) {
-                if (!selectQualityVisible.disabled) selectQualityVisible.focus();
-                else val('acQualitySearch').focus();
-            }
-        });
-        repairSelected.addEventListener('click', function () {
-            queueQualityRepair(selectedQualityIds(), this, false);
         });
         qualityRepairButton.addEventListener('click', function () {
             runFullSynopsisRepair(this);
@@ -1773,10 +1738,8 @@
 
         panel.appendChild(makeCallout(
             'Bulk sicuro, senza modifiche alla cieca',
-            '«Completa tutte le sinossi» lavora a lotti da 100 e si ferma da solo; è anche un\'attività '
-            + 'settimanale di Jellyfin, quindi le sinossi nuove arrivano senza che tu debba ricordarti di nulla. '
-            + '«Analizza selezionate» legge al massimo 10 serie una alla volta e non modifica la libreria. '
-            + 'Il server ricontrolla sempre lingua, lock e configurazione prima di ogni refresh.',
+            'Entrambe le azioni sono anche attività settimanali di Jellyfin: quello che le fonti pubblicano '
+            + 'dopo arriva da solo. Nessun testo italiano viene sovrascritto e i campi bloccati restano intatti.',
             'good'
         ));
 
@@ -1934,35 +1897,45 @@
 
         var series = asArray(valueOf(report, 'series'));
         var episodes = valueOf(report, 'episodeCount') || 0;
-        var missing = series.reduce(function (count, item) {
+        var missing = valueOf(report, 'missingTitleCount') || series.reduce(function (count, item) {
             return count + (valueOf(item, 'missingTitleCount') || 0);
         }, 0);
-        var complete = series.filter(function (item) {
-            return !(valueOf(item, 'missingTitleCount') || 0);
-        });
+        var recoverable = valueOf(report, 'recoverableTitleCount') || 0;
+        var waiting = valueOf(report, 'waitingTitleCount') || 0;
+        var unavailable = valueOf(report, 'unavailableTitleCount') || 0;
 
         summary.style.display = '';
         summary.setAttribute('aria-label', 'Riepilogo analisi titoli');
+
+        // Three numbers that mean three different things, instead of one total that never moved and
+        // a "Max 10" box that was a technical note pretending to be a measurement.
         addPriorityTile(
             summary,
-            'Serie',
-            String(series.length),
-            complete.length + ' complete · ' + (series.length - complete.length) + ' da verificare',
-            series.length === complete.length ? 'good' : 'neutral'
+            'Da recuperare',
+            String(recoverable),
+            'un ricontrollo può scrivere il titolo',
+            recoverable ? 'warn' : 'good'
         );
         addPriorityTile(
             summary,
-            'Titoli da sistemare',
-            String(missing),
-            episodes ? 'su ' + episodes + ' episodi analizzati' : 'nessun episodio analizzato',
-            missing ? 'warn' : 'good'
-        );
-        addPriorityTile(
-            summary,
-            'Analisi bulk',
-            'Max ' + TITLE_ANALYZE_LIMIT,
-            'serie identificate lette in sequenza per ogni operazione',
+            'In attesa di AnimeClick',
+            String(waiting),
+            'riga abbinata, titolo non ancora pubblicato',
             'neutral'
+        );
+        addPriorityTile(
+            summary,
+            'Non recuperabili',
+            String(unavailable),
+            'la scheda non pubblica titoli, oppure serve un intervento manuale',
+            'neutral'
+        );
+        addPriorityTile(
+            summary,
+            'Titoli presenti',
+            String(Math.max(episodes - missing, 0)),
+            'su ' + episodes + ' episodi analizzati',
+            'good'
         );
 
         var reasonTotals = Object.create(null);
@@ -1975,8 +1948,24 @@
         });
         Object.keys(reasonTotals).forEach(function (reason) {
             var entry = reasonTotals[reason];
-            var badge = el('span', 'ac-badge ' + auditTone(reason), auditShort(reason) + ' · ' + entry.series + ' serie');
-            badge.title = entry.episodes + ' episodi';
+
+            // Clickable: the chips were the fastest way to reach a cause and did nothing when clicked.
+            var badge = el(
+                'button',
+                'ac-badge ac-badge-filter ' + auditTone(reason)
+                    + (titleAuditView.filter === reason ? ' is-active' : ''),
+                auditShort(reason) + ' · ' + entry.series + ' serie'
+            );
+            badge.type = 'button';
+            badge.title = entry.episodes + ' episodi · filtra su questa causa';
+            badge.setAttribute('aria-pressed', titleAuditView.filter === reason ? 'true' : 'false');
+            badge.addEventListener('click', function () {
+                titleAuditView.filter = titleAuditView.filter === reason ? 'problems' : reason;
+                titleAuditView.visibleLimit = AUDIT_PAGE_SIZE;
+                var select = val('acAuditFilter');
+                if (select) select.value = titleAuditView.filter;
+                renderAudit();
+            });
             totals.appendChild(badge);
         });
 
@@ -2097,30 +2086,7 @@
     }
 
     function renderQualityItem(item) {
-        var id = valueOf(item, 'id');
-        var selectable = !!valueOf(item, 'canRepair') && !!id;
-        var row = el('div', 'ac-library-type ac-quality-item' + (selectable ? ' is-selectable' : ''));
-        if (selectable) {
-            var selector = el('label', 'ac-quality-selector');
-            var checkbox = el('input', 'ac-checkbox');
-            checkbox.type = 'checkbox';
-            checkbox.checked = !!qualityAuditView.selected[id];
-            checkbox.disabled = qualityAuditView.busy || qualityAuditView.queued;
-            checkbox.setAttribute('aria-label', 'Seleziona ' + qualityItemHeading(item) + ' per la riparazione');
-            checkbox.addEventListener('change', function () {
-                var maximum = valueOf(qualityAuditView.report, 'maximumRepairItems') || 100;
-                if (checkbox.checked && selectedQualityIds().length >= maximum) {
-                    checkbox.checked = false;
-                    toast('Puoi riparare al massimo ' + maximum + ' elementi per richiesta.', 'error');
-                    return;
-                }
-                if (checkbox.checked) qualityAuditView.selected[id] = true;
-                else delete qualityAuditView.selected[id];
-                updateQualityAuditControls();
-            });
-            selector.appendChild(checkbox);
-            row.appendChild(selector);
-        }
+        var row = el('div', 'ac-library-type ac-quality-item');
 
         var copy = el('div', 'ac-stack ac-grow ac-quality-copy');
         copy.appendChild(el('span', 'ac-library-type-name', qualityItemHeading(item)));
@@ -2275,25 +2241,53 @@
         var repairable = valueOf(report, 'repairableCount') || 0;
         var waitingTranslation = valueOf(report, 'waitingTranslationCount') || 0;
         var noSource = valueOf(report, 'noSourceCount') || 0;
-        addPriorityTile(summary, 'Italiano', String(italian), 'su ' + itemCount + ' elementi analizzati', 'good');
-        addPriorityTile(summary, 'Inglese', String(english), 'candidato alla riparazione automatica', english ? 'warn' : 'good');
-        addPriorityTile(summary, 'Mancante', String(missing), 'campo vuoto da completare', missing ? 'warn' : 'good');
-        addPriorityTile(summary, 'Incerto', String(unknown), 'mai modificato automaticamente', 'neutral');
-        addPriorityTile(summary, 'Bloccato', String(locked), 'protetto dai lock Jellyfin', locked ? 'warn' : 'good');
-        addPriorityTile(
+        // Four tiles at most, and only the ones that carry a number worth acting on. Seven boxes,
+        // several of them zero, were the loudest part of the page and said the least.
+        addQualityTile(summary, 'In italiano', italian, 'su ' + itemCount + ' elementi analizzati', 'good', null);
+        addQualityTile(
             summary,
-            'Traduzione in corso',
-            String(waitingTranslation),
-            'si applicano da sole quando il modello risponde',
-            'neutral'
+            'Da completare',
+            repairable,
+            'inglese o vuoto, riparabile adesso',
+            repairable ? 'warn' : 'good',
+            'repairable'
         );
-        addPriorityTile(
-            summary,
-            'Senza fonte',
-            String(noSource),
-            'nessuna sinossi su AnimeClick, TheTVDB o TMDB',
-            'neutral'
-        );
+        if (waitingTranslation) {
+            addQualityTile(
+                summary,
+                'Traduzione in corso',
+                waitingTranslation,
+                'si applicano quando il modello risponde',
+                'neutral',
+                'waiting-translation'
+            );
+        }
+
+        if (noSource) {
+            addQualityTile(
+                summary,
+                'Senza fonte',
+                noSource,
+                'nessuna sinossi su AnimeClick, TheTVDB o TMDB',
+                'neutral',
+                'no-source'
+            );
+        }
+
+        if (unknown) {
+            addQualityTile(
+                summary,
+                'Lingua incerta',
+                unknown,
+                'mai modificati dal plugin',
+                'neutral',
+                'Unknown'
+            );
+        }
+
+        if (locked) {
+            addQualityTile(summary, 'Bloccati', locked, 'protetti dai lock Jellyfin', 'warn', 'locked');
+        }
 
         var suppressedCandidates = qualitySuppressedIds(report);
         var retryButton = val('acBtnQualityRetryNoSource');
@@ -2335,7 +2329,7 @@
             return;
         }
 
-        if (!repairable && qualityAuditView.filter === 'all' && !qualityAuditView.query) {
+        if (!repairable && qualityAuditView.filter === 'attention' && !qualityAuditView.query) {
             list.appendChild(makeCallout(
                 'Nessuna riparazione automatica sicura',
                 noSource || waitingTranslation
