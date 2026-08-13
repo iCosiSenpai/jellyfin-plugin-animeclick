@@ -123,12 +123,42 @@ public sealed class AnimeClickMetadataFallbackService
         bool allowSynchronousTranslation,
         string? refreshPath = null)
     {
+        var resolution = await ResolveEpisodeOverviewDetailedAsync(
+                animeClickId,
+                season,
+                episode,
+                animeClickEpisodeId,
+                configuration,
+                cancellationToken,
+                allowSynchronousTranslation,
+                refreshPath)
+            .ConfigureAwait(false);
+        return resolution.Result;
+    }
+
+    /// <summary>
+    /// Same chain, with the reason attached. An administrative repair needs to tell "no source has
+    /// this synopsis" apart from "the translation has not published yet": the first must stop being
+    /// offered as fixable, the second must simply be waited for.
+    /// </summary>
+    public async Task<AnimeClickFallbackResolution> ResolveEpisodeOverviewDetailedAsync(
+        string animeClickId,
+        int season,
+        int episode,
+        string? animeClickEpisodeId,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken,
+        bool allowSynchronousTranslation,
+        string? refreshPath = null)
+    {
         if (!configuration.EnableEpisodeSynopsisTranslation
             || season < 0
             || episode < 0
             || !AnimeClickClient.TryNormalizeAnimeClickId(animeClickId, out var normalizedId))
         {
-            return null;
+            return new AnimeClickFallbackResolution(
+                null,
+                configuration.EnableEpisodeSynopsisTranslation ? "unresolvable-request" : "disabled");
         }
 
         var total = Stopwatch.StartNew();
@@ -139,7 +169,7 @@ public sealed class AnimeClickMetadataFallbackService
         long englishMs = 0;
         long translationMs = 0;
 
-        AnimeClickFallbackResult? Finish(
+        AnimeClickFallbackResolution Finish(
             AnimeClickFallbackResult? result,
             string outcome,
             AnimeClickTranslationQueueState? queueState = null)
@@ -160,7 +190,7 @@ public sealed class AnimeClickMetadataFallbackService
                 tmdbMs,
                 englishMs,
                 translationMs);
-            return result;
+            return new AnimeClickFallbackResolution(result, outcome);
         }
 
         try
@@ -555,3 +585,9 @@ public sealed record AnimeClickFallbackResult(
     public static AnimeClickFallbackResult Translated(string value, string source, string model)
         => new(value, source, "en", true, model);
 }
+
+/// <summary>
+/// A resolution plus the reason it ended that way. The outcome string is the same value the log
+/// line carries, so a diagnostic reading of the log and the audit's stored state cannot disagree.
+/// </summary>
+public sealed record AnimeClickFallbackResolution(AnimeClickFallbackResult? Result, string Outcome);

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using AnimeClick.Plugin.Configuration;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
@@ -33,21 +35,44 @@ public sealed class AnimeClickLibraryQualityService
 
     private readonly ILibraryManager _libraryManager;
     private readonly AnimeClickMetadataRefreshScheduler _refreshScheduler;
+    private readonly AnimeClickRepairLedger _repairLedger;
     private readonly ILogger<AnimeClickLibraryQualityService> _logger;
 
     public AnimeClickLibraryQualityService(
         ILibraryManager libraryManager,
         AnimeClickMetadataRefreshScheduler refreshScheduler,
+        AnimeClickRepairLedger repairLedger,
         ILogger<AnimeClickLibraryQualityService> logger)
     {
         _libraryManager = libraryManager;
         _refreshScheduler = refreshScheduler;
+        _repairLedger = repairLedger;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Audit with the persisted attempt history loaded first, so the report reflects what previous
+    /// runs already discovered.
+    /// </summary>
+    public async Task<AnimeClickLibraryQualityReport> AuditAsync(CancellationToken cancellationToken)
+    {
+        await _repairLedger.EnsureLoadedAsync(cancellationToken).ConfigureAwait(false);
+        return Audit();
+    }
+
+    public async Task<AnimeClickLibraryQualityRepairResult> QueueRepairAsync(
+        IEnumerable<string>? itemIds,
+        bool force,
+        CancellationToken cancellationToken)
+    {
+        await _repairLedger.EnsureLoadedAsync(cancellationToken).ConfigureAwait(false);
+        return QueueRepair(itemIds, force);
     }
 
     public AnimeClickLibraryQualityReport Audit()
     {
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var now = DateTimeOffset.UtcNow;
         var report = new AnimeClickLibraryQualityReport
         {
             MaximumRepairItems = MaximumRepairItems
@@ -86,12 +111,12 @@ public sealed class AnimeClickLibraryQualityService
                 Year = item.ProductionYear,
                 ItemCount = children.Count + 1
             };
-            AddInspection(group, Inspect(item, item.Name, configuration));
+            AddInspection(group, Inspect(item, item.Name, configuration, now));
             foreach (var episode in children
                          .OrderBy(episode => episode.ParentIndexNumber ?? int.MaxValue)
                          .ThenBy(episode => episode.IndexNumber ?? int.MaxValue))
             {
-                AddInspection(group, Inspect(episode, item.Name, configuration));
+                AddInspection(group, Inspect(episode, item.Name, configuration, now));
             }
 
             if (group.Items.Count > 0)
@@ -119,7 +144,7 @@ public sealed class AnimeClickLibraryQualityService
                 Year = movie.ProductionYear,
                 ItemCount = 1
             };
-            AddInspection(group, Inspect(movie, movie.Name, configuration));
+            AddInspection(group, Inspect(movie, movie.Name, configuration, now));
             if (group.Items.Count > 0)
             {
                 report.Series.Add(group);
@@ -137,6 +162,10 @@ public sealed class AnimeClickLibraryQualityService
         report.UnknownCount = report.Series.Sum(group => group.UnknownCount);
         report.LockedCount = report.Series.Sum(group => group.LockedCount);
         report.RepairableCount = report.Series.Sum(group => group.Items.Count(item => item.CanRepair));
+        report.WaitingTranslationCount = report.Series.Sum(group => group.WaitingTranslationCount);
+        report.NoSourceCount = report.Series.Sum(group => group.NoSourceCount);
+        report.AttemptedCount = report.Series.Sum(group => group.Items.Count(item => item.AttemptCount > 0));
+        report.SuppressedCount = report.Series.Sum(group => group.Items.Count(item => item.Suppressed));
         report.ItalianCount = report.ItemCount
             - report.EnglishCount
             - report.MissingCount
@@ -145,6 +174,15 @@ public sealed class AnimeClickLibraryQualityService
     }
 
     public AnimeClickLibraryQualityRepairResult QueueRepair(IEnumerable<string>? itemIds)
+        => QueueRepair(itemIds, force: false);
+
+    /// <summary>
+    /// Queues a bounded set of non-destructive metadata refreshes. Every ID is revalidated against
+    /// the current library state, and only English or missing unlocked fields remain eligible.
+    /// An item whose last attempt found no source is held back unless <paramref name="force"/> asks
+    /// for it explicitly, so a batch is never spent re-trying what cannot succeed.
+    /// </summary>
+    public AnimeClickLibraryQualityRepairResult QueueRepair(IEnumerable<string>? itemIds, bool force)
     {
         var requested = (itemIds ?? [])
             .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -154,9 +192,11 @@ public sealed class AnimeClickLibraryQualityService
         {
             RequestedCount = requested.Count,
             MaximumItems = MaximumRepairItems,
-            Truncated = requested.Count > MaximumRepairItems
+            Truncated = requested.Count > MaximumRepairItems,
+            Forced = force
         };
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var now = DateTimeOffset.UtcNow;
 
         foreach (var value in requested.Take(MaximumRepairItems))
         {
@@ -170,10 +210,20 @@ public sealed class AnimeClickLibraryQualityService
             }
 
             var seriesName = item is Episode episode ? episode.SeriesName : item.Name;
-            var inspection = Inspect(item, seriesName, configuration);
+            var inspection = Inspect(item, seriesName, configuration, now, ignoreSuppression: force);
             if (!inspection.CanRepair)
             {
-                result.SkippedCount++;
+                // Separate counters: "already tried, nothing to fetch" is actionable information,
+                // while a locked or already-Italian item is simply not a candidate.
+                if (inspection.Suppressed)
+                {
+                    result.SuppressedCount++;
+                }
+                else
+                {
+                    result.SkippedCount++;
+                }
+
                 continue;
             }
 
@@ -188,11 +238,13 @@ public sealed class AnimeClickLibraryQualityService
         }
 
         _logger.LogInformation(
-            "AnimeClick library quality repair: requested={Requested} considered={Considered} queued={Queued} skipped={Skipped} truncated={Truncated}",
+            "AnimeClick library quality repair: requested={Requested} considered={Considered} queued={Queued} skipped={Skipped} suppressed={Suppressed} forced={Forced} truncated={Truncated}",
             result.RequestedCount,
             result.ConsideredCount,
             result.QueuedCount,
             result.SkippedCount,
+            result.SuppressedCount,
+            result.Forced,
             result.Truncated);
         return result;
     }
@@ -208,10 +260,12 @@ public sealed class AnimeClickLibraryQualityService
             _ => false
         };
 
-    private static AnimeClickLibraryQualityItem Inspect(
+    private AnimeClickLibraryQualityItem Inspect(
         BaseItem item,
         string? seriesName,
-        PluginConfiguration configuration)
+        PluginConfiguration configuration,
+        DateTimeOffset now,
+        bool ignoreSuppression = false)
     {
         var overview = item.Overview?.Trim() ?? string.Empty;
         AnimeClickOverviewAuditStatus status;
@@ -236,9 +290,15 @@ public sealed class AnimeClickLibraryQualityService
         var featureEnabled = item is Episode
             ? configuration.EnableEpisodeSynopsisTranslation
             : configuration.EnablePlot;
-        var canRepair = !locked
+
+        // What a previous attempt discovered. Language alone cannot say whether a repair is worth
+        // queueing: the chain may already have proved that no source carries this synopsis.
+        var suppressed = _repairLedger.IsSuppressed(item.Id, now, out var attempt);
+        var hasAttempt = attempt is not null;
+        var languageRepairable = !locked
             && featureEnabled
             && status is AnimeClickOverviewAuditStatus.English or AnimeClickOverviewAuditStatus.Missing;
+        var canRepair = languageRepairable && (ignoreSuppression || !suppressed);
         return new AnimeClickLibraryQualityItem
         {
             Id = item.Id.ToString("N", CultureInfo.InvariantCulture),
@@ -257,6 +317,14 @@ public sealed class AnimeClickLibraryQualityService
             Confidence = Math.Round(detection.Confidence, 3),
             Locked = locked,
             CanRepair = canRepair,
+            LanguageRepairable = languageRepairable,
+            Suppressed = languageRepairable && suppressed && !ignoreSuppression,
+            RepairState = hasAttempt
+                ? AnimeClickRepairLedger.DescribeState(attempt!.Outcome)
+                : "never-attempted",
+            RepairDetail = hasAttempt ? attempt!.Detail : string.Empty,
+            LastAttemptUtc = hasAttempt ? attempt!.AttemptedAt : null,
+            AttemptCount = hasAttempt ? attempt!.Attempts : 0,
             Preview = BuildPreview(overview)
         };
     }
@@ -283,6 +351,18 @@ public sealed class AnimeClickLibraryQualityService
         if (item.Locked)
         {
             group.LockedCount++;
+        }
+
+        if (item.Suppressed)
+        {
+            if (string.Equals(item.RepairState, "waiting-translation", StringComparison.Ordinal))
+            {
+                group.WaitingTranslationCount++;
+            }
+            else if (string.Equals(item.RepairState, "no-source", StringComparison.Ordinal))
+            {
+                group.NoSourceCount++;
+            }
         }
 
         group.Items.Add(item);
@@ -312,6 +392,19 @@ public sealed class AnimeClickLibraryQualityReport
     public int UnknownCount { get; set; }
     public int LockedCount { get; set; }
     public int RepairableCount { get; set; }
+
+    /// <summary>Items excluded from the actionable set because a translation is still pending.</summary>
+    public int WaitingTranslationCount { get; set; }
+
+    /// <summary>Items excluded because a previous attempt found no source with this synopsis.</summary>
+    public int NoSourceCount { get; set; }
+
+    /// <summary>Items a repair has already been attempted on at least once.</summary>
+    public int AttemptedCount { get; set; }
+
+    /// <summary>Items held back by their recorded attempt; an explicit retry can still force them.</summary>
+    public int SuppressedCount { get; set; }
+
     public int MaximumRepairItems { get; set; }
     public List<AnimeClickLibraryQualitySeries> Series { get; set; } = [];
 }
@@ -326,6 +419,8 @@ public sealed class AnimeClickLibraryQualitySeries
     public int MissingCount { get; set; }
     public int UnknownCount { get; set; }
     public int LockedCount { get; set; }
+    public int WaitingTranslationCount { get; set; }
+    public int NoSourceCount { get; set; }
     public List<AnimeClickLibraryQualityItem> Items { get; set; } = [];
 }
 
@@ -340,7 +435,22 @@ public sealed class AnimeClickLibraryQualityItem
     public string Status { get; set; } = string.Empty;
     public double Confidence { get; set; }
     public bool Locked { get; set; }
+
+    /// <summary>True when queueing this item now can still accomplish something.</summary>
     public bool CanRepair { get; set; }
+
+    /// <summary>True when only the stored language makes it a candidate, before attempt history.</summary>
+    public bool LanguageRepairable { get; set; }
+
+    /// <summary>True when attempt history is what keeps it out of the actionable set.</summary>
+    public bool Suppressed { get; set; }
+
+    /// <summary>never-attempted, applied, waiting-translation, no-source, disabled, blocked or error.</summary>
+    public string RepairState { get; set; } = "never-attempted";
+
+    public string RepairDetail { get; set; } = string.Empty;
+    public DateTimeOffset? LastAttemptUtc { get; set; }
+    public int AttemptCount { get; set; }
     public string Preview { get; set; } = string.Empty;
 }
 
@@ -350,6 +460,11 @@ public sealed class AnimeClickLibraryQualityRepairResult
     public int ConsideredCount { get; set; }
     public int QueuedCount { get; set; }
     public int SkippedCount { get; set; }
+
+    /// <summary>Items held back by their recorded attempt rather than by lock or language.</summary>
+    public int SuppressedCount { get; set; }
+
+    public bool Forced { get; set; }
     public int MaximumItems { get; set; }
     public bool Truncated { get; set; }
 }

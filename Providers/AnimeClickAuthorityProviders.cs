@@ -24,15 +24,18 @@ public abstract class AnimeClickAuthorityProvider<TItem> :
 {
     private readonly AnimeClickMetadataRefreshIntentRegistry _intentRegistry;
     private readonly IAnimeClickOverviewResolver _overviewResolver;
+    private readonly AnimeClickRepairLedger _repairLedger;
     private readonly ILogger _logger;
 
     protected AnimeClickAuthorityProvider(
         AnimeClickMetadataRefreshIntentRegistry intentRegistry,
         IAnimeClickOverviewResolver overviewResolver,
+        AnimeClickRepairLedger repairLedger,
         ILogger logger)
     {
         _intentRegistry = intentRegistry;
         _overviewResolver = overviewResolver;
+        _repairLedger = repairLedger;
         _logger = logger;
     }
 
@@ -63,30 +66,60 @@ public abstract class AnimeClickAuthorityProvider<TItem> :
                 || !string.Equals(item.Overview, intent.ExpectedOverview, System.StringComparison.Ordinal)
                 || !AnimeClickOverviewRepairPolicy.CanReplace(item.Overview))
             {
+                _repairLedger.Record(
+                    item.Id,
+                    AnimeClickRepairOutcome.Blocked,
+                    "locked-or-value-changed");
                 return ItemUpdateType.None;
             }
 
             var overview = intent.Overview;
+            var detail = "published-translation";
             if (string.IsNullOrWhiteSpace(overview))
             {
-                overview = await _overviewResolver.ResolveAsync(item, cancellationToken)
+                var resolution = await _overviewResolver.ResolveAsync(item, cancellationToken)
                     .ConfigureAwait(false);
+                overview = resolution.Overview;
+                detail = resolution.Detail;
+
+                // Nothing to write. Record why, so the audit can tell an item still waiting for a
+                // translation apart from one no source can fill, and stop offering the latter as
+                // repairable on every single run.
+                if (string.IsNullOrWhiteSpace(overview))
+                {
+                    _repairLedger.Record(
+                        item.Id,
+                        resolution.Outcome == AnimeClickRepairOutcome.Available
+                            ? AnimeClickRepairOutcome.NoSource
+                            : resolution.Outcome,
+                        detail);
+                    return ItemUpdateType.None;
+                }
             }
 
             // Resolution can perform network/cache work. Revalidate the exact source state and
             // locks afterward so a manual/native Italian correction made while it was in flight
             // always wins over this delayed repair.
+            if (string.Equals(item.Overview, overview, System.StringComparison.Ordinal))
+            {
+                _repairLedger.Record(item.Id, AnimeClickRepairOutcome.Applied, detail);
+                return ItemUpdateType.None;
+            }
+
             if (item.IsLocked
                 || (item.LockedFields?.Contains(MetadataField.Overview) ?? false)
                 || !string.Equals(item.Overview, intent.ExpectedOverview, System.StringComparison.Ordinal)
-                || !AnimeClickOverviewRepairPolicy.CanReplace(item.Overview)
-                || string.IsNullOrWhiteSpace(overview)
-                || string.Equals(item.Overview, overview, System.StringComparison.Ordinal))
+                || !AnimeClickOverviewRepairPolicy.CanReplace(item.Overview))
             {
+                _repairLedger.Record(
+                    item.Id,
+                    AnimeClickRepairOutcome.Blocked,
+                    "locked-or-value-changed");
                 return ItemUpdateType.None;
             }
 
             item.Overview = overview;
+            _repairLedger.Record(item.Id, AnimeClickRepairOutcome.Applied, detail);
             _logger.LogInformation(
                 "AnimeClick authority applied Overview-only repair for item={ItemId} type={ItemType} reason={Reason}",
                 item.Id,
@@ -113,8 +146,9 @@ public sealed class AnimeClickSeriesAuthorityProvider : AnimeClickAuthorityProvi
     public AnimeClickSeriesAuthorityProvider(
         AnimeClickMetadataRefreshIntentRegistry intentRegistry,
         IAnimeClickOverviewResolver overviewResolver,
+        AnimeClickRepairLedger repairLedger,
         ILogger<AnimeClickSeriesAuthorityProvider> logger)
-        : base(intentRegistry, overviewResolver, logger)
+        : base(intentRegistry, overviewResolver, repairLedger, logger)
     {
     }
 }
@@ -124,8 +158,9 @@ public sealed class AnimeClickMovieAuthorityProvider : AnimeClickAuthorityProvid
     public AnimeClickMovieAuthorityProvider(
         AnimeClickMetadataRefreshIntentRegistry intentRegistry,
         IAnimeClickOverviewResolver overviewResolver,
+        AnimeClickRepairLedger repairLedger,
         ILogger<AnimeClickMovieAuthorityProvider> logger)
-        : base(intentRegistry, overviewResolver, logger)
+        : base(intentRegistry, overviewResolver, repairLedger, logger)
     {
     }
 }
@@ -135,8 +170,9 @@ public sealed class AnimeClickEpisodeAuthorityProvider : AnimeClickAuthorityProv
     public AnimeClickEpisodeAuthorityProvider(
         AnimeClickMetadataRefreshIntentRegistry intentRegistry,
         IAnimeClickOverviewResolver overviewResolver,
+        AnimeClickRepairLedger repairLedger,
         ILogger<AnimeClickEpisodeAuthorityProvider> logger)
-        : base(intentRegistry, overviewResolver, logger)
+        : base(intentRegistry, overviewResolver, repairLedger, logger)
     {
     }
 }

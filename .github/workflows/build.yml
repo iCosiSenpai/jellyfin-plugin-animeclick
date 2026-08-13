@@ -110,33 +110,34 @@ jobs:
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            Questo rilascio rende l’audit della libreria leggibile e operativo anche quando
-            Jellyfin contiene molte serie o centinaia di anomalie, su desktop e su mobile.
+            L’audit della qualità dei metadati ora ricorda l’esito di ogni riparazione. Prima
+            classificava soltanto la lingua del testo salvato: un elemento per cui nessuna fonte
+            ha la sinossi restava proposto come riparabile a ogni analisi, ogni lotto lo accodava
+            di nuovo, niente cambiava e i totali non si muovevano mai.
 
-            **Audit compatto e navigabile**
-            - Ricerca e filtri separano rapidamente serie da analizzare, elementi riparabili,
-              metadati mancanti, incerti o bloccati.
-            - I risultati sono paginati in gruppi da 16, le sezioni si aprono solo quando servono
-              e gli elementi interni vengono caricati 20 alla volta, evitando elenchi ingestibili.
-            - Conteggi, motivazioni e stato della selezione restano visibili senza perdere il
-              contesto o il focus durante filtri, paginazione e aggiornamenti.
+            **Esiti registrati e riportati**
+            - Ogni tentativo salva il proprio risultato: applicato, in attesa della traduzione AI,
+              nessuna fonte disponibile, valore cambiato durante l’operazione oppure errore.
+            - Lo stato compare sulla riga dell’elemento, con numero di tentativi, e nel riepilogo
+              con due nuovi totali: «Traduzione in corso» e «Senza fonte».
+            - Il registro sopravvive al riavvio di Jellyfin, quindi l’audit non ricomincia a
+              proporre ciò che ha già escluso.
 
-            **Azioni bulk sicure e automazione esplicita**
-            - Si possono analizzare fino a 10 serie selezionate, una alla volta, senza modificare
-              i metadati della libreria.
-            - Il ricontrollo globale dei titoli, sempre accessibile anche prima dell’audit, accoda
-              fino a 200 episodi usando la finestra rotante del task periodico.
-            - Le sinossi riparabili possono essere selezionate fra gli elementi realmente aperti
-              e visibili; ogni richiesta resta limitata a 100 e il server rivalida lingua, lock e
-              configurazione prima di accodare qualsiasi refresh.
+            **Lotti che non girano a vuoto**
+            - Gli elementi la cui ultima ricerca non ha trovato alcuna fonte restano fuori dal
+              lotto automatico per una settimana, poi tornano disponibili da soli perché le fonti
+              vengono riempite col tempo.
+            - Il pulsante «Riprova senza fonte» li ricontrolla subito, utile dopo aver aggiunto una
+              chiave TMDB/TheTVDB o configurato la traduzione AI.
+            - Le sinossi in attesa di traduzione non vengono riaccodate: si applicano da sole
+              quando il modello risponde.
 
-            **Mobile, accessibilità e concorrenza**
-            - Layout, barre bulk e dialoghi si adattano fino ai viewport più stretti senza uscire
-              dallo schermo; tema chiaro e scuro rispettano contrasto e focus visibile.
-            - Il dialogo di conferma è unico, navigabile da tastiera, chiudibile con Escape e
-              ripristina il focus senza sovrapporre operazioni.
-            - Stati busy con ownership impediscono invii concorrenti e completamenti fuori ordine;
-              annunci live e trasferimento del focus mantengono comprensibile ogni operazione.
+            **Lotto automatico distribuito fra le serie**
+            - La selezione automatica prende un elemento per gruppo a rotazione invece dei primi
+              cento in ordine di report: una singola serie lunga e senza fonti non può più occupare
+              tutti i posti disponibili impedendo al resto della libreria di migliorare.
+            - Nuovi filtri «Traduzione in corso» e «Senza fonte disponibile», e la ricerca trova
+              gli elementi anche per stato della riparazione.
 
             **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
             **Versione:** `${{ env.VERSION }}`
