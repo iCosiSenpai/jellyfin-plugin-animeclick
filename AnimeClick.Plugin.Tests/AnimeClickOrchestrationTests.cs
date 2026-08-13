@@ -2,6 +2,7 @@ using System.Net.Http;
 using AnimeClick.Plugin.Configuration;
 using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
+using AnimeClick.Plugin.Tasks;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -833,6 +834,91 @@ public class AnimeClickOrchestrationTests
         var state = await enqueue;
         Assert.Equal(AnimeClickTranslationQueueState.Queued, state);
     }
+
+    [Fact]
+    public void RepairBatchIsSpreadAcrossSeriesInsteadOfDrainingTheFirst()
+    {
+        var report = new AnimeClickLibraryQualityReport
+        {
+            MaximumRepairItems = 5,
+            Series =
+            [
+                BuildQualityGroup("lunga", ["a1", "a2", "a3", "a4", "a5", "a6"]),
+                BuildQualityGroup("corta", ["b1"]),
+                BuildQualityGroup("media", ["c1", "c2"])
+            ]
+        };
+
+        var batch = AnimeClickLibraryQualityService.SelectRepairBatch(report);
+
+        // One per series per pass: the long series cannot take every slot.
+        Assert.Equal(["a1", "b1", "c1", "a2", "c2"], batch);
+        Assert.Equal(5, batch.Count);
+    }
+
+    [Fact]
+    public void RepairBatchIgnoresItemsThatAreNotActionable()
+    {
+        var group = BuildQualityGroup("serie", ["ok"]);
+        group.Items.Add(new AnimeClickLibraryQualityItem { Id = "suppressed", CanRepair = false });
+        group.Items.Add(new AnimeClickLibraryQualityItem { Id = string.Empty, CanRepair = true });
+        var report = new AnimeClickLibraryQualityReport { MaximumRepairItems = 10, Series = [group] };
+
+        Assert.Equal(["ok"], AnimeClickLibraryQualityService.SelectRepairBatch(report));
+        Assert.Empty(AnimeClickLibraryQualityService.SelectRepairBatch(
+            new AnimeClickLibraryQualityReport { MaximumRepairItems = 10 }));
+    }
+
+    [Fact]
+    public void SynopsisTaskProgressOnlyReachesTheEndWhenNothingIsLeft()
+    {
+        Assert.Equal(100, AnimeClickRepairSynopsesTask.ComputeProgress(0, 0));
+        Assert.Equal(100, AnimeClickRepairSynopsesTask.ComputeProgress(200, 0));
+
+        // Work remaining is never reported as finished, and a first round that resolved nothing
+        // still shows movement rather than a bar stuck at zero.
+        Assert.Equal(2, AnimeClickRepairSynopsesTask.ComputeProgress(200, 200));
+        Assert.Equal(50, AnimeClickRepairSynopsesTask.ComputeProgress(200, 100));
+        Assert.Equal(99, AnimeClickRepairSynopsesTask.ComputeProgress(200, 1));
+
+        // A library that grew while the task ran must not produce a negative or absurd percentage.
+        Assert.Equal(2, AnimeClickRepairSynopsesTask.ComputeProgress(100, 140));
+    }
+
+    [Fact]
+    public async Task SynopsisTaskStopsImmediatelyWhenThereIsNothingToComplete()
+    {
+        var items = new List<BaseItem> { CreateMovie(1, "Italiano", ItalianOverview) };
+        var libraryManager = CreateLibraryManager(items);
+        var queued = new List<QueuedRefresh>();
+        using var temporary = new TemporaryAnimeClickCache();
+        var service = new AnimeClickLibraryQualityService(
+            libraryManager,
+            CreateScheduler(libraryManager, queued),
+            CreateLedger(temporary),
+            NullLogger<AnimeClickLibraryQualityService>.Instance);
+        var task = new AnimeClickRepairSynopsesTask(
+            service,
+            CreateLedger(temporary),
+            NullLogger<AnimeClickRepairSynopsesTask>.Instance);
+        var reported = new List<double>();
+
+        await task.ExecuteAsync(new Progress<double>(reported.Add), CancellationToken.None);
+
+        Assert.Empty(queued);
+        Assert.Contains(100, reported);
+        Assert.Equal("AnimeClick", task.Category);
+        Assert.Equal("AnimeClickRepairMissingSynopses", task.Key);
+        Assert.NotEmpty(task.GetDefaultTriggers());
+    }
+
+    private static AnimeClickLibraryQualitySeries BuildQualityGroup(string name, string[] itemIds)
+        => new()
+        {
+            Id = name,
+            Name = name,
+            Items = [.. itemIds.Select(id => new AnimeClickLibraryQualityItem { Id = id, CanRepair = true })]
+        };
 
     private static Movie CreateMovie(int number, string name, string? overview, bool locked = false)
     {

@@ -3,7 +3,7 @@
 (function () {
     'use strict';
 
-    var V = '0.5.4.0';
+    var V = '0.5.5.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -1343,7 +1343,8 @@
         }
         var automatic = val('acBtnQualityRepair');
         if (automatic && automatic.getAttribute('aria-busy') !== 'true') {
-            automatic.disabled = busy || qualityAuditView.queued || qualityRepairIds(qualityAuditView.report).length === 0;
+            // The server task walks the whole backlog, so a batch already queued no longer blocks it.
+            automatic.disabled = busy || (valueOf(qualityAuditView.report, 'repairableCount') || 0) === 0;
         }
         var retry = val('acBtnQualityRetryNoSource');
         if (retry && retry.getAttribute('aria-busy') !== 'true') {
@@ -1421,8 +1422,7 @@
                         + (suppressed ? ' · ' + suppressed + ' già senza fonte' : '')
                         + (truncated ? ' · richiesta limitata a ' + maximum : '')
                         + '. Attendi il completamento, poi analizza di nuovo: '
-                        + 'ogni esito viene registrato e mostrato sulla riga.';
-                    toast(
+                        + 'ogni esito viene registrato e mostrato sulla riga.';                    toast(
                         queuedAny ? 'Lotto di riparazione accodato' : 'Nessun elemento è risultato ancora riparabile',
                         queuedAny ? 'success' : 'error'
                     );
@@ -1437,6 +1437,44 @@
                     if (queuedAny) renderQualityAudit();
                     else updateQualityAuditControls();
                 });
+        });
+    }
+
+    // One click instead of "queue a hundred, wait, analyse, repeat": the server task walks the whole
+    // backlog in bounded batches and keeps going with the page closed.
+    function runFullSynopsisRepair(button) {
+        if (qualityAuditView.busy) {
+            toast('Attendi il completamento dell’operazione qualità già in corso.', 'error');
+            return;
+        }
+
+        var actionable = valueOf(qualityAuditView.report, 'repairableCount');
+        confirmModal(
+            'Completa tutte le sinossi',
+            'Avviare il completamento automatico'
+            + (actionable ? ' di ' + actionable + ' elementi' : '')
+            + '? Procede a lotti da 100 distribuiti fra serie diverse e si ferma da solo quando non '
+            + 'resta niente su cui agire. Non sovrascrive testi italiani né campi bloccati, e '
+            + 'continua in background: puoi chiudere la pagina.'
+        ).then(function (confirmed) {
+            if (!confirmed) return;
+            var idleLabel = button.textContent;
+            var state = val('acQualityState');
+            setBusy(button, true, idleLabel, 'Avvio…');
+            state.className = 'ac-state';
+            state.textContent = 'Avvio del completamento automatico…';
+            request('POST', 'Plugins/AnimeClick/RunSynopsisRepairTask').then(function (response) {
+                state.className = 'ac-state success';
+                state.textContent = valueOf(response, 'message')
+                    || 'Completamento avviato: l’avanzamento è in Attività pianificate.';
+                toast('Completamento delle sinossi avviato', 'success');
+            }).catch(function (error) {
+                state.className = 'ac-state error';
+                state.textContent = truncate(error.message, 240);
+                toast('Avvio non riuscito', 'error');
+            }).finally(function () {
+                setBusy(button, false, idleLabel, 'Avvio…');
+            });
         });
     }
 
@@ -1572,8 +1610,9 @@
         var quality = makeCard(
             'Sinossi e trame',
             'Qualità metadati',
-            'Scansiona soltanto i metadati già presenti in Jellyfin. Filtri e sezioni comprimibili evitano '
-            + 'elenchi infiniti; puoi scegliere gli elementi da riparare oppure lasciare al plugin il prossimo lotto sicuro.'
+            'Scansiona soltanto i metadati già presenti in Jellyfin. Per sistemare tutto basta un clic: '
+            + '«Completa tutte le sinossi» procede a lotti finché non resta niente da fare e continua '
+            + 'anche a pagina chiusa. Filtri e selezione servono solo se vuoi intervenire su casi precisi.'
         );
         var qualityActions = el('div', 'ac-row ac-audit-primary-actions');
         var qualityAuditButton = el('button', 'ac-btn ac-btn-primary', 'Analizza la qualità');
@@ -1622,15 +1661,16 @@
         clearQualitySelection.id = 'acBtnQualityClearSelection';
         clearQualitySelection.disabled = true;
         qualityBulk.appendChild(clearQualitySelection);
-        var repairSelected = el('button', 'ac-btn ac-btn-primary', 'Ripara selezionati (0/100)');
+        var repairSelected = el('button', 'ac-btn ac-btn-ghost', 'Ripara selezionati (0/100)');
         repairSelected.type = 'button';
         repairSelected.id = 'acBtnQualityRepairSelected';
         repairSelected.disabled = true;
         qualityBulk.appendChild(repairSelected);
-        var qualityRepairButton = el('button', 'ac-btn ac-btn-ghost', 'Ripara prossimo lotto automatico');
+        var qualityRepairButton = el('button', 'ac-btn ac-btn-primary', 'Completa tutte le sinossi');
         qualityRepairButton.type = 'button';
         qualityRepairButton.id = 'acBtnQualityRepair';
-        qualityRepairButton.disabled = true;
+        qualityRepairButton.title = 'Procede a lotti finché non resta niente da sistemare. '
+            + 'Continua in background: puoi chiudere la pagina.';
         qualityBulk.appendChild(qualityRepairButton);
         var qualityRetryButton = el('button', 'ac-btn ac-btn-ghost', 'Riprova senza fonte');
         qualityRetryButton.type = 'button';
@@ -1692,7 +1732,7 @@
             queueQualityRepair(selectedQualityIds(), this, false);
         });
         qualityRepairButton.addEventListener('click', function () {
-            queueQualityRepair(qualityRepairIds(qualityAuditView.report), this, true);
+            runFullSynopsisRepair(this);
         });
         qualityRetryButton.addEventListener('click', function () {
             queueQualityRepair(qualitySuppressedIds(qualityAuditView.report), this, true, true);
@@ -1733,9 +1773,10 @@
 
         panel.appendChild(makeCallout(
             'Bulk sicuro, senza modifiche alla cieca',
-            '«Analizza selezionate» legge al massimo 10 serie una alla volta e non modifica la libreria. '
-            + '«Ricontrollo automatico» accoda fino a 200 episodi. Le riparazioni delle sinossi sono limitate a 100 '
-            + 'elementi e il server ricontrolla sempre lingua, lock e configurazione prima del refresh.',
+            '«Completa tutte le sinossi» lavora a lotti da 100 e si ferma da solo; è anche un\'attività '
+            + 'settimanale di Jellyfin, quindi le sinossi nuove arrivano senza che tu debba ricordarti di nulla. '
+            + '«Analizza selezionate» legge al massimo 10 serie una alla volta e non modifica la libreria. '
+            + 'Il server ricontrolla sempre lingua, lock e configurazione prima di ogni refresh.',
             'good'
         ));
 
@@ -2034,10 +2075,6 @@
         return ids;
     }
 
-    function qualityRepairIds(report) {
-        return collectQualityIds(report, function (item) { return !!valueOf(item, 'canRepair'); });
-    }
-
     // Items a previous attempt proved to have no source. Offered separately, behind an explicit
     // retry, because sources do get filled in and a cached negative should not be permanent.
     function qualitySuppressedIds(report) {
@@ -2258,7 +2295,6 @@
             'neutral'
         );
 
-        var candidates = qualityRepairIds(report);
         var suppressedCandidates = qualitySuppressedIds(report);
         var retryButton = val('acBtnQualityRetryNoSource');
         if (retryButton && retryButton.getAttribute('aria-busy') !== 'true') {
@@ -2275,15 +2311,15 @@
         }
 
         if (repairButton.getAttribute('aria-busy') !== 'true') {
-            repairButton.disabled = qualityAuditView.busy || qualityAuditView.queued || candidates.length === 0;
-            repairButton.textContent = candidates.length
-                ? 'Ripara lotto automatico (' + candidates.length + ')'
-                : 'Niente da riparare';
-            repairButton.title = repairable > candidates.length
-                ? repairable + ' elementi riparabili; il server ne accetta al massimo '
-                    + (valueOf(report, 'maximumRepairItems') || candidates.length) + ' per lotto, '
-                    + 'distribuiti fra serie diverse.'
-                : repairable + ' elementi riparabili.';
+            repairButton.disabled = qualityAuditView.busy || repairable === 0;
+            repairButton.textContent = repairable
+                ? 'Completa tutte le sinossi (' + repairable + ')'
+                : 'Niente da completare';
+            repairButton.title = repairable
+                ? repairable + ' elementi da sistemare: il completamento procede a lotti da '
+                    + (valueOf(report, 'maximumRepairItems') || 100)
+                    + ' distribuiti fra serie diverse e si ferma da solo. Continua in background.'
+                : 'Non resta niente su cui agire.';
         }
 
         if (!itemCount) {

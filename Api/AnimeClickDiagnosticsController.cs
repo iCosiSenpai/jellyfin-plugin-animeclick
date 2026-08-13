@@ -571,6 +571,23 @@ public class AnimeClickDiagnosticsController : ControllerBase
     }
 
     /// <summary>
+    /// Queues the synopsis completion task, so one click replaces the queue/wait/analyse cycle the
+    /// page could otherwise only do a hundred items at a time.
+    /// </summary>
+    [HttpPost("RunSynopsisRepairTask")]
+    public ActionResult<RunTaskResponse> RunSynopsisRepairTask()
+    {
+        _taskManager.CancelIfRunningAndQueue<AnimeClickRepairSynopsesTask>();
+        _logger.LogInformation("AnimeClick: completamento sinossi accodato dalla pagina di configurazione");
+        return Ok(new RunTaskResponse
+        {
+            Queued = true,
+            Message = "Completamento delle sinossi avviato. Procede a lotti finché non resta niente da "
+                + "sistemare; l'avanzamento è visibile in Attività pianificate."
+        });
+    }
+
+    /// <summary>
     /// Queues the weekly title re-check immediately, so the user does not have to go looking for it
     /// among Jellyfin's scheduled tasks.
     /// </summary>
