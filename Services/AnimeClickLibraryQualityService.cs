@@ -173,6 +173,53 @@ public sealed class AnimeClickLibraryQualityService
         return report;
     }
 
+    /// <summary>
+    /// The next batch to repair, one item per group at a time. Taking the first N in report order
+    /// let a single long series with no available source fill the whole batch, so every run worked
+    /// on the same hopeless episodes while the rest of the library never improved.
+    /// </summary>
+    public static List<string> SelectRepairBatch(AnimeClickLibraryQualityReport report)
+    {
+        if (report is null)
+        {
+            return [];
+        }
+
+        var buckets = report.Series
+            .Select(group => group.Items
+                .Where(item => item.CanRepair && !string.IsNullOrWhiteSpace(item.Id))
+                .ToList())
+            .Where(items => items.Count > 0)
+            .ToList();
+
+        var maximum = report.MaximumRepairItems > 0 ? report.MaximumRepairItems : MaximumRepairItems;
+        var batch = new List<string>(Math.Min(maximum, buckets.Sum(items => items.Count)));
+        for (var depth = 0; batch.Count < maximum; depth++)
+        {
+            var progressed = false;
+            foreach (var items in buckets)
+            {
+                if (batch.Count >= maximum)
+                {
+                    break;
+                }
+
+                if (depth < items.Count)
+                {
+                    batch.Add(items[depth].Id);
+                    progressed = true;
+                }
+            }
+
+            if (!progressed)
+            {
+                break;
+            }
+        }
+
+        return batch;
+    }
+
     public AnimeClickLibraryQualityRepairResult QueueRepair(IEnumerable<string>? itemIds)
         => QueueRepair(itemIds, force: false);
 
