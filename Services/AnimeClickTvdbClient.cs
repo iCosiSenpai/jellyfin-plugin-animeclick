@@ -286,7 +286,8 @@ public class AnimeClickTvdbClient
         }
 
         var lang = SanitizeTvdbLanguage(language);
-        var listCacheKey = $"tvdbEpisodes:v3::{tvdbId}::{lang}";
+        // v4: the cached records now carry the absolute number, which older entries lack.
+        var listCacheKey = $"tvdbEpisodes:v4::{tvdbId}::{lang}";
         var emptyCacheKey = listCacheKey + "::empty";
         var episodes = await _cache
             .GetAsync<List<TvdbEpisodeRecord>>(listCacheKey, configuration.CacheHours, cancellationToken)
@@ -359,8 +360,47 @@ public class AnimeClickTvdbClient
             }
         }
 
-        return episodes.FirstOrDefault(record =>
-            record.SeasonNumber == season && record.Number == episode)?.Overview;
+        return SelectOverview(episodes, season, episode);
+    }
+
+    /// <summary>
+    /// Picks the overview for a requested coordinate, falling back to the absolute number when that
+    /// coordinate cannot exist.
+    ///
+    /// A library that keeps a long-running anime as a single season asks for "S1E49" while TheTVDB
+    /// files episode 49 of the run as season 2 episode 1. The plain season/episode match then found
+    /// nothing, TMDB answered 404 for the same reason, and the whole synopsis chain reported that no
+    /// source had the episode — for hundreds of episodes that TheTVDB actually carries in Italian.
+    ///
+    /// The fallback is deliberately narrow: only the first season, and only for a number past the
+    /// end of that season. A genuinely missing S1E5 is therefore never answered with the fifth
+    /// episode of the whole run.
+    /// </summary>
+    internal static string? SelectOverview(List<TvdbEpisodeRecord> episodes, int season, int episode)
+    {
+        var direct = episodes.FirstOrDefault(record =>
+            record.SeasonNumber == season && record.Number == episode);
+        if (direct is not null)
+        {
+            return direct.Overview;
+        }
+
+        if (season != 1)
+        {
+            return null;
+        }
+
+        var lastNumberInSeason = episodes
+            .Where(record => record.SeasonNumber == season)
+            .Select(record => record.Number)
+            .DefaultIfEmpty(0)
+            .Max();
+        if (episode <= lastNumberInSeason)
+        {
+            return null;
+        }
+
+        return episodes.FirstOrDefault(record => record.AbsoluteNumber == episode)?.Overview;
     }
 
     /// <summary>
@@ -834,7 +874,23 @@ public class AnimeClickTvdbClient
                 var overview = item.TryGetProperty("overview", out var oEl) && oEl.ValueKind == JsonValueKind.String
                     ? oEl.GetString() : null;
 
-                records.Add(new TvdbEpisodeRecord { SeasonNumber = season, Number = number, Overview = overview });
+                // TheTVDB numbers every episode of the run as well as its position inside a season.
+                // Libraries that store an anime as one long season depend on that second number:
+                // without it "S1E49" can never be found, because TheTVDB's season 1 ends at 48.
+                int? absolute = item.TryGetProperty("absoluteNumber", out var aEl)
+                    && aEl.ValueKind == JsonValueKind.Number
+                    && aEl.TryGetInt32(out var parsedAbsolute)
+                    && parsedAbsolute > 0
+                        ? parsedAbsolute
+                        : null;
+
+                records.Add(new TvdbEpisodeRecord
+                {
+                    SeasonNumber = season,
+                    Number = number,
+                    AbsoluteNumber = absolute,
+                    Overview = overview
+                });
             }
 
             return true;
@@ -904,6 +960,10 @@ internal sealed class TvdbEpisodeRecord
 {
     public int SeasonNumber { get; set; }
     public int Number { get; set; }
+
+    /// <summary>Position in the whole run, when TheTVDB provides it.</summary>
+    public int? AbsoluteNumber { get; set; }
+
     public string? Overview { get; set; }
 }
 
