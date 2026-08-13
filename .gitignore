@@ -34,3 +34,6 @@ temp_extract/
 
 ## Local reports
 /semantic-review/
+
+# Scratch locale: screenshot e appunti trascinati nel workspace, mai da pubblicare.
+tmp/
