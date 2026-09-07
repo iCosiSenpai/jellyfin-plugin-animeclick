@@ -95,6 +95,35 @@ public partial class AnimeClickHtmlParser
     public static bool IsPlaceholderEpisodeText(string? text)
         => !string.IsNullOrWhiteSpace(text) && EpisodePlaceholderTextRegex().IsMatch(text.Trim());
 
+    // ── Compatibilita' fra i due layout di AnimeClick ──
+    //
+    // Il sito e' passato da Bootstrap 3 a Bootstrap 5 rinominando le classi su cui questo
+    // parser si appoggiava: div.well → div.card, h4.media-heading → h4.mo-heading,
+    // div.media → div.d-flex. I selettori che seguono accettano entrambe le forme, cosi'
+    // le pagine ancora servite col markup vecchio continuano a essere lette e un eventuale
+    // ritorno indietro non rompe di nuovo tutto. Chi cambia questi selettori aggiorni anche
+    // le fixture in AnimeClick.Plugin.Tests/Fixtures, che sono HTML scaricato dal sito.
+
+    /// <summary>Il link dentro l'intestazione di una persona o di un'opera, in entrambi i layout.</summary>
+    private const string HeadingLinkXPath =
+        ".//*[self::h4 or self::h5][contains(@class, 'mo-heading') or contains(@class, 'media-heading')]//a[@href]";
+
+    /// <summary>
+    /// Il contenitore che segue il titolo di un ruolo nella pagina /staff:
+    /// <c>div.card</c> nel layout attuale, <c>div.well</c> in quello vecchio.
+    /// </summary>
+    private static HtmlNode? FindRoleContainer(HtmlNode roleHeading)
+        => roleHeading.SelectSingleNode("following-sibling::div[contains(@class, 'card')][1]")
+           ?? roleHeading.SelectSingleNode("following-sibling::div[contains(@class, 'well')][1]");
+
+    /// <summary>
+    /// Il blocco che avvolge una singola persona, da cui si ricava la foto:
+    /// <c>div.d-flex</c> nel layout attuale, <c>div.media</c> in quello vecchio.
+    /// </summary>
+    private static HtmlNode? FindPersonBlock(HtmlNode nameLink)
+        => nameLink.SelectSingleNode("ancestor::div[contains(@class, 'd-flex')][1]")
+           ?? nameLink.SelectSingleNode("ancestor::div[contains(@class, 'media')][1]");
+
     /// <summary>
     /// Parses an AnimeClick episode detail page. Only the schema.org description is
     /// trusted: surrounding page text may contain user comments and must not become
@@ -497,7 +526,10 @@ public partial class AnimeClickHtmlParser
             "Animazioni", "Produzione", "Distributore", "Emittente TV"
         };
 
-        // Structure: <h4>Regia</h4> followed by <div class="well"> with people.
+        // Struttura: <h4>Regia</h4> seguito dal contenitore con le persone.
+        // Il titolo del ruolo e' l'unico h4 senza classe: quelli delle persone portano
+        // mo-heading (Bootstrap 5) o media-heading (vecchio). Il filtro [not(@class)]
+        // e' quindi anche cio' che impedisce di creare crediti intestati a "Regia".
         var h4Nodes = doc.DocumentNode.SelectNodes("//h4[not(@class)]");
         if (h4Nodes is null) return people;
 
@@ -513,10 +545,10 @@ public partial class AnimeClickHtmlParser
                 jellyfinType = "Artist";
             }
 
-            var wellDiv = h4.SelectSingleNode("following-sibling::div[contains(@class, 'well')][1]");
+            var wellDiv = FindRoleContainer(h4);
             if (wellDiv is null) continue;
 
-            var nameNodes = wellDiv.SelectNodes(".//h4[@class='media-heading']//a");
+            var nameNodes = wellDiv.SelectNodes(HeadingLinkXPath);
             if (nameNodes is null) continue;
 
             foreach (var nameNode in nameNodes)
@@ -542,7 +574,7 @@ public partial class AnimeClickHtmlParser
                 }
 
                 var actorId = nameNode.GetAttributeValue("href", null);
-                var mediaNode = nameNode.SelectSingleNode("ancestor::div[contains(@class, 'media')][1]");
+                var mediaNode = FindPersonBlock(nameNode);
                 var imageUrl = mediaNode?.SelectSingleNode(".//img")?.GetAttributeValue("src", null);
                 imageUrl = ToSafeImageUrl(baseUrl, imageUrl);
 
@@ -574,7 +606,7 @@ public partial class AnimeClickHtmlParser
         doc.LoadHtml(html);
         var songs = new List<AnimeClickThemeSong>();
 
-        // Same structure ParseStaffPage walks: <h4>role</h4> followed by <div class="well">.
+        // Same structure ParseStaffPage walks: <h4>role</h4> followed by the role container.
         var h4Nodes = doc.DocumentNode.SelectNodes("//h4[not(@class)]");
         if (h4Nodes is null)
         {
@@ -622,8 +654,8 @@ public partial class AnimeClickHtmlParser
             }
 
             var performers = new List<string>();
-            var wellDiv = h4.SelectSingleNode("following-sibling::div[contains(@class, 'well')][1]");
-            var nameNodes = wellDiv?.SelectNodes(".//h4[@class='media-heading']//a");
+            var wellDiv = FindRoleContainer(h4);
+            var nameNodes = wellDiv?.SelectNodes(HeadingLinkXPath);
             if (nameNodes is not null)
             {
                 foreach (var nameNode in nameNodes)
@@ -659,7 +691,7 @@ public partial class AnimeClickHtmlParser
 
         var results = new List<AnimeClickSearchResult>();
 
-        // Each search result is a <div class="media item-search-item">
+        // Ogni risultato e' un <div class="d-flex item-search-item"> (prima: "media item-search-item").
         var items = doc.DocumentNode.SelectNodes("//div[contains(@class, 'item-search-item')]");
         if (items is null)
         {
@@ -673,8 +705,13 @@ public partial class AnimeClickHtmlParser
 
         foreach (var item in items)
         {
-            // The link inside media-heading: <h4 class="media-heading"><a href="/anime/72/naruto">Naruto</a></h4>
-            var linkNode = item.SelectSingleNode(".//h4[contains(@class, 'media-heading')]//a");
+            // Il titolo sta nell'h4 del blocco. Su Bootstrap 3 l'h4 portava class="media-heading";
+            // dopo il passaggio a Bootstrap 5 non ha piu' nessuna classe:
+            //   <div class="flex-grow-1 item-search-body">
+            //     <h4><a href="/anime/25493/seishun-buta-film">Rascal Does Not Dream...</a></h4>
+            // Vincolare la classe qui voleva dire scartare ogni risultato e restituire lista
+            // vuota su qualunque ricerca, in silenzio. Non si vincola piu'.
+            var linkNode = item.SelectSingleNode(".//h4//a[@href]");
             if (linkNode is null)
             {
                 continue;
@@ -1354,14 +1391,17 @@ public partial class AnimeClickHtmlParser
         var relations = new List<AnimeClickRelation>();
 
         // Structure: <div class="media"> containing:
-        //   <h4/h5 class="media-heading"><a href="/anime/561/naruto-shippuden">Title</a></h4>
-        //   <span class="label label-success">Sequel</span>
+        //   <h5 class="mo-heading"><a href="/anime/23809/...">Title</a></h5>
+        //   <span class="opera-tipo-relazione">Opera precedente</span>
+        // Il contenitore oggi e' <div class="d-flex media-opera ...">: "media-opera" contiene
+        // ancora "media", quindi questo selettore regge entrambi i layout. A cedere era solo
+        // l'intestazione, passata da media-heading a mo-heading.
         var mediaBlocks = doc.DocumentNode.SelectNodes("//div[contains(@class, 'media')]");
         if (mediaBlocks is null) return relations;
 
         foreach (var block in mediaBlocks)
         {
-            var headingLink = block.SelectSingleNode(".//*[self::h4 or self::h5][contains(@class, 'media-heading')]//a");
+            var headingLink = block.SelectSingleNode(HeadingLinkXPath);
             if (headingLink is null) continue;
 
             var title = NormalizeWhitespace(headingLink.InnerText);
@@ -1379,10 +1419,12 @@ public partial class AnimeClickHtmlParser
                 ?? block.SelectSingleNode(".//span[contains(@class, 'label')]");
             var relationType = NormalizeWhitespace(relationNode?.InnerText) ?? "Correlato";
 
-            // Try to extract year and format from <p> or <span> in description/media-body
+            // Anno e formato stanno in <div class="description">: "Anno: 2018", "Serie TV".
+            // I due selettori media-body restano per il layout vecchio, dove stavano li'.
             int? year = null;
             string? format = null;
-            var infoNodes = block.SelectNodes(".//div[contains(@class, 'media-body')]//p")
+            var infoNodes = block.SelectNodes(".//div[contains(@class, 'mo-body')]//div[contains(@class, 'description')]//span")
+                         ?? block.SelectNodes(".//div[contains(@class, 'media-body')]//p")
                          ?? block.SelectNodes(".//div[contains(@class, 'media-body')]//span")
                          ?? block.SelectNodes(".//div[contains(@class, 'description')]//span")
                          ?? block.SelectNodes(".//span");

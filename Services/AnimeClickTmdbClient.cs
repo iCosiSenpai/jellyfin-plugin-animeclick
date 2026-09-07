@@ -709,6 +709,101 @@ public class AnimeClickTmdbClient
         }
     }
 
+    /// <summary>
+    /// La sinossi di un film o di una serie nella lingua richiesta, o null se TMDB non ce l'ha.
+    /// </summary>
+    /// <remarks>
+    /// Serve quando AnimeClick ha la scheda dell'opera ma non la trama: succede, e senza
+    /// questo passaggio l'opera resta senza sinossi (era il caso di "Eiga Karakai Jouzu no
+    /// Takagi-san", scheda 38803 col campo trama vuoto). TMDB risponde 200 con
+    /// <c>overview</c> vuota quando la traduzione non esiste: e' un no, non un errore.
+    /// </remarks>
+    public async Task<string?> GetItalianOverviewAsync(
+        int tmdbId,
+        bool isMovie,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(configuration.TmdbApiKey))
+        {
+            return null;
+        }
+
+        var cacheKey = $"tmdbOverviewIt:v1::{(isMovie ? "movie" : "tv")}::{tmdbId}";
+        var cached = await _cache
+            .GetAsync<string>(cacheKey, configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(cached))
+        {
+            return cached;
+        }
+
+        var url = isMovie
+            ? BuildMovieDetailsUrl(configuration.TmdbApiKey, tmdbId, ItalianLanguage)
+            : BuildTvDetailsUrl(configuration.TmdbApiKey, tmdbId, ItalianLanguage);
+
+        try
+        {
+            using var client = BuildClient(configuration);
+            var json = await client.GetStringAsync(url, cancellationToken).ConfigureAwait(false);
+            var overview = ParseOverview(json);
+            if (string.IsNullOrWhiteSpace(overview))
+            {
+                _logger.LogDebug(
+                    "TmdbClient: nessuna sinossi italiana per tmdb={Tmdb} ({Kind})",
+                    tmdbId,
+                    isMovie ? "film" : "serie");
+                return null;
+            }
+
+            await _cache.SetAsync(cacheKey, overview, cancellationToken).ConfigureAwait(false);
+            return overview;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "TmdbClient: lettura sinossi fallita per tmdb={Tmdb}", tmdbId);
+            return null;
+        }
+    }
+
+    private const string ItalianLanguage = "it-IT";
+
+    /// <summary>Builds the TMDB movie details URL (testable, no network).</summary>
+    internal static string BuildMovieDetailsUrl(string apiKey, int tmdbId, string language)
+        => $"{BaseUrl}/movie/{tmdbId.ToString(CultureInfo.InvariantCulture)}"
+           + $"?api_key={Uri.EscapeDataString(apiKey)}&language={Uri.EscapeDataString(NormalizeLanguage(language))}";
+
+    /// <summary>Builds the TMDB tv details URL (testable, no network).</summary>
+    internal static string BuildTvDetailsUrl(string apiKey, int tmdbId, string language)
+        => $"{BaseUrl}/tv/{tmdbId.ToString(CultureInfo.InvariantCulture)}"
+           + $"?api_key={Uri.EscapeDataString(apiKey)}&language={Uri.EscapeDataString(NormalizeLanguage(language))}";
+
+    /// <summary>Reads <c>overview</c> from a TMDB details payload (testable, no network).</summary>
+    internal static string? ParseOverview(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("overview", out var overview)
+                || overview.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var text = overview.GetString()?.Trim();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Builds the TMDB search/tv URL (testable, no network).</summary>
     internal static string BuildSearchTvUrl(string apiKey, string title, int? year)
         => $"{BaseUrl}/search/tv?api_key={Uri.EscapeDataString(apiKey)}"

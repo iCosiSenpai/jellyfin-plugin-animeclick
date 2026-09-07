@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 
 namespace AnimeClick.Plugin.Providers;
 
-public class AnimeClickSeriesSearchProvider
+public partial class AnimeClickSeriesSearchProvider
 {
     private readonly AnimeClickClient _client;
     private readonly AnimeClickCacheService _cache;
@@ -108,7 +108,7 @@ public class AnimeClickSeriesSearchProvider
                 && !string.Equals(suffixQuery, cleanedQuery, StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("AnimeClick: Retrying with distinctive suffix '{Suffix}'", suffixQuery);
-                attempt = await ExecuteSearchAsync(suffixQuery, configuration, cancellationToken, productionYear, seriesRequest);
+                attempt = await ExecuteSearchAsync(suffixQuery, configuration, cancellationToken, productionYear, seriesRequest, AnimeClickSearchScorer.SearchStage.Prefix);
                 attemptsHadErrors |= attempt.HadError;
                 results = attempt.Results;
             }
@@ -121,9 +121,64 @@ public class AnimeClickSeriesSearchProvider
             if (shortQuery is not null)
             {
                 _logger.LogInformation("AnimeClick: Retrying with short query '{Short}'", shortQuery);
-                attempt = await ExecuteSearchAsync(shortQuery, configuration, cancellationToken, productionYear, seriesRequest);
+                attempt = await ExecuteSearchAsync(shortQuery, configuration, cancellationToken, productionYear, seriesRequest, AnimeClickSearchScorer.SearchStage.Prefix);
                 attemptsHadErrors |= attempt.HadError;
                 results = attempt.Results;
+            }
+        }
+
+        // Il titolo accorciato dalla coda, una parola alla volta. AnimeClick cerca sottostringhe
+        // contigue e conosce l'opera con un altro titolo: "Saekano the Movie Finale" non esiste
+        // sul sito, "Saekano" trova la scheda (slug saekano-movie).
+        var alreadyTried = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            cleanedQuery, useForSearch, SimplifyQuery(cleanedQuery)
+        };
+        // Anche i due tentativi qui sopra: il prefisso di tre parole coincide spesso con
+        // la "short query", e rifarlo sarebbe una richiesta al sito buttata via.
+        if (GetSuffixQuery(useForSearch) is { } triedSuffix) alreadyTried.Add(triedSuffix);
+        if (GetShortQuery(cleanedQuery) is { } triedShort) alreadyTried.Add(triedShort);
+
+        if (results.Count == 0)
+        {
+            foreach (var prefix in GetPrefixQueries(cleanedQuery))
+            {
+                if (!alreadyTried.Add(prefix))
+                {
+                    continue;
+                }
+
+                _logger.LogInformation("AnimeClick: Retrying with prefix '{Prefix}'", prefix);
+                attempt = await ExecuteSearchAsync(prefix, configuration, cancellationToken, productionYear, seriesRequest, AnimeClickSearchScorer.SearchStage.Prefix);
+                attemptsHadErrors |= attempt.HadError;
+                results = attempt.Results;
+                if (results.Count > 0)
+                {
+                    break;
+                }
+            }
+        }
+
+        // Ultima spiaggia: le parole che da sole identificano l'opera, per i titoli in cui
+        // quella che conta sta in mezzo e nessun prefisso la raggiunge (Fate/Grand Order …
+        // Camelot …, slug fate-grand-order-camelot, si trova solo con "Camelot").
+        if (results.Count == 0)
+        {
+            foreach (var token in GetDistinctiveTokens(cleanedQuery))
+            {
+                if (!alreadyTried.Add(token))
+                {
+                    continue;
+                }
+
+                _logger.LogInformation("AnimeClick: Retrying with distinctive token '{Token}'", token);
+                attempt = await ExecuteSearchAsync(token, configuration, cancellationToken, productionYear, seriesRequest, AnimeClickSearchScorer.SearchStage.DistinctiveToken);
+                attemptsHadErrors |= attempt.HadError;
+                results = attempt.Results;
+                if (results.Count > 0)
+                {
+                    break;
+                }
             }
         }
 
@@ -188,7 +243,8 @@ public class AnimeClickSeriesSearchProvider
         PluginConfiguration configuration,
         CancellationToken cancellationToken,
         int? productionYear,
-        bool seriesRequest)
+        bool seriesRequest,
+        AnimeClickSearchScorer.SearchStage stage = AnimeClickSearchScorer.SearchStage.Primary)
     {
         var slug = Uri.EscapeDataString(query);
         var url = $"{configuration.BaseUrl}/cerca?name={slug}";
@@ -201,13 +257,6 @@ public class AnimeClickSeriesSearchProvider
             var searchResults = parsedResults
                 .Where(result => AnimeClickSearchScorer.IsFormatCompatible(result, seriesRequest))
                 .ToList();
-            _logger.LogInformation(
-                "AnimeClick: Parsed {Count} search candidates for '{Query}', {Compatible} compatible with {Kind}",
-                parsedResults.Count,
-                query,
-                searchResults.Count,
-                seriesRequest ? "series" : "movie");
-
             var configuredMaxResults = configuration.MaxSearchResults > 0
                 ? configuration.MaxSearchResults
                 : 10;
@@ -215,10 +264,30 @@ public class AnimeClickSeriesSearchProvider
 
             var ranked = searchResults
                 .Select(r => new { Result = r, Score = AnimeClickSearchScorer.Score(r, query, productionYear, seriesRequest) })
+                // Il provider prende il primo della classifica senza guardare il punteggio.
+                // Su una query di ripiego — un prefisso corto, una parola sola — questo
+                // basterebbe ad attaccare all'opera una scheda che non c'entra: cercando
+                // "Camelot" tornano anche due film del 1990 e del 1998. Meglio nessuna
+                // sinossi che la sinossi di un'altra opera.
+                .Where(x => AnimeClickSearchScorer.IsAcceptable(
+                    x.Score,
+                    stage,
+                    yearMatchesExactly: productionYear.HasValue
+                        && x.Result.ProductionYear == productionYear,
+                    isOnlyCompatibleCandidate: searchResults.Count == 1,
+                    queryLength: query.Length))
                 .OrderByDescending(x => x.Score)
                 .ThenBy(x => x.Result.ProductionYear ?? 9999)
                 .ThenBy(x => x.Result.Title)
                 .ToList();
+
+            _logger.LogInformation(
+                "AnimeClick: Parsed {Count} search candidates for '{Query}', {Compatible} compatible with {Kind}, {Accepted} oltre la soglia",
+                parsedResults.Count,
+                query,
+                searchResults.Count,
+                seriesRequest ? "series" : "movie",
+                ranked.Count);
 
             foreach (var candidate in ranked.Take(Math.Min(5, ranked.Count)))
             {
@@ -290,8 +359,69 @@ public class AnimeClickSeriesSearchProvider
         cleaned = Regex.Replace(cleaned, @"\s*&\s*", " and ");
         cleaned = Regex.Replace(cleaned, @"[""']", " ");
 
+        cleaned = StripReleaseNoise(cleaned);
+
         return cleaned.Trim();
     }
+
+    /// <summary>
+    /// Taglia il nome davanti al primo residuo di release.
+    /// </summary>
+    /// <remarks>
+    /// Quando una cartella si chiama <c>Paprika.2006.4K.HDR.DV.2160p.BDRip Ita Eng Jap x265-NAHOM</c>,
+    /// Jellyfin usa quella stringa come titolo dell'elemento e la passa qui tale e quale.
+    /// AnimeClick cerca sottostringhe contigue, quindi nessuna variante di quel nome puo'
+    /// trovare qualcosa: la scheda esiste ("Paprika - Sognando un sogno") ma resta irraggiungibile.
+    ///
+    /// Si taglia al primo marcatore tecnico invece di rimuoverli uno per uno: tutto cio' che
+    /// segue una risoluzione o un codec e' nomenclatura di release, mai parte del titolo.
+    /// Prima del primo marcatore non si tocca nulla, cosi' "Perfect Blue" e "Cowboy Bebop"
+    /// restano intatti.
+    /// </remarks>
+    private static string StripReleaseNoise(string query)
+    {
+        var match = ReleaseNoiseRegex().Match(query);
+        if (!match.Success || match.Index == 0)
+        {
+            // match.Index == 0 vorrebbe dire che il titolo *inizia* con un marcatore:
+            // meglio lasciarlo com'e' che restituire una stringa vuota.
+            return query;
+        }
+
+        var head = query[..match.Index];
+
+        // I separatori tipici delle release ("Paprika.2006", "Akira_1988") vanno resi spazi
+        // solo qui: un punto in "Dr. Stone" o in "Steins;Gate" fa parte del titolo e nel
+        // ramo senza marcatori non viene toccato.
+        head = Regex.Replace(head, @"[._]+", " ");
+        head = Regex.Replace(head, @"\s{2,}", " ");
+
+        // "Paprika 2006", "Akira 1988": nelle release l'anno precede i marcatori tecnici.
+        // Si toglie solo qui, dove un marcatore c'e' gia' stato: nel ramo dei titoli normali
+        // un numero finale non viene toccato, cosi' "Eyeshield 21" e "Steins;Gate 0" restano interi.
+        head = Regex.Replace(head, @"\s+(?:19|20)\d{2}\s*$", string.Empty);
+
+        var trimmed = head.Trim(' ', '-', '–', '—', '[', '(', '{', ',');
+        return string.IsNullOrWhiteSpace(trimmed) ? query : trimmed;
+    }
+
+    /// <summary>
+    /// Il primo marcatore tecnico di una release: risoluzione, sorgente, codec, tracce audio,
+    /// profilo HDR. Deve essere delimitato, altrimenti "K-On!" perderebbe la K e
+    /// "Eyeshield 21" il numero.
+    /// </summary>
+    [GeneratedRegex(
+        @"(?<![\p{L}\p{Nd}])(?:"
+        + @"\d{3,4}[pi]|4K|8K|UHD|"
+        + @"BD(?:Rip|MV)?|BluRay|Blu-Ray|WEB-?DL|WEB-?Rip|HDTV|DVD(?:Rip)?|REMUX|"
+        + @"[xh]\.?26[45]|HEVC|AVC|Hi10P?|10bits?|8bits?|"
+        + @"HDR10?|DoVi|SDR|"
+        + @"AAC|AC-?3|E?AC3|DTS(?:-HD)?|DDP?[0-9]?|FLAC|Opus|TrueHD|"
+        + @"Dual-?Audio|MULTi|VOSTFR|Multi-?Subs|Sub-?ITA|"
+        + @"\d{1,2}\.\d(?:ch)?"
+        + @")(?![\p{L}\p{Nd}])",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ReleaseNoiseRegex();
 
     /// <summary>
     /// Simplifies by removing special characters (colons, dashes, dots) that
@@ -344,6 +474,77 @@ public class AnimeClickSeriesSearchProvider
         var shortQuery = string.Join(' ', words);
         return shortQuery == query ? null : shortQuery;
     }
+
+    /// <summary>
+    /// Le parole comuni che non identificano un'opera: articoli, preposizioni, ausiliari,
+    /// e i termini di formato che compaiono in mezzo mondo di titoli.
+    /// </summary>
+    /// <summary>Quante parole al massimo per il prefisso piu' lungo che si prova.</summary>
+    private const int MaxPrefixWords = 5;
+
+    private static readonly HashSet<string> GenericWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "a", "an", "the", "of", "no", "to", "and", "or", "in", "on", "at", "for", "with",
+        "is", "are", "am", "be", "been", "was", "were", "do", "does", "did", "doing",
+        "you", "your", "we", "us", "it", "its", "my", "me", "he", "she", "they", "them",
+        "what", "who", "when", "where", "why", "how", "will", "would", "can", "could",
+        "not", "all", "any", "out", "up", "so", "if", "as", "by", "from", "that", "this",
+        "used", "just", "very", "more", "most", "movie", "film", "season", "part", "series",
+        "il", "lo", "la", "i", "gli", "le", "di", "da", "del", "della", "un", "una", "e",
+        "che", "per", "con", "su", "tra", "fra", "il", "al", "dal", "nel"
+    };
+
+    /// <summary>
+    /// Il titolo accorciato dalla coda, una parola alla volta, fino alla prima.
+    /// </summary>
+    /// <remarks>
+    /// AnimeClick cerca sottostringhe contigue nei titoli e nello slug, quindi un prefisso
+    /// del titolo e' il tentativo che ha piu' probabilita' di andare a segno quando il nome
+    /// completo non trova nulla: "Saekano the Movie Finale" non esiste sul sito, ma la scheda
+    /// ha slug <c>saekano-movie</c> e "Saekano" da sola la trova.
+    ///
+    /// Non restituisce il titolo intero: e' gia' stato provato prima e ripeterlo
+    /// sarebbe una richiesta sprecata.
+    /// </remarks>
+    internal static IEnumerable<string> GetPrefixQueries(string query)
+    {
+        var words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        // Ogni prefisso e' una richiesta al sito. I prefissi lunghi sono anche i piu' inutili:
+        // se il titolo intero non ha trovato nulla, togliere una parola su quindici cambia
+        // poco. Si parte da cinque parole e si scende.
+        var start = Math.Min(words.Length - 1, MaxPrefixWords);
+        for (var take = start; take >= 1; take--)
+        {
+            var prefix = string.Join(' ', words.Take(take));
+            if (!string.IsNullOrWhiteSpace(prefix))
+            {
+                yield return prefix;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Le poche parole che da sole possono identificare l'opera, dalla piu' lunga in giu'.
+    /// </summary>
+    /// <remarks>
+    /// Ultima spiaggia, per i titoli in cui la parola che conta sta in mezzo e nessun prefisso
+    /// la raggiunge: "Fate/Grand Order: Divine Realm of the Round Table - Camelot Wandering;
+    /// Agateram" si trova solo cercando "Camelot" (slug <c>fate-grand-order-camelot</c>).
+    ///
+    /// Una parola sola e' una query larga, che puo' restituire opere senza rapporto: per
+    /// questo i risultati di questi tentativi passano dalla soglia di
+    /// <see cref="AnimeClickSearchScorer.IsAcceptable"/>, che senza un riscontro di anno o
+    /// formato li rifiuta. Il numero di parole e' limitato perche' ognuna e' una richiesta
+    /// al sito.
+    /// </remarks>
+    internal static IEnumerable<string> GetDistinctiveTokens(string query)
+        => Regex.Split(query, @"[^\p{L}\p{Nd}]+")
+            .Where(word => word.Length >= 5 && !GenericWords.Contains(word))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(word => word.Length)
+            .ThenBy(word => word, StringComparer.OrdinalIgnoreCase)
+            .Take(3);
 
     private sealed class SearchAttempt
     {

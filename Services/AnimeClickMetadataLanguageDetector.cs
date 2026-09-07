@@ -49,6 +49,17 @@ public static partial class AnimeClickMetadataLanguageDetector
     [GeneratedRegex(@"[\p{L}]+(?:['’][\p{L}]+)?", RegexOptions.CultureInvariant)]
     private static partial Regex WordRegex();
 
+    /// <summary>
+    /// Se il testo e' riconoscibilmente italiano.
+    /// </summary>
+    /// <remarks>
+    /// Un testo troppo corto o ambiguo non e' italiano ai fini di questa domanda: serve a
+    /// decidere se una sinossi presa da una fonte esterna puo' essere usata cosi' com'e'
+    /// o va tradotta, e nel dubbio conviene tradurre.
+    /// </remarks>
+    public static bool IsItalian(string? text)
+        => Detect(text).Language == AnimeClickTextLanguage.Italian;
+
     public static AnimeClickLanguageDetection Detect(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
