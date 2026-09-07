@@ -28,6 +28,21 @@ public class AnimeClickAniListResolver
     // sotto quella soglia anche con una scansione che procede senza pause.
     private static readonly RequestThrottle Throttle = new("AniList", TimeSpan.FromMilliseconds(700));
 
+    /// <summary>
+    /// Sospende le chiamate quando AniList è giù. Statico come il throttle: la condizione è
+    /// del servizio, non della singola richiesta, e vale per tutto il processo.
+    ///
+    /// Nel 2026 AniList ha disattivato l'API e risponde 403 a chiunque. Senza questo, ogni
+    /// elemento della libreria produceva due richieste inutili e due avvisi identici.
+    /// Tre fallimenti di fila bastano a distinguere un servizio giù da un errore di rete
+    /// isolato; poi si riprova dopo cinque minuti, dieci, venti, fino a un'ora.
+    /// </summary>
+    private static readonly AnimeClickCircuitBreaker Breaker = new(
+        "AniList",
+        failureThreshold: 3,
+        initialCooldown: TimeSpan.FromMinutes(5),
+        maximumCooldown: TimeSpan.FromMinutes(60));
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickAniListResolver> _logger;
@@ -165,6 +180,18 @@ public class AnimeClickAniListResolver
         string title,
         CancellationToken cancellationToken)
     {
+        if (!Breaker.TryEnter())
+        {
+            // Nessuna cache negativa viene scritta a valle di questo: quando AniList torna,
+            // il primo aggiornamento deve poter risolvere l'identità senza aspettare una
+            // scadenza che non c'entra nulla con il guasto.
+            _logger.LogDebug(
+                "AniListResolver: richieste sospese fino a {RetryAt}, {Title} non interrogato",
+                Breaker.RetryAt,
+                title);
+            return AniListQueryResult.Incomplete;
+        }
+
         try
         {
             const string graphQl = """
@@ -201,6 +228,9 @@ public class AnimeClickAniListResolver
             {
                 if (RequestThrottle.IsRateLimited(response.StatusCode))
                 {
+                    // «Più piano», non «sono giù»: ha già la sua pausa, e non deve contare
+                    // come fallimento per l'interruttore.
+                    Breaker.RecordIndeterminate();
                     var pause = Throttle.NoticeRateLimit(response);
                     _logger.LogWarning(
                         "AniListResolver: AniList ha risposto {Status} per {Title}; pausa di {Pause} prima della prossima richiesta",
@@ -210,15 +240,29 @@ public class AnimeClickAniListResolver
                     return AniListQueryResult.Incomplete;
                 }
 
-                // 429 is the common one: AniList allows ~90 requests/minute and a library scan
-                // can exceed that. The miss is deliberately not cached, so the next scan
-                // retries — which is only diagnosable if the throttling is actually visible.
-                _logger.LogWarning(
-                    "AniListResolver: AniList returned {Status} for {Title}",
-                    response.StatusCode,
-                    title);
+                // Qui ci finisce anche il 403 con cui AniList ha spento l'API: la risposta non
+                // cambierà riprovando, quindi conta per l'interruttore. L'avviso si scrive
+                // solo quando le richieste vengono sospese, non a ogni elemento: erano
+                // centinaia di righe identiche, ed è il rumore che nasconde il guasto dopo.
+                if (Breaker.RecordFailure())
+                {
+                    _logger.LogWarning(
+                        "AniListResolver: AniList risponde {Status}; richieste sospese fino a {RetryAt}",
+                        response.StatusCode,
+                        Breaker.RetryAt);
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "AniListResolver: AniList returned {Status} for {Title}",
+                        response.StatusCode,
+                        title);
+                }
+
                 return AniListQueryResult.Incomplete;
             }
+
+            Breaker.RecordSuccess();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             return TryParseCandidates(json, out var candidates)
@@ -227,11 +271,25 @@ public class AnimeClickAniListResolver
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            // L'annullamento non dice niente su AniList: restituisce il tentativo di prova
+            // invece di lasciarlo appeso, e non conta come fallimento.
+            Breaker.RecordIndeterminate();
             throw;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "AniListResolver: failed for {Title}", title);
+            if (Breaker.RecordFailure())
+            {
+                _logger.LogWarning(
+                    ex,
+                    "AniListResolver: AniList irraggiungibile; richieste sospese fino a {RetryAt}",
+                    Breaker.RetryAt);
+            }
+            else
+            {
+                _logger.LogDebug(ex, "AniListResolver: failed for {Title}", title);
+            }
+
             return AniListQueryResult.Incomplete;
         }
     }
