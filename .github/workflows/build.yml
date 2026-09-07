@@ -110,33 +110,48 @@ jobs:
           body: |
             ## AnimeClick Metadata Plugin ${{ github.ref_name }}
 
-            Meno numeri, meno pulsanti, nessun tetto arbitrario.
+            La ricerca su AnimeClick non funzionava più. Adesso sì.
 
-            **Niente più «max 200»**
-            - Il ricontrollo dei titoli lavora l'intero arretrato in una sola esecuzione. Quello che
-              protegge AnimeClick non era il tetto ma il ritardo fra le richieste, che resta l'unica
-              manopola e ora è dichiarato al posto di un numero magico.
-            - Rimossa anche la finestra rotante, che serviva soltanto a spartire quel tetto fra
-              settimane diverse.
+            **Il guasto**
+            - AnimeClick è passato da Bootstrap 3 a Bootstrap 5. Il parser cercava
+              `h4.media-heading`; nel markup nuovo l'intestazione dei risultati è un `<h4>` senza
+              nessuna classe. Il contenitore esterno reggeva ancora, quindi il parser trovava i
+              risultati della pagina e li scartava uno per uno: nei log si leggeva
+              «Parsed 0 search candidates», mai un errore. Trentasette ricerche su trentasette in
+              tre giorni, zero risultati, in silenzio.
+            - Chi aveva già l'identificativo salvato continuava ad aggiornarsi. Ogni titolo aggiunto
+              dopo il cambio del sito non poteva più essere riconosciuto.
+            - Nella stessa migrazione se ne sono andati `div.well` (ora `card`) e le intestazioni
+              `media-heading` (ora `mo-heading`): staff e opere collegate tornavano vuoti.
 
-            **Numeri che dicono la verità**
-            - I titoli mancanti sono divisi in tre: quelli che un ricontrollo può recuperare, quelli in
-              attesa che AnimeClick pubblichi il titolo, e quelli che nessuna richiesta cambierà —
-              tipicamente le schede che elencano gli episodi come «Episodio 01», senza titolo.
-              Un totale unico che non scendeva mai faceva sembrare rotto il plugin.
-            - La qualità metadati mostra al massimo quattro contatori invece di sette, e l'elenco
-              parte da ciò che ha bisogno di attenzione: gli elementi con lingua incerta, che il
-              plugin non tocca mai, non riempiono più la pagina.
+            **Perché i test non se ne erano accorti**
+            - Le fixture erano HTML scritto a mano, fermo al layout di prima: descrivevano un sito
+              che non esiste più. Ora sono pagine scaricate da animeclick.it, e dieci prove le
+              interrogano. Il prossimo cambio di markup fa diventare rossi i test invece di
+              lasciare il guasto ai log.
 
-            **Contatori cliccabili**
-            - Ogni contatore e ogni causa filtrano l'elenco sottostante con un clic, invece di
-              obbligare a cercare la voce corrispondente in un menu.
+            **La ricerca trova di più**
+            - Taglia i residui delle release: una cartella chiamata
+              `Paprika.2006.4K.HDR.DV.2160p.BDRip Ita Eng Jap x265-NAHOM` diventa il titolo
+              dell'elemento, e nessuna query poteva funzionare.
+            - Accorcia il titolo dalla coda una parola alla volta, perché il sito cerca sottostringhe
+              contigue e conosce l'opera con un altro nome: «Saekano the Movie Finale» non esiste,
+              «Saekano» trova la scheda.
+            - In ultima istanza prova le parole che da sole identificano l'opera, per i casi in cui
+              quella che conta sta in mezzo e nessun prefisso la raggiunge.
 
-            **Una scelta in meno**
-            - La selezione manuale degli elementi resta solo dove è un giudizio umano, cioè sui titoli
-              con esito incerto; per le sinossi era attrito inutile, perché gli stessi elementi li
-              prende comunque l'azione automatica. Le caselle non appaiono più accanto alle schede che
-              non possono migliorare.
+            **E sbaglia di meno**
+            - Query più larghe sbagliano bersaglio, e il primo risultato veniva preso senza guardare
+              il punteggio: cercando «Finale», il film finale di Saekano si prendeva la sinossi di
+              Gintama. Ora sul nome dell'opera ci si fida come prima, su un prefisso serve la soglia
+              o l'assenza di alternative, su una parola sola servono la soglia e l'anno esatto.
+            - Uno scarto di anni pesa di più, perché fra due stagioni il titolo non distingue: la
+              terza di Mushoku Tensei ereditava la sinossi della prima.
+
+            **Sinossi italiana anche quando AnimeClick non ce l'ha**
+            - Se la scheda esiste ma la trama è vuota, film e serie non ricevevano nulla, mentre per
+              gli episodi la catena di ripiego esisteva già. Ora la sinossi arriva da TMDB, scritta
+              solo su campo vuoto e solo se il testo è davvero in italiano.
 
             **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
             **Versione:** `${{ env.VERSION }}`
