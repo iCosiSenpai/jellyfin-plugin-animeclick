@@ -25,4 +25,11 @@
   <ItemGroup>
     <ProjectReference Include="..\AnimeClick.Plugin.csproj" />
   </ItemGroup>
+
+  <!-- HTML scaricato dal sito vero, non scritto a mano. Le fixture inline hanno tenuto
+       la suite verde per mesi mentre in produzione il parser non trovava piu' nulla:
+       AnimeClick e' passato a Bootstrap 5 e nessun test se n'e' accorto. -->
+  <ItemGroup>
+    <Content Include="Fixtures\**\*.html" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

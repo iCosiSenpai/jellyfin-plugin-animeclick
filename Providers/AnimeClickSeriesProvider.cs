@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -30,6 +31,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
     private readonly AnimeClickAniListResolver _aniListResolver;
     private readonly ILogger<AnimeClickSeriesProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AnimeClickTmdbClient _tmdbClient;
 
     public AnimeClickSeriesProvider(
         AnimeClickClient client,
@@ -38,6 +40,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         AnimeClickSeriesSearchProvider searchProvider,
         AnimeClickAniListResolver aniListResolver,
         ILogger<AnimeClickSeriesProvider> logger,
+        AnimeClickTmdbClient tmdbClient,
         IHttpClientFactory httpClientFactory)
     {
         _client = client;
@@ -47,6 +50,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         _aniListResolver = aniListResolver;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _tmdbClient = tmdbClient;
     }
 
     public string Name => "AnimeClick";
@@ -133,6 +137,9 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         }
 
         Map(result.Item, anime, configuration);
+
+        await FillItalianOverviewAsync(result.Item, info, configuration, cancellationToken)
+            .ConfigureAwait(false);
 
         // Map people to Jellyfin PersonInfo
         if (configuration.EnableCast)
@@ -342,6 +349,48 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         {
             _logger.LogWarning(ex, "Errore fetch multimedia per {Title}", anime.Title);
         }
+    }
+
+    /// <summary>
+    /// Quando AnimeClick ha la scheda ma non la trama, prende la sinossi italiana da TMDB.
+    /// </summary>
+    /// <remarks>
+    /// Stesso motivo del provider dei film: non tutte le schede AnimeClick hanno la trama, e
+    /// senza questo passaggio l'opera resta senza sinossi anche quando TMDB ce l'ha in
+    /// italiano. Si scrive solo su campo vuoto e solo se il testo e' davvero italiano: TMDB
+    /// per una lingua senza traduzione risponde con <c>overview</c> vuota, ma una scheda
+    /// "italiana" puo' anche essere rimasta in inglese, e in quel caso e' meglio nessuna
+    /// sinossi che una in un'altra lingua.
+    /// </remarks>
+    private async Task FillItalianOverviewAsync(
+        Series target,
+        SeriesInfo info,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        if (!configuration.EnablePlot || !string.IsNullOrWhiteSpace(target.Overview))
+        {
+            return;
+        }
+
+        var tmdbId = info.GetProviderId(MetadataProvider.Tmdb);
+        if (!int.TryParse(tmdbId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id))
+        {
+            return;
+        }
+
+        var overview = await _tmdbClient
+            .GetItalianOverviewAsync(id, isMovie: false, configuration, cancellationToken)
+            .ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(overview) || !AnimeClickMetadataLanguageDetector.IsItalian(overview))
+        {
+            return;
+        }
+
+        target.Overview = overview;
+        _logger.LogInformation(
+            "AnimeClick: sinossi italiana presa da TMDB per {Title} (AnimeClick non ce l'ha)",
+            target.Name);
     }
 
     private static void Map(Series target, AnimeClickAnime source, PluginConfiguration configuration)
