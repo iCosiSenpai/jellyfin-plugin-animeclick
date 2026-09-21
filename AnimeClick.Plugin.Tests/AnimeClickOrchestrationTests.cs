@@ -903,13 +903,20 @@ public class AnimeClickOrchestrationTests
             NullLogger<AnimeClickRepairSynopsesTask>.Instance);
         var reported = new List<double>();
 
-        await task.ExecuteAsync(new Progress<double>(reported.Add), CancellationToken.None);
+        // Progress<T> posts to a SynchronizationContext/thread pool and may run after
+        // ExecuteAsync returns. Collect inline so the assertion observes every report.
+        await task.ExecuteAsync(new InlineProgress<double>(reported.Add), CancellationToken.None);
 
         Assert.Empty(queued);
         Assert.Contains(100, reported);
         Assert.Equal("AnimeClick", task.Category);
         Assert.Equal("AnimeClickRepairMissingSynopses", task.Key);
         Assert.NotEmpty(task.GetDefaultTriggers());
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 
     private static AnimeClickLibraryQualitySeries BuildQualityGroup(string name, string[] itemIds)
