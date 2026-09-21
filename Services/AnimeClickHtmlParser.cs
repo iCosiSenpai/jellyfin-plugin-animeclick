@@ -176,6 +176,14 @@ public partial class AnimeClickHtmlParser
             Id = ExtractId(url)
         };
 
+        // Advertising, maintenance and challenge pages may return HTTP 200. They are not
+        // metadata, and must never overwrite a library title or become a cached anime card.
+        if (doc.DocumentNode.SelectSingleNode("//h1[@itemprop='name']") is null
+            && string.IsNullOrWhiteSpace(DtDdValue(doc, "Titolo originale")))
+        {
+            throw new System.IO.InvalidDataException("AnimeClick did not return a recognizable anime detail page.");
+        }
+
         // --- Title (Italian) ---
         // <h1 itemprop="name">Mahoromatic</h1>
         anime.Title =

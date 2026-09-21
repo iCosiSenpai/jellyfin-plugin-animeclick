@@ -196,8 +196,11 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
 
     private async Task<(int width, int height)> ProbePosterDimensionsAsync(string imageUrl, PluginConfiguration configuration, CancellationToken cancellationToken)
     {
-        var client = _httpClientFactory.CreateClient();
-        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(imageUrl));
+        using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(30));
+        cancellationToken = budget.Token;
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(imageUrl));
         request.Headers.Range = new RangeHeaderValue(0, ProbePrefixBytes - 1); // header only
         request.Headers.TryAddWithoutValidation(
             "User-Agent",
@@ -252,28 +255,6 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
     }
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
-    {
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-
-        // Defense in depth: only ever fetch an allowed HTTPS host, mirroring GetImages.
-        if (!AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, url, out var imageUri))
-        {
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
-        }
-
-        var client = _httpClientFactory.CreateClient();
-
-        // AnimeClick's CDN rejects requests without a browser-like User-Agent (HTTP 403),
-        // so mirror the headers used by AnimeClickClient for HTML fetches.
-        var request = new HttpRequestMessage(HttpMethod.Get, imageUri);
-        request.Headers.TryAddWithoutValidation(
-            "User-Agent",
-            AnimeClickClient.GetEffectiveUserAgent(configuration));
-        if (Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var referer))
-        {
-            request.Headers.Referrer = referer;
-        }
-
-        return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-    }
+        => AnimeClickHttp.GetImageAsync(_httpClientFactory, url,
+            Plugin.Instance?.Configuration ?? new PluginConfiguration(), cancellationToken);
 }

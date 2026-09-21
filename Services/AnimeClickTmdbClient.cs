@@ -332,7 +332,7 @@ public class AnimeClickTmdbClient
     {
         try
         {
-            var client = BuildClient(configuration);
+            using var client = BuildClient(configuration);
 
             await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             using var response = await client
@@ -386,7 +386,7 @@ public class AnimeClickTmdbClient
     {
         try
         {
-            var client = BuildClient(configuration);
+            using var client = BuildClient(configuration);
 
             await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             using var response = await client
@@ -543,7 +543,7 @@ public class AnimeClickTmdbClient
                 return cached;
             }
 
-            var client = BuildClient(configuration);
+            using var client = BuildClient(configuration);
             await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             using var response = await client
                 .GetAsync(BuildTvUrl(configuration.TmdbApiKey, tmdbId), cancellationToken)
@@ -652,7 +652,7 @@ public class AnimeClickTmdbClient
 
     private HttpClient BuildClient(PluginConfiguration configuration)
     {
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
         client.Timeout = TimeSpan.FromSeconds(ApiTimeoutSeconds);
         client.MaxResponseContentBufferSize = MaximumResponseBytes;
         client.DefaultRequestHeaders.TryAddWithoutValidation(
@@ -942,7 +942,7 @@ public class AnimeClickTmdbClient
 
         try
         {
-            var client = _httpClientFactory.CreateClient();
+            using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
             client.Timeout = TimeSpan.FromSeconds(DiagnosticsTimeoutSeconds);
             client.MaxResponseContentBufferSize = MaximumResponseBytes;
             client.DefaultRequestHeaders.UserAgent.ParseAdd("AnimeClick-Jellyfin-Plugin/diagnostics");

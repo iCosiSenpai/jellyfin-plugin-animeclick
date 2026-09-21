@@ -311,7 +311,7 @@ public sealed class AnimeClickTranslationQueue : IDisposable
             return false;
         }
 
-        var plain = AnimeClickAiTranslator.StripHtml(sourceText);
+        var plain = AnimeClickAiTranslator.NormalizeSourceText(sourceText);
         if (string.IsNullOrWhiteSpace(plain))
         {
             return false;
@@ -323,9 +323,9 @@ public sealed class AnimeClickTranslationQueue : IDisposable
             fieldName,
             sourceLanguage,
             targetLanguage,
-            configuration.AiModel,
+            configuration.AiModel.Trim(),
             endpointUri.AbsoluteUri,
-            configuration.AiApiKey,
+            configuration.AiApiKey?.Trim() ?? string.Empty,
             plain);
         return true;
     }
@@ -545,6 +545,7 @@ public sealed class AnimeClickTranslationQueue : IDisposable
         => new()
         {
             EnableEpisodeSynopsisTranslation = source.EnableEpisodeSynopsisTranslation,
+            EnableAiTranslation = source.EnableAiTranslation,
             AiProvider = source.AiProvider,
             AiApiKey = source.AiApiKey,
             AiEndpoint = source.AiEndpoint,

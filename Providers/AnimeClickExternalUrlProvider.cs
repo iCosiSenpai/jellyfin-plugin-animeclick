@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using AnimeClick.Plugin.Services;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -17,12 +18,15 @@ public class AnimeClickExternalUrlProvider : IExternalUrlProvider
     public IEnumerable<string> GetExternalUrls(BaseItem item)
     {
         var id = item.GetProviderId("AnimeClick");
-        if (string.IsNullOrWhiteSpace(id))
+        if (string.IsNullOrWhiteSpace(id) || item is not (Movie or Series or Season or Episode))
         {
             yield break;
         }
 
         var baseUrl = Plugin.Instance?.Configuration?.BaseUrl ?? "https://www.animeclick.it";
-        yield return $"{baseUrl}/anime/{id}";
+        var valid = item is Episode
+            ? AnimeClickClient.TryBuildEpisodeUrl(baseUrl, id, out var url)
+            : AnimeClickClient.TryBuildAnimeUrl(baseUrl, id, out url);
+        if (valid) yield return url;
     }
 }

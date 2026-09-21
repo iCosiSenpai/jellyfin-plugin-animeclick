@@ -152,25 +152,6 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
     }
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
-    {
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        if (!AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, url, out var imageUri))
-        {
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
-        }
-
-        var client = _httpClientFactory.CreateClient();
-
-        // AnimeClick's CDN rejects requests without a browser-like User-Agent (HTTP 403).
-        var request = new HttpRequestMessage(HttpMethod.Get, imageUri);
-        request.Headers.TryAddWithoutValidation(
-            "User-Agent",
-            AnimeClickClient.GetEffectiveUserAgent(configuration));
-        if (Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var referer))
-        {
-            request.Headers.Referrer = referer;
-        }
-
-        return client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-    }
+        => AnimeClickHttp.GetImageAsync(_httpClientFactory, url,
+            Plugin.Instance?.Configuration ?? new PluginConfiguration(), cancellationToken);
 }

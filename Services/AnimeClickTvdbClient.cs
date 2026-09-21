@@ -104,7 +104,7 @@ public class AnimeClickTvdbClient
                 return cached;
             }
 
-            var client = BuildClient(configuration);
+            using var client = BuildClient(configuration);
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/login")
             {
                 Content = new StringContent(BuildLoginBody(configuration.TvdbApiKey), Encoding.UTF8, "application/json")
@@ -425,8 +425,9 @@ public class AnimeClickTvdbClient
 
         try
         {
-            var client = _httpClientFactory.CreateClient();
+            using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
             client.Timeout = TimeSpan.FromSeconds(30);
+            client.MaxResponseContentBufferSize = MaximumResponseBytes;
 
             // 1) Login
             using var loginRequest = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/login")
@@ -514,7 +515,7 @@ public class AnimeClickTvdbClient
     {
         try
         {
-            var client = BuildClient(configuration);
+            using var client = BuildClient(configuration);
             using var request = new HttpRequestMessage(HttpMethod.Get, BuildSearchUrl(title));
             request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + token);
 
@@ -568,7 +569,7 @@ public class AnimeClickTvdbClient
         var budgetToken = budget.Token;
         try
         {
-            var client = BuildClient(configuration);
+            using var client = BuildClient(configuration);
             for (var page = 0; page < PageLimit; page++)
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, BuildEpisodesUrl(tvdbId, lang, page));
@@ -687,7 +688,7 @@ public class AnimeClickTvdbClient
 
     private HttpClient BuildClient(PluginConfiguration configuration)
     {
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
 
         // Deliberately not EpisodeTranslationTimeoutSec: that setting is the budget for one
         // AI translation call, and using it here meant a user who raised it for a slow
