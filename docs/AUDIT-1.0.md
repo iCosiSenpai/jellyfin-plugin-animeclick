@@ -43,6 +43,7 @@ La promessa di compatibilità riguarda queste versioni verificate. Le versioni f
 | Destinazione AI | Il cambio di endpoint rischiava di riutilizzare una chiave destinata ad altro servizio | Richiesta di nuova chiave o rimozione esplicita; controllo server già presente mantenuto; validazione IPv6 allineata |
 | Accessibilità | Navigazione e layout poco adatti a tastiera/mobile | Tab con ARIA e frecce/Home/End, pannelli nascosti semanticamente, target tattili, test 320/390/1280 px |
 | Test | Un test dei valori predefiniti eseguiva soltanto `Assert(true)` | Istanziazione reale della configurazione e asserzioni sui valori |
+| Determinismo dei test | La prima CI 12.0 ha rilevato un test del progresso che osservava `Progress<T>` prima dell’esecuzione della callback asincrona | Collector `IProgress<T>` sincrono nel test, senza alterare il task o indebolire l’asserzione sul completamento |
 | Build/release | Framework e workflow fermi a .NET 9, note release obsolete | .NET 10, matrice server, test browser, dipendenze di sviluppo bloccate, note versionate, pubblicazione draft e catalogo verificato |
 | Avvisi distribuiti | NOTICE citava MIT ma non includeva il testo della licenza della DLL HtmlAgilityPack | Aggiunti testo dal tag ufficiale 1.11.71 e copyright dai metadati NuGet, nel NOTICE distribuito |
 
