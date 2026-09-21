@@ -35,8 +35,10 @@ public partial class AnimeClickSeriesSearchProvider
         PluginConfiguration configuration,
         CancellationToken cancellationToken,
         int? productionYear = null,
-        bool seriesRequest = true)
+        bool seriesRequest = true,
+        bool explicitId = false)
     {
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 512) return [];
         var trimmed = name.Trim();
         var deaccented = AnimeClickSearchScorer.RemoveDiacritics(trimmed);
         var useForSearch = deaccented != trimmed ? deaccented : trimmed;
@@ -44,16 +46,18 @@ public partial class AnimeClickSeriesSearchProvider
         // ── Direct ID lookup ──
         // If the query looks like an AnimeClick ID (e.g. "72", "72/naruto"),
         // skip text search and fetch the anime page directly.
-        if (AnimeClickClient.TryNormalizeAnimeClickId(trimmed, out var normalizedId))
+        if ((explicitId || trimmed.Contains('/'))
+            && AnimeClickClient.TryNormalizeAnimeClickId(trimmed, out var normalizedId))
         {
             return await DirectLookupAsync(normalizedId, configuration, cancellationToken);
         }
 
         // ── Text search ──
         var cleanedQuery = CleanSearchQuery(useForSearch);
+        if (string.IsNullOrWhiteSpace(cleanedQuery)) return [];
 
-        var cacheKey = $"search:v3::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "movie")}";
-        var negativeCacheKey = $"search-empty:v2::{cleanedQuery.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "movie")}";
+        var cacheKey = $"search:v4::{useForSearch.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "movie")}::{configuration.MaxSearchResults}";
+        var negativeCacheKey = $"search-empty:v3::{useForSearch.ToLowerInvariant()}::{productionYear?.ToString() ?? "any"}::{(seriesRequest ? "series" : "movie")}";
         var cached = await _cache.GetAsync<List<RemoteSearchResult>>(cacheKey, configuration.CacheHours, cancellationToken);
         if (cached is not null)
         {
@@ -260,7 +264,7 @@ public partial class AnimeClickSeriesSearchProvider
             var configuredMaxResults = configuration.MaxSearchResults > 0
                 ? configuration.MaxSearchResults
                 : 10;
-            var maxResults = Math.Min(configuredMaxResults, 25);
+            var maxResults = Math.Clamp(configuredMaxResults, 2, ConfigurationLimits.MaxSearchResultsMaximum);
 
             var ranked = searchResults
                 .Select(r => new { Result = r, Score = AnimeClickSearchScorer.Score(r, query, productionYear, seriesRequest) })

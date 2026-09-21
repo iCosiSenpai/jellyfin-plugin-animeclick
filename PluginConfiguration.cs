@@ -78,7 +78,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// AnimeClick non richiede API key; l'AI traduce soltanto una sinossi inglese
     /// ottenuta da TMDB o TheTVDB. In caso di errore il campo resta invariato.
     /// </summary>
-    public bool EnableEpisodeSynopsisTranslation { get; set; } = false;
+    public bool EnableEpisodeSynopsisTranslation { get; set; } = true;
 
     /// <summary>API key TMDB (themoviedb.org/settings/api). Lascia vuoto per disabilitare TMDB.</summary>
     public string TmdbApiKey { get; set; } = string.Empty;
@@ -104,6 +104,9 @@ public class PluginConfiguration : BasePluginConfiguration
     /// la chiave non viene mai inviata in chiaro.
     /// </summary>
     public string AiApiKey { get; set; } = string.Empty;
+
+    /// <summary>Allows translation only when a model and an endpoint are also configured.</summary>
+    public bool EnableAiTranslation { get; set; } = true;
 
     /// <summary>
     /// Chiave storica del profilo Ollama. Conservata perché una configurazione salvata da una versione
@@ -165,7 +168,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/0.5.8.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.0.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Schema of the persisted settings. One-time upgrades are gated on this rather than on whether
@@ -214,22 +217,25 @@ public class PluginConfiguration : BasePluginConfiguration
         // which the page does when it fails to load the provider list — had its endpoint, model and
         // above all its API key replaced by the legacy values, empty on a recent install. That threw
         // the key away and switched translation off, silently.
-        if (string.IsNullOrWhiteSpace(AiEndpoint))
+        var hasLegacyProfile = !string.IsNullOrWhiteSpace(OllamaCloudApiKey)
+            || (!string.IsNullOrWhiteSpace(OllamaCloudEndpoint) && OllamaCloudEndpoint != "https://ollama.com/api/chat")
+            || (!string.IsNullOrWhiteSpace(OllamaCloudModel) && OllamaCloudModel != "gpt-oss:20b-cloud");
+        if (hasLegacyProfile && string.IsNullOrWhiteSpace(AiEndpoint))
         {
             AiEndpoint = OllamaCloudEndpoint?.Trim() ?? string.Empty;
         }
 
-        if (string.IsNullOrWhiteSpace(AiModel))
+        if (hasLegacyProfile && string.IsNullOrWhiteSpace(AiModel))
         {
             AiModel = OllamaCloudModel?.Trim() ?? string.Empty;
         }
 
-        if (string.IsNullOrWhiteSpace(AiApiKey))
+        if (hasLegacyProfile && string.IsNullOrWhiteSpace(AiApiKey))
         {
             AiApiKey = OllamaCloudApiKey ?? string.Empty;
         }
 
-        if (string.IsNullOrWhiteSpace(AiProvider))
+        if (!string.IsNullOrWhiteSpace(AiEndpoint) && string.IsNullOrWhiteSpace(AiProvider))
         {
             AiProvider = AiEndpoint.Contains("ollama.com", System.StringComparison.OrdinalIgnoreCase)
                 ? "ollama-cloud"

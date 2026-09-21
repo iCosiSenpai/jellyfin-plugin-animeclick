@@ -57,6 +57,24 @@ public partial class AnimeClickClient
     [GeneratedRegex(@"AnimeClick-Jellyfin-Plugin/[^\s();]+", RegexOptions.CultureInvariant)]
     private static partial Regex PluginUserAgentRegex();
 
+    /// <summary>User-facing anime input; full links are accepted only from AnimeClick's own domain.</summary>
+    internal static bool TryNormalizeAnimeInput(string? value, out string normalized)
+    {
+        if (Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri))
+        {
+            if (uri.Scheme is not ("https" or "http") || !string.IsNullOrEmpty(uri.UserInfo)
+                || !(uri.IdnHost.Equals("animeclick.it", StringComparison.OrdinalIgnoreCase)
+                    || uri.IdnHost.Equals("www.animeclick.it", StringComparison.OrdinalIgnoreCase))
+                || !uri.AbsolutePath.StartsWith("/anime/", StringComparison.Ordinal))
+            {
+                normalized = string.Empty;
+                return false;
+            }
+            value = uri.AbsolutePath[7..];
+        }
+        return TryNormalizeAnimeClickId(value, out normalized);
+    }
+
     /// <summary>Validates and normalizes a provider ID without performing network I/O.</summary>
     public static bool TryNormalizeAnimeClickId(string? value, out string normalized)
     {
@@ -171,7 +189,8 @@ public partial class AnimeClickClient
             || !Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var baseUri)
             || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)
             || !Uri.TryCreate(baseUri, imageUrl, out var resolved)
-            || resolved.Scheme != Uri.UriSchemeHttps)
+            || resolved.Scheme != Uri.UriSchemeHttps
+            || !string.IsNullOrEmpty(resolved.UserInfo))
         {
             return false;
         }
@@ -236,7 +255,7 @@ public partial class AnimeClickClient
             MinimumRequestDelayMilliseconds,
             MaximumRequestDelayMilliseconds);
         Exception? lastException = null;
-        var httpClient = _httpClientFactory.CreateClient();
+        using var httpClient = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
         httpClient.Timeout = TimeSpan.FromSeconds(RequestTimeoutSeconds);
         httpClient.MaxResponseContentBufferSize = MaximumResponseBytes;
 
@@ -253,21 +272,10 @@ public partial class AnimeClickClient
                     await WaitUntilUtcAsync(_nextRequestUtc, cancellationToken).ConfigureAwait(false);
                 }
 
-                using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
-                request.Headers.TryAddWithoutValidation("User-Agent", GetEffectiveUserAgent(configuration));
-                if (Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var referrer))
-                {
-                    request.Headers.Referrer = referrer;
-                }
-
-                // AnimeClick serves an interstitial video-intro ad page on first visit.
-                // Setting the ac_campaign cookie bypasses it and returns the real content.
-                request.Headers.TryAddWithoutValidation("Cookie", "ac_campaign=show");
-
                 requestStarted = true;
                 _logger.LogDebug("AnimeClick HTTP fetch: {Url} (attempt {Attempt})", url, attempt + 1);
-                using var response = await httpClient
-                    .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+                using var response = await AnimeClickHttp
+                    .GetAsync(httpClient, requestUri.AbsoluteUri, configuration, imagesOnly: false, cancellationToken)
                     .ConfigureAwait(false);
 
                 if (IsTransient(response.StatusCode))
@@ -322,7 +330,8 @@ public partial class AnimeClickClient
             {
                 throw new HttpRequestException($"AnimeClick request timed out: {url}", ex);
             }
-            catch (HttpRequestException ex) when (!suppressRetry && attempt < MaxAttempts - 1)
+            catch (HttpRequestException ex) when (!suppressRetry && attempt < MaxAttempts - 1
+                && (!ex.StatusCode.HasValue || IsTransient(ex.StatusCode.Value)))
             {
                 lastException = ex;
                 var retryDelay = TimeSpan.FromMilliseconds(250 + (attempt * 300));

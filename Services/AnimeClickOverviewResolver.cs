@@ -103,6 +103,7 @@ public sealed class AnimeClickOverviewResolver : IAnimeClickOverviewResolver
         {
             "ai-deferred" => AnimeClickRepairOutcome.WaitingTranslation,
             "disabled" => AnimeClickRepairOutcome.Disabled,
+            "translation-not-configured" => AnimeClickRepairOutcome.Disabled,
             "error" => AnimeClickRepairOutcome.Error,
             _ => AnimeClickRepairOutcome.NoSource
         };

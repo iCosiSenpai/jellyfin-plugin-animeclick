@@ -114,7 +114,7 @@ public class AnimeClickCacheService
     /// A write that cannot complete is logged and ignored: several callers invoke this
     /// outside any try/catch, and a failed cache write must not abort an item's metadata.
     /// </summary>
-    public async Task SetAsync<T>(string key, T payload, CancellationToken cancellationToken)
+    public async Task SetAsync<T>(string key, T payload, CancellationToken cancellationToken, bool preserveAge = false)
     {
         var path = GetPath(key);
         var tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -126,6 +126,10 @@ public class AnimeClickCacheService
             await asyncLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                // Enriching a cached anime with people/trailers must not turn every read
+                // into a sliding expiration: the original metadata still has its own age.
+                DateTime? originalAge = preserveAge && File.Exists(path)
+                    ? File.GetLastWriteTimeUtc(path) : null;
                 await using (var stream = new FileStream(
                     tempPath,
                     FileMode.CreateNew,
@@ -141,6 +145,7 @@ public class AnimeClickCacheService
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
+                if (originalAge.HasValue) File.SetLastWriteTimeUtc(tempPath, originalAge.Value);
                 File.Move(tempPath, path, overwrite: true);
             }
             catch (OperationCanceledException)
@@ -315,8 +320,11 @@ public class AnimeClickCacheService
 
     private static string SanitizeFileKey(string key)
     {
+        var originalKey = key;
         key = SanitizePathComponent(key);
-        if (Encoding.UTF8.GetByteCount(key) <= MaximumFileNameBytes)
+        if (string.Equals(originalKey, key, StringComparison.Ordinal)
+            && !key.Contains('~')
+            && Encoding.UTF8.GetByteCount(key) <= MaximumFileNameBytes)
         {
             return key;
         }
@@ -329,9 +337,10 @@ public class AnimeClickCacheService
         // was paid for again at every refresh, and the failure backoff was never written either, so
         // a broken endpoint was retried for every episode forever.
         //
-        // Names that already fit are left exactly as they are, so no existing cache entry is
-        // invalidated by this; only the ones that could never be written change shape.
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..32];
+        // Hash the ORIGINAL key: "anime:123/title" and "anime:123_title" must not
+        // share metadata. Reserve '~' so a literal key cannot impersonate a hashed filename.
+        // Safe short legacy keys keep their names; ambiguous legacy entries are not reused.
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(originalKey)))[..32];
         var budget = MaximumFileNameBytes - digest.Length - 1;
         var head = key;
         while (Encoding.UTF8.GetByteCount(head) > budget)

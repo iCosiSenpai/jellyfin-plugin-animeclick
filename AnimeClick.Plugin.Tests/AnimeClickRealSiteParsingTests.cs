@@ -34,7 +34,7 @@ public class AnimeClickRealSiteParsingTests
     {
         var results = new AnimeClickHtmlParser().ParseSearchResults(RealSiteFixtures.Search, BaseUrl);
 
-        var film = Assert.Single(results.Where(r => r.Id.StartsWith("25493", System.StringComparison.Ordinal)));
+        var film = Assert.Single(results, r => r.Id.StartsWith("25493", System.StringComparison.Ordinal));
         Assert.Equal("Rascal Does Not Dream of a Dreaming Girl", film.Title);
         Assert.Equal(2019, film.ProductionYear);
         Assert.Contains("Film", film.Format ?? string.Empty, System.StringComparison.OrdinalIgnoreCase);
@@ -96,8 +96,8 @@ public class AnimeClickRealSiteParsingTests
             .ParseCharactersPage(RealSiteFixtures.CharactersPage, BaseUrl);
 
         Assert.NotEmpty(people);
-        var sakuta = Assert.Single(people.Where(p =>
-            p.Role is not null && p.Role.Contains("Sakuta Azusagawa", System.StringComparison.OrdinalIgnoreCase)));
+        var sakuta = Assert.Single(people, p =>
+            p.Role is not null && p.Role.Contains("Sakuta Azusagawa", System.StringComparison.OrdinalIgnoreCase));
         Assert.Equal("Kaito Ishikawa", sakuta.Name);
         Assert.Equal("Actor", sakuta.Type);
     }

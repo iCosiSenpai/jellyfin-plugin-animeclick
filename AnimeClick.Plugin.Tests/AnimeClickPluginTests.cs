@@ -75,11 +75,11 @@ public class AnimeClickPluginTests
     [Xunit.Fact(DisplayName = "Config defaults: fill-gaps + fallback images")]
     public void TestConfigDefaults()
 {
-    // PluginConfiguration extends Jellyfin's BasePluginConfiguration, which is not
-    // available outside the Jellyfin runtime, so defaults are verified by reading
-    // the property initializers in PluginConfiguration.cs directly instead of by
-    // instantiating the type here.
-    Assert(true, "Config defaults (OverwriteNonItalianFields=false, EnableAnimeClickImages=true) are declared in PluginConfiguration.cs.");
+    var configuration = new AnimeClick.Plugin.Configuration.PluginConfiguration();
+    Assert(!configuration.OverwriteNonItalianFields, "New installations fill non-localized gaps conservatively.");
+    Assert(configuration.EnableAnimeClickImages, "Fallback images are enabled by default.");
+    Assert(configuration.EnableEpisodeSynopsisTranslation, "Native episode synopses need no external account.");
+    Assert(string.IsNullOrEmpty(configuration.AiModel), "No AI model is guessed on a new installation.");
 }
 
     [Xunit.Fact(DisplayName = "Anime page ImageUrl extraction for fallback provider")]

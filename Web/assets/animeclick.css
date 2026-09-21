@@ -1,8 +1,6 @@
 /* ============================================================================
-   AnimeClick Design System — "sun flare"
-   Premium dark UI, warm orange brand, form-forward config dashboard.
+   AnimeClick configuration: shared controls and library reports.
    Scoped under .ac-page so nothing leaks into the Jellyfin dashboard.
-   Mirrors the KometaThemes architecture 1-to-1.
    ========================================================================== */
 
 .ac-page {
@@ -1102,4 +1100,64 @@
         width: 100%;
         min-height: 44px;
     }
+}
+
+/* The configuration is a small workspace, with one task per page. */
+.ac-page { --ac-r-m: 14px; --ac-text-muted: #b7bbc6; --ac-text-faint: #a4a9b5; }
+.lightTheme .ac-page { --ac-text-muted: #525866; --ac-text-faint: #636977; }
+.ac-page [hidden] { display: none !important; }
+.ac-page .content-primary { padding-bottom: 6em; }
+.ac-page .ac-shell { max-width: 1180px; margin: 0 auto; gap: 24px; overflow: visible; }
+.ac-masthead { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 22px; border-bottom: 1px solid var(--ac-border); }
+.ac-masthead .ac-brand strong { font-size: 1.35rem; letter-spacing: -.03em; }
+.ac-masthead .ac-logo { width: 44px; height: 44px; border-radius: 12px; box-shadow: none; }
+.ac-workspace { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 36px; align-items: start; }
+.ac-main { min-width: 0; }
+.ac-page .ac-tabs { display: flex; flex-direction: column; gap: 6px; padding: 0; border: 0; background: none; border-radius: 0; overflow: visible; position: sticky; top: 84px; }
+.ac-page .ac-tab { width: 100%; text-align: left; min-height: 46px; padding: 12px 16px; font-size: .94rem; border: 1px solid transparent; border-radius: 10px; white-space: normal; }
+.ac-page .ac-tab[aria-selected="true"] { background: var(--ac-accent-bg); color: var(--ac-accent); border-color: transparent; box-shadow: none; }
+.ac-page .ac-panel.active { gap: 22px; animation: none; }
+.ac-page .ac-card { box-shadow: none; }
+.ac-page .ac-card-head { padding: 22px 24px 12px; background: none; border: 0; }
+.ac-page .ac-card-body { padding: 12px 24px 24px; gap: 18px; }
+.ac-page .ac-kicker { font-weight: 600; font-size: .73rem; letter-spacing: .08em; }
+.ac-page .ac-subtitle { font-size: 1.12rem; line-height: 1.35; }
+.ac-page .ac-note { line-height: 1.65; }
+.ac-page .ac-btn { min-height: 44px; border-radius: 9px; padding: 10px 16px; font-weight: 600; }
+.ac-page .ac-input, .ac-page .ac-select { min-height: 44px; }
+.ac-page .ac-details { border-radius: 12px; box-shadow: none; }
+.ac-page .ac-details > summary { padding: 18px 22px; min-height: 44px; box-sizing: border-box; font-size: 1rem; }
+.ac-page .ac-details-body { padding: 20px 22px; gap: 20px; }
+.ac-page .ac-field-desc { line-height: 1.6; }
+.ac-welcome { padding: 18px 0 12px; max-width: 680px; }
+.ac-welcome .ac-kicker { color: var(--ac-accent); }
+.ac-welcome-title { font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.12; letter-spacing: -.05em; margin: 14px 0 20px; font-weight: 750; text-wrap: balance; }
+.ac-welcome-copy { color: var(--ac-text-muted); max-width: 570px; line-height: 1.8; font-size: 1.03rem; margin: 0; }
+.ac-home-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.ac-home-action { display: flex; flex-direction: column; align-items: flex-start; gap: 16px; border: 1px solid var(--ac-border); border-radius: 16px; padding: 26px; background: var(--ac-surface-1); }
+.ac-home-action:first-child { border-color: rgba(255, 140, 66, .3); background: linear-gradient(140deg, var(--ac-accent-bg), transparent 80%); }
+.ac-action-number { color: var(--ac-accent); font-size: .8rem; }
+.ac-home-action .ac-btn { margin-top: auto; }
+.ac-page .ac-stickybar { position: sticky; bottom: 16px; z-index: 20; border-radius: 12px; padding: 14px 20px; margin-left: 216px; box-shadow: var(--ac-shadow-2); }
+.ac-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; border-top: 1px solid var(--ac-border); padding: 24px 0 0; font-size: .8rem; color: var(--ac-text-muted); }
+.ac-footer span { margin-right: auto; }
+.ac-footer a { color: inherit; text-decoration: underline; text-underline-offset: 4px; }
+.ac-page .ac-check { padding: 12px 0; }
+.ac-page .ac-check-title { font-size: 1rem; }
+.ac-page .ac-main[inert] { opacity: .55; }
+@media (max-width: 800px) {
+    .ac-workspace { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+    .ac-page .ac-tabs { position: static; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+    .ac-page .ac-tab { width: auto; flex: 1 0 auto; padding: 10px 12px; text-align: center; font-size: .86rem; }
+    .ac-page .ac-stickybar { margin-left: 0; }
+}
+@media (max-width: 560px) {
+    .ac-home-actions { grid-template-columns: minmax(0, 1fr); }
+    .ac-home-action { padding: 22px; }
+    .ac-page .ac-card-head { padding: 18px 18px 10px; }
+    .ac-page .ac-card-body { padding: 10px 18px 18px; }
+    .ac-page .ac-stickybar { flex-wrap: wrap; bottom: 8px; gap: 8px; padding: 12px; }
+    .ac-page .ac-stickybar .ac-state { width: 100%; flex-basis: 100%; }
+    .ac-footer { gap: 14px; }
+    .ac-footer span { flex-basis: 100%; }
 }

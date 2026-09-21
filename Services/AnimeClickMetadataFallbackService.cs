@@ -330,6 +330,10 @@ public sealed class AnimeClickMetadataFallbackService
             }
 
             // 3) English source. Prefer TMDB, then TVDB when enabled.
+            if (!AnimeClickAiTranslator.IsConfigured(configuration, out _))
+            {
+                return Finish(null, "translation-not-configured");
+            }
             string? english = null;
             string? sourceIdentity = null;
             string? sourceName = null;

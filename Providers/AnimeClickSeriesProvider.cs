@@ -86,7 +86,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         if (url is null && !string.IsNullOrWhiteSpace(info.Name))
         {
             var search = await _searchProvider.SearchAsync(info.Name, configuration, cancellationToken, info.Year, seriesRequest: true);
-            var first = search.FirstOrDefault();
+            var first = AnimeClickAutomaticIdentification.Select(search, info.Name, info.Year);
             if (first is not null
                 && first.ProviderIds.TryGetValue("AnimeClick", out var searchId)
                 && AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, searchId, out var searchUrl))
@@ -133,7 +133,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
             || configuration.EnableThemeSongs
             || configuration.EnableTrailers)
         {
-            await _cache.SetAsync(cacheKey, anime, cancellationToken);
+            await _cache.SetAsync(cacheKey, anime, cancellationToken, preserveAge: cached is not null);
         }
 
         Map(result.Item, anime, configuration);
@@ -218,7 +218,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
 
         if (searchInfo.ProviderIds.TryGetValue("AnimeClick", out var providerId) && !string.IsNullOrWhiteSpace(providerId))
         {
-            return await _searchProvider.SearchAsync(providerId, configuration, cancellationToken, searchInfo.Year, seriesRequest: true);
+            return await _searchProvider.SearchAsync(providerId, configuration, cancellationToken, searchInfo.Year, seriesRequest: true, explicitId: true);
         }
 
         return string.IsNullOrWhiteSpace(searchInfo.Name)
@@ -227,19 +227,8 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
     }
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
-    {
-        // Defense in depth: Jellyfin's remote-search image proxy passes the URL straight
-        // through, so an unvalidated fetch here turns the scanner into an arbitrary outbound
-        // request. Mirrors AnimeClickAnimeImageProvider.
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        if (!AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, url, out var imageUri))
-        {
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
-        }
-
-        var client = _httpClientFactory.CreateClient();
-        return client.GetAsync(imageUri, cancellationToken);
-    }
+        => AnimeClickHttp.GetImageAsync(_httpClientFactory, url,
+            Plugin.Instance?.Configuration ?? new PluginConfiguration(), cancellationToken);
 
     private async Task<AnimeClickAnime?> FetchAnimeAsync(string url, PluginConfiguration configuration, string cacheKey, CancellationToken cancellationToken)
     {

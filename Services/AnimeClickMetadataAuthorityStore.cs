@@ -85,13 +85,18 @@ public static class AnimeClickMetadataAuthorityStore
         }
 
         var now = DateTimeOffset.UtcNow;
+        var currentIdentity = NormalizeAnimeClickIdentity(item.GetProviderId("AnimeClick"));
         if (snapshot.CreatedAt > now + MaximumFutureClockSkew
             || now - snapshot.CreatedAt > SnapshotLifetime
             || item.IsLocked
+            // A manual identification may race a previous refresh on the same path.
+            // Canonical slug changes are fine; a different numeric work ID is not.
+            || (currentIdentity is not null && snapshot.AnimeClickIdentity is not null
+                && !string.Equals(currentIdentity, snapshot.AnimeClickIdentity, StringComparison.Ordinal))
             || (IsIdentityBoundKey(key)
                 && !string.Equals(
                     snapshot.AnimeClickIdentity,
-                    NormalizeAnimeClickIdentity(item.GetProviderId("AnimeClick")),
+                    currentIdentity,
                     StringComparison.Ordinal)))
         {
             return ItemUpdateType.None;

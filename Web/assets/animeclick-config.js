@@ -3,12 +3,15 @@
 (function () {
     'use strict';
 
-    var V = '0.5.8.0';
+    var V = '1.0.0.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
     var aiProviders = [];
     var dirty = false;
+    var saving = false;
+    var configLoaded = false;
+    var loadSequence = 0;
     var toastHost;
     var activeConfirm = null;
     var confirmModalSequence = 0;
@@ -123,6 +126,9 @@
         var auth = authHeader();
         if (auth) headers.Authorization = auth;
         var options = { method: method, credentials: 'same-origin', headers: headers };
+        var controller = new AbortController();
+        options.signal = controller.signal;
+        var timeout = setTimeout(function () { controller.abort(); }, 130000);
         if (body !== undefined) {
             headers['Content-Type'] = 'application/json';
             options.body = JSON.stringify(body);
@@ -142,7 +148,10 @@
             }
             if (response.status === 204 || !isJson) return null;
             return response.json();
-        });
+        }).catch(function (error) {
+            if (error.name === 'AbortError') throw new Error('Il server non ha risposto in tempo. Puoi riprovare.');
+            throw error;
+        }).finally(function () { clearTimeout(timeout); });
     }
 
     function getPluginConfig() {
@@ -273,6 +282,7 @@
     }
 
     function markDirty() {
+        if (!configLoaded || saving) return;
         dirty = true;
         var bar = page.querySelector('#acSaveBar');
         if (bar) bar.style.display = '';
@@ -433,6 +443,7 @@
         page.querySelectorAll('.ac-panel').forEach(function (panel) {
             var selected = panel.dataset.panel === tab.dataset.panel;
             panel.classList.toggle('active', selected);
+            panel.hidden = !selected;
             panel.setAttribute('aria-hidden', selected ? 'false' : 'true');
         });
         if (shouldFocus) tab.focus();
@@ -446,8 +457,8 @@
             });
             tab.addEventListener('keydown', function (event) {
                 var nextIndex = null;
-                if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
-                if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+                if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (index + 1) % tabs.length;
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') nextIndex = (index - 1 + tabs.length) % tabs.length;
                 if (event.key === 'Home') nextIndex = 0;
                 if (event.key === 'End') nextIndex = tabs.length - 1;
                 if (nextIndex == null) return;
@@ -500,6 +511,41 @@
     function buildOverviewPanel() {
         var panel = page.querySelector('#acPanelOverview');
         clear(panel);
+
+        var welcome = el('section', 'ac-welcome');
+        welcome.appendChild(el('p', 'ac-kicker', 'Benvenuto nella tua collezione'));
+        welcome.appendChild(el('h1', 'ac-welcome-title', 'Più storie. Meno impostazioni.'));
+        welcome.appendChild(el('p', 'ac-welcome-copy', 'Titoli, trame e personaggi da AnimeClick, direttamente in Jellyfin. Per iniziare non serve nessuna chiave API.'));
+        panel.appendChild(welcome);
+
+        var actions = el('div', 'ac-home-actions');
+        [
+            ['libreria', '01', 'Dai un’occhiata alla libreria', 'Scopri quali titoli e trame mancano e recupera quelli disponibili.', 'Controlla la libreria'],
+            ['metadati', '02', 'Falla come piace a te', 'Scegli le informazioni da importare. Le opzioni consigliate sono già pronte.', 'Scegli le preferenze']
+        ].forEach(function (action) {
+            var card = el('section', 'ac-home-action');
+            card.appendChild(el('span', 'ac-action-number', action[1]));
+            card.appendChild(el('h2', 'ac-subtitle', action[2]));
+            card.appendChild(el('p', 'ac-note', action[3]));
+            var button = el('button', 'ac-btn' + (action[0] === 'libreria' ? ' ac-btn-primary' : ''), action[4]);
+            button.type = 'button';
+            button.addEventListener('click', function () { activateTab(page.querySelector('.ac-tab[data-panel="' + action[0] + '"]'), true); });
+            card.appendChild(button);
+            actions.appendChild(card);
+        });
+        panel.appendChild(actions);
+        var setup = makeCard('', 'Un solo controllo per partire', 'In Jellyfin, apri Dashboard → Librerie → Gestisci libreria e abilita AnimeClick per le tue serie e i tuoi film anime.');
+        setup.body.appendChild(el('p', 'ac-note', 'Al prossimo aggiornamento Jellyfin cercherà i dati italiani. Se due opere si somigliano troppo, potrai scegliere tu con «Identifica» nella scheda del titolo.'));
+        panel.appendChild(setup.card);
+        var health = el('div');
+        health.id = 'acHomeHealth';
+        panel.appendChild(health);
+    }
+
+    function buildDiagnosticsPanel() {
+        var diagnostics = makeDetails('Diagnostica e informazioni tecniche', 'Controlli sui servizi e riepilogo delle funzioni abilitate.');
+        page.querySelector('#acPanelStrumenti').appendChild(diagnostics.details);
+        var panel = diagnostics.body;
 
         var authority = makeCard(
             'AnimeClick-first',
@@ -554,8 +600,8 @@
 
         var libraries = makeCard(
             'Jellyfin',
-            'Priorità effettiva nelle librerie',
-            'La verifica distingue l’ordine configurato dai provider realmente abilitati. Le librerie non anime possono lasciare AnimeClick disattivato intenzionalmente.'
+            'Dove è attivo AnimeClick',
+            'Le librerie dedicate ad altri contenuti possono lasciarlo disattivato.'
         );
         var refresh = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Aggiorna');
         refresh.type = 'button';
@@ -565,7 +611,7 @@
         libraryResult.id = 'acLibraryHealth';
         libraryResult.appendChild(el('div', 'ac-state', 'Caricamento librerie…'));
         libraries.body.appendChild(libraryResult);
-        panel.appendChild(libraries.card);
+        page.querySelector('#acHomeHealth').appendChild(libraries.card);
 
         var features = makeCard(
             'Copertura',
@@ -584,8 +630,8 @@
         var panel = page.querySelector('#acPanelMetadati');
         clear(panel);
         panel.appendChild(makeCallout(
-            'Strategia fill-gaps sicura',
-            'AnimeClick protegge i metadati italiani che possiede; gli altri provider possono completare soltanto i campi mancanti.',
+            'Scegli cosa importare',
+            'Le preferenze si applicano ai prossimi aggiornamenti della libreria. Puoi lasciare le impostazioni iniziali e tornare qui quando vuoi.',
             'good'
         ));
         panel.appendChild(makeCallout(
@@ -598,9 +644,10 @@
         var primary = makeCard('Essenziali', 'Identità italiana', 'I valori principali che definiscono la scheda nel catalogo.');
         primary.body.appendChild(makeCheck('acPreferItalianTitle', 'Titolo italiano', 'Usa il titolo AnimeClick come nome principale.'));
         primary.body.appendChild(makeCheck('acEnablePlot', 'Trama italiana', 'Importa la sinossi AnimeClick quando disponibile.'));
+        primary.body.appendChild(makeCheck('acEnableEpisodeSynopsisTranslation', 'Trame degli episodi', 'Usa AnimeClick e le eventuali fonti aggiuntive che hai configurato.'));
         panel.appendChild(primary.card);
 
-        var enrichment = makeCard('Copertura', 'Arricchimento semantico', 'Ogni dato viene scritto soltanto nel campo Jellyfin semanticamente corrispondente.');
+        var enrichment = makeDetails('Altre informazioni', 'Generi, personaggi, trailer e sigle. Scegli quanto dettaglio aggiungere alle tue schede.');
         var grid = el('div', 'ac-grid-2');
         grid.appendChild(makeCheck('acEnableGenres', 'Generi', 'Generi localizzati in italiano.'));
         grid.appendChild(makeCheck('acEnableTags', 'Tag e origine', 'Target, tag generici e opera di origine.'));
@@ -610,18 +657,18 @@
         grid.appendChild(makeCheck('acEnableEpisodeTitles', 'Titoli episodi', 'Titoli italiani dalla lista episodi.'));
         grid.appendChild(makeCheck('acEnableThemeSongs', 'Sigle', 'Nomi di opening ed ending nei tag.'));
         enrichment.body.appendChild(grid);
-        panel.appendChild(enrichment.card);
+        panel.appendChild(enrichment.details);
 
-        var images = makeCard('Artwork', 'Immagini come fallback', 'AnimeClick resta deliberatamente dopo i provider di artwork ad alta risoluzione.');
+        var images = makeDetails('Locandine', 'AnimeClick può completare le immagini mancanti usando le proprie locandine.');
         images.body.appendChild(makeCheck('acEnableAnimeClickImages', 'Abilita locandina AnimeClick', 'Usala solo quando i provider immagini precedenti non producono un poster.'));
         images.body.appendChild(makeField(
             'acMinPosterWidth',
             'Larghezza minima locandina',
             'number',
             'Sotto questa soglia il poster viene scartato. 0 disabilita il filtro; 400 px è il valore consigliato.',
-            { min: '0', max: '2000', step: '50' }
+            { min: '0', max: '4000', step: '1' }
         ));
-        panel.appendChild(images.card);
+        panel.appendChild(images.details);
 
         var advanced = makeDetails(
             'Opzioni avanzate e potenzialmente invasive',
@@ -671,152 +718,62 @@
     function buildSinossiPanel() {
         var panel = page.querySelector('#acPanelSinossi');
         clear(panel);
+        panel.appendChild(makeCallout('Vuoi trovare più trame?', 'AnimeClick funziona da solo. Puoi aggiungere una fonte italiana oppure un servizio di traduzione per le descrizioni disponibili soltanto in inglese.', 'good'));
 
-        var onboarding = makeCard(
-            'Sinossi episodi',
-            'Prima AnimeClick, poi le fonti di riserva',
-            'Titoli e sinossi restano indipendenti. Per la sinossi il plugin controlla prima la pagina dell’episodio AnimeClick e ignora descrizioni vuote o segnaposto come “Episodio 12”.'
-        );
-        onboarding.body.appendChild(makeCheck(
-            'acEnableEpisodeSynopsisTranslation',
-            'Abilita le sinossi degli episodi',
-            'Funziona anche con il solo AnimeClick. Le API esterne e l’AI servono esclusivamente ad aumentare la copertura.'
-        ));
-        var chain = el('div', 'ac-chain');
-        appendChainStep(chain, 1, 'AnimeClick', 'Sinossi italiana presente nella pagina dell’episodio.', 'prima scelta');
-        appendChainStep(chain, 2, 'Italiano di riserva', 'TheTVDB ita, poi TMDB it-IT.', 'senza AI');
-        appendChainStep(chain, 3, 'Inglese + AI', 'TMDB en-US, poi TheTVDB eng; l’AI traduce il testo EN→IT.', 'ultima scelta');
-        onboarding.body.appendChild(chain);
-        panel.appendChild(onboarding.card);
-
-        var sources = makeCard('Sorgenti opzionali', 'Aumenta la copertura', 'Non servono chiavi per usare le sinossi AnimeClick. TheTVDB e TMDB cercano le puntate mancanti; l’AI traduce soltanto una sinossi inglese trovata da uno di questi servizi.');
-        var sourceGrid = el('div', 'ac-grid-2');
-        var tvdbBlock = el('div', 'ac-credential-block');
-        var tvdbHead = el('div', 'ac-row ac-credential-head');
-        tvdbHead.appendChild(el('strong', null, 'TheTVDB'));
-        tvdbHead.appendChild(el('span', 'ac-badge neutral', 'prima fonte esterna'));
-        tvdbBlock.appendChild(tvdbHead);
-        tvdbBlock.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa fonte italiana TVDB', 'Salta la traduzione AI quando esiste una overview ita.'));
-        tvdbBlock.appendChild(makeSecretField(
-            'acTvdbApiKey',
-            'API key TheTVDB',
-            'Disponibile dal <a href="https://thetvdb.com/dashboard" target="_blank" rel="noopener noreferrer">dashboard TheTVDB</a>.'
-        ));
-        var tvdbTest = el('button', 'ac-btn ac-btn-sm', 'Verifica TheTVDB');
-        tvdbTest.type = 'button';
-        tvdbTest.setAttribute('data-ac-test', 'tvdb');
-        tvdbBlock.appendChild(tvdbTest);
-        var tvdbResult = el('div', 'ac-state');
-        tvdbResult.id = 'acInlineResult_tvdb';
-        tvdbBlock.appendChild(tvdbResult);
-        sourceGrid.appendChild(tvdbBlock);
-
-        var cloudBlock = el('div', 'ac-credential-block featured');
-        var cloudHead = el('div', 'ac-row ac-credential-head');
-        cloudHead.appendChild(el('strong', null, 'TMDB + traduzione AI'));
-        cloudHead.appendChild(el('span', 'ac-badge success', 'cloud'));
-        cloudBlock.appendChild(cloudHead);
-        cloudBlock.appendChild(makeSecretField(
-            'acTmdbApiKey',
-            'API key TMDB',
-            'Creala nelle <a href="https://developer.themoviedb.org/docs/getting-started" target="_blank" rel="noopener noreferrer">impostazioni API TMDB</a>.'
-        ));
-        cloudBlock.appendChild(makeSelect(
-            'acAiProvider',
-            'Servizio AI',
-            'Serve solo per tradurre una sinossi che esiste unicamente in inglese. '
-            + 'L’elenco si popola dal server.',
-            []
-        ));
-        var providerNote = el('div', 'ac-field-desc');
-        providerNote.id = 'acAiProviderNote';
-        cloudBlock.appendChild(providerNote);
-        cloudBlock.appendChild(makeSecretField(
-            'acAiApiKey',
-            'API key del servizio AI',
-            'Lasciala vuota per un servizio in casa: non autentica nulla e la chiave non viene mai '
-            + 'inviata in chiaro.'
-        ));
-        cloudBlock.appendChild(makeField(
-            'acAiModel',
-            'Modello',
-            'text',
-            'Nessun valore predefinito di proposito: i fornitori ritirano e rinominano i modelli, '
-            + 'quindi conviene chiederglielo con «Elenca modelli» invece di indovinare.',
-            { spellcheck: 'false', autocomplete: 'off', list: 'acAiModelList', placeholder: 'scegli o incolla il nome del modello' }
-        ));
-        var modelList = document.createElement('datalist');
-        modelList.id = 'acAiModelList';
-        cloudBlock.appendChild(modelList);
-        cloudBlock.appendChild(makeField(
-            'acAiEndpoint',
-            'Endpoint',
-            'url',
-            'Precompilato dal servizio scelto. HTTP in chiaro è accettato solo verso la tua rete '
-            + '(<code>http://ollama:11434/api/chat</code>, <code>http://nas.local:11434/api/chat</code>).',
-            { placeholder: 'https://…' }
-        ));
-        var aiActions = el('div', 'ac-row');
-        var modelListButton = el('button', 'ac-btn ac-btn-sm ac-btn-ghost', 'Elenca modelli');
-        modelListButton.type = 'button';
-        modelListButton.id = 'acBtnAiModels';
-        aiActions.appendChild(modelListButton);
-        cloudBlock.appendChild(aiActions);
-        var cloudTests = el('div', 'ac-row');
-        var tmdbTest = el('button', 'ac-btn ac-btn-sm', 'Verifica TMDB');
+        var sources = makeDetails('Aggiungi TMDB', 'Cerca altre trame italiane e, se attivi la traduzione, quelle inglesi.');
+        sources.body.appendChild(makeSecretField('acTmdbApiKey', 'Chiave API TMDB', 'Disponibile nelle <a href="https://developer.themoviedb.org/docs/getting-started" target="_blank" rel="noopener noreferrer">impostazioni API TMDB</a>.'));
+        var tmdbTest = el('button', 'ac-btn', 'Verifica TMDB');
         tmdbTest.type = 'button';
         tmdbTest.setAttribute('data-ac-test', 'tmdb');
-        var aiTest = el('button', 'ac-btn ac-btn-sm', 'Verifica AI');
-        aiTest.type = 'button';
-        aiTest.setAttribute('data-ac-test', 'ai');
-        cloudTests.appendChild(tmdbTest);
-        cloudTests.appendChild(aiTest);
-        cloudBlock.appendChild(cloudTests);
-        var tmdbResult = el('div', 'ac-state');
-        tmdbResult.id = 'acInlineResult_tmdb';
-        var aiResult = el('div', 'ac-state');
-        aiResult.id = 'acInlineResult_ai';
-        cloudBlock.appendChild(tmdbResult);
-        cloudBlock.appendChild(aiResult);
-        sourceGrid.appendChild(cloudBlock);
-        sources.body.appendChild(sourceGrid);
+        sources.body.appendChild(tmdbTest);
+        var tmdbResult = makeLiveState('acInlineResult_tmdb');
+        sources.body.appendChild(tmdbResult);
+        panel.appendChild(sources.details);
 
-        var providerAttribution = el('p', 'ac-field-desc');
-        providerAttribution.innerHTML = 'Metadata provided by TheTVDB. Considera di <a href="https://thetvdb.com/subscribe" target="_blank" rel="noopener noreferrer">supportare TheTVDB</a>. Dati TMDB usati secondo i relativi termini API.';
-        sources.body.appendChild(providerAttribution);
-        panel.appendChild(sources.card);
+        var tvdb = makeDetails('Aggiungi TheTVDB', 'Un’altra fonte di trame italiane per gli episodi. Viene consultata prima di TMDB.');
+        tvdb.body.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa TheTVDB', 'Richiede una chiave API del servizio.'));
+        tvdb.body.appendChild(makeSecretField('acTvdbApiKey', 'Chiave API TheTVDB', 'Disponibile dal <a href="https://thetvdb.com/dashboard" target="_blank" rel="noopener noreferrer">tuo account TheTVDB</a>.'));
+        var tvdbTest = el('button', 'ac-btn', 'Verifica TheTVDB');
+        tvdbTest.type = 'button';
+        tvdbTest.setAttribute('data-ac-test', 'tvdb');
+        tvdb.body.appendChild(tvdbTest);
+        tvdb.body.appendChild(makeLiveState('acInlineResult_tvdb'));
+        tvdb.body.appendChild(el('p', 'ac-field-desc', 'Metadata provided by TheTVDB.'));
+        panel.appendChild(tvdb.details);
 
-        var advanced = makeDetails(
-            'Parametri avanzati e cache',
-            'Modificali solo se il servizio scelto si comporta in modo diverso dal previsto.'
-        );
-        var advancedGrid = el('div', 'ac-grid-2');
-        advancedGrid.appendChild(makeField(
-            'acEpisodeTranslationTimeoutSec',
-            'Timeout richiesta',
-            'number',
-            'Secondi concessi a una singola chiamata. È un tetto, non un’attesa: una risposta rapida '
-            + 'non ci arriva vicino. Troppo basso taglia le traduzioni lente a metà.',
-            { min: '5', max: '120' }
-        ));
-        advancedGrid.appendChild(makeField(
-            'acTranslationCacheHours',
-            'Cache traduzioni',
-            'number',
-            'Ore di conservazione. Il default equivale a circa 10 anni e viene comunque invalidato quando cambia il contenuto.',
-            { min: '1', max: '87600' }
-        ));
-        advanced.body.appendChild(advancedGrid);
-        panel.appendChild(advanced.details);
+        var ai = makeDetails('Traduci le trame mancanti', 'Facoltativo. Serve TMDB o TheTVDB come fonte. I servizi cloud possono avere un costo; vengono inviate solo le descrizioni da tradurre.');
+        ai.body.appendChild(makeCheck('acEnableAiTranslation', 'Consenti la traduzione dall’inglese', 'Puoi disattivarla in qualsiasi momento mantenendo il servizio e la chiave salvati. Funziona solo dopo aver scelto un modello.'));
+        ai.body.appendChild(makeSelect('acAiProvider', 'Servizio di traduzione', 'Scegli il servizio che vuoi usare.', [{ value: '', label: 'Scegli un servizio…' }]));
+        var providerNote = el('div', 'ac-field-desc');
+        providerNote.id = 'acAiProviderNote';
+        ai.body.appendChild(providerNote);
+        ai.body.appendChild(makeSecretField('acAiApiKey', 'Chiave del servizio', 'Se una chiave è già salvata, lascia il campo vuoto per mantenerla. Non serve per un servizio locale senza autenticazione.'));
+        ai.body.appendChild(makeCheck('acClearAiKey', 'Rimuovi la chiave salvata', 'La rimozione viene applicata solo quando salvi le modifiche.'));
+        ai.body.appendChild(makeField('acAiModel', 'Modello', 'text', 'Premi «Elenca modelli», poi scegli un nome dall’elenco.', { spellcheck: 'false', autocomplete: 'off', list: 'acAiModelList', placeholder: 'Scegli un modello' }));
+        var modelList = document.createElement('datalist');
+        modelList.id = 'acAiModelList';
+        ai.body.appendChild(modelList);
+        var actions = el('div', 'ac-row');
+        var models = el('button', 'ac-btn', 'Elenca modelli');
+        models.type = 'button';
+        models.id = 'acBtnAiModels';
+        actions.appendChild(models);
+        var test = el('button', 'ac-btn', 'Verifica AI');
+        test.type = 'button';
+        test.setAttribute('data-ac-test', 'ai');
+        actions.appendChild(test);
+        ai.body.appendChild(actions);
+        ai.body.appendChild(makeLiveState('acInlineResult_ai'));
+        var advanced = makeDetails('Indirizzo del servizio e tempi di attesa', 'L’indirizzo viene compilato automaticamente quando scegli un servizio.');
+        advanced.body.appendChild(makeField('acAiEndpoint', 'Indirizzo del servizio', 'url', 'HTTPS per i servizi online; HTTP è ammesso per un servizio nella tua rete.', { placeholder: 'https://…' }));
+        advanced.body.appendChild(makeField('acEpisodeTranslationTimeoutSec', 'Attesa massima (secondi)', 'number', 'Il valore consigliato è 90 secondi.', { min: '5', max: '120', step: '1' }));
+        advanced.body.appendChild(makeField('acTranslationCacheHours', 'Conserva le traduzioni (ore)', 'number', '0 le conserva senza scadenza. Se cambia il testo di origine, la traduzione viene aggiornata.', { min: '0', max: '876000', step: '1' }));
+        ai.body.appendChild(advanced.details);
 
-        var preview = makeCard('Diagnostica', 'Test e anteprima traduzione', 'Usa gli stessi prompt, modello, cache e limite di concorrenza della pipeline reale. Le credenziali non sono restituite dalla API.');
-        preview.body.appendChild(makeTextArea(
-            'acPreviewSource',
-            'Testo inglese',
-            'Incolla una breve sinossi da tradurre. Massimo 8000 caratteri.',
-            false
-        ));
-        var previewButton = el('button', 'ac-btn ac-btn-primary', 'Genera anteprima');
+        var preview = makeDetails('Prova una traduzione', 'Questa prova usa il servizio selezionato e può consumare credito.');
+        preview.body.appendChild(makeTextArea('acPreviewSource', 'Testo inglese', 'Incolla una breve sinossi, fino a 8000 caratteri.', false));
+        preview.body.querySelector('textarea').maxLength = 8000;
+        var previewButton = el('button', 'ac-btn', 'Genera anteprima');
         previewButton.type = 'button';
         previewButton.id = 'acBtnPreviewTranslation';
         preview.body.appendChild(previewButton);
@@ -824,13 +781,14 @@
         previewResult.id = 'acTranslationPreviewResult';
         previewResult.style.display = 'none';
         preview.body.appendChild(previewResult);
-        panel.appendChild(preview.card);
+        ai.body.appendChild(preview.details);
+        panel.appendChild(ai.details);
 
-        var fallback = makeCard('Pipeline reale', 'Prova la sinossi di un episodio', 'Inserisci la serie e il numero della puntata: il plugin trova da solo la pagina episodio AnimeClick e mostra quale fonte ha vinto. Usa soltanto la configurazione già salvata.');
+        var fallback = makeDetails('Verifica una puntata specifica', 'Strumento avanzato: mostra da quale fonte arriva la trama. Usa le impostazioni salvate.');
         var fallbackGrid = el('div', 'ac-grid-3');
         fallbackGrid.appendChild(makeField('acFallbackAnimeId', 'ID AnimeClick della serie', 'text', 'Esempio: 72/naruto.', {}, false));
-        fallbackGrid.appendChild(makeField('acFallbackSeason', 'Stagione', 'number', '0 per gli special.', { min: '0', value: '1' }, false));
-        fallbackGrid.appendChild(makeField('acFallbackEpisode', 'Episodio', 'number', 'Numero episodio; per gli special usa stagione 0.', { min: '1', value: '1' }, false));
+        fallbackGrid.appendChild(makeField('acFallbackSeason', 'Stagione', 'number', '0 per gli speciali.', { min: '0', value: '1' }, false));
+        fallbackGrid.appendChild(makeField('acFallbackEpisode', 'Episodio', 'number', 'Il numero della puntata.', { min: '1', value: '1' }, false));
         fallback.body.appendChild(fallbackGrid);
         var fallbackButton = el('button', 'ac-btn', 'Esegui catena salvata');
         fallbackButton.type = 'button';
@@ -840,7 +798,7 @@
         fallbackResult.id = 'acFallbackPreviewResult';
         fallbackResult.style.display = 'none';
         fallback.body.appendChild(fallbackResult);
-        panel.appendChild(fallback.card);
+        panel.appendChild(fallback.details);
     }
 
     /* ===== tools ===== */
@@ -849,15 +807,28 @@
         var panel = page.querySelector('#acPanelStrumenti');
         clear(panel);
 
-        var identify = makeCard('Manutenzione elemento', 'Identifica e aggiorna', 'Associa un elemento Jellyfin a un ID AnimeClick e avvia un refresh completo dei provider configurati.');
+        var identify = makeCard('', 'Correggi un abbinamento', 'Cerca il titolo nella tua libreria e incolla il link alla scheda giusta su AnimeClick. L’aggiornamento continuerà in background.');
+        identify.body.appendChild(makeField('acItemSearch', 'Cerca nella tua libreria', 'search', 'Scrivi il nome di un film o di una serie.', { placeholder: 'Es. Naruto', maxlength: '200' }, false));
+        var find = el('button', 'ac-btn', 'Cerca titolo');
+        find.type = 'button';
+        find.id = 'acBtnFindItem';
+        identify.body.appendChild(find);
+        var candidates = el('div', 'ac-stack');
+        candidates.id = 'acItemCandidates';
+        candidates.setAttribute('aria-live', 'polite');
+        identify.body.appendChild(candidates);
+        var selected = el('p', 'ac-state', 'Nessun titolo selezionato.');
+        selected.id = 'acSelectedItem';
+        identify.body.appendChild(selected);
         var identifyGrid = el('div', 'ac-grid-2');
-        identifyGrid.appendChild(makeField('acItemId', 'ID elemento Jellyfin', 'text', 'ID interno dell’elemento.', {}, false));
-        identifyGrid.appendChild(makeField('acAnimeClickId', 'ID AnimeClick', 'text', 'Numero o numero/slug.', {}, false));
+        identifyGrid.appendChild(makeField('acItemId', 'Elemento selezionato', 'hidden', '', {}, false));
+        identifyGrid.lastChild.hidden = true;
+        identifyGrid.appendChild(makeField('acAnimeClickId', 'Link o ID AnimeClick', 'text', 'Apri la scheda su animeclick.it e copia il suo indirizzo qui.', { placeholder: 'https://www.animeclick.it/anime/…', maxlength: '512' }, false));
         identify.body.appendChild(identifyGrid);
         identify.body.appendChild(makeCheck(
             'acReplaceAllImages',
             'Sostituisci tutte le immagini',
-            'Rimuove gli artwork esistenti prima del refresh. Operazione reversibile con un nuovo refresh immagini.',
+            'Chiede a Jellyfin di sostituire le immagini durante l’aggiornamento. Lascia disattivato per conservare le tue locandine.',
             false
         ));
         var identifyButton = el('button', 'ac-btn ac-btn-primary', 'Identifica e aggiorna');
@@ -914,10 +885,10 @@
             'Modifica questi valori solo per diagnostica o se AnimeClick cambia comportamento.'
         );
         var grid = el('div', 'ac-grid-2');
-        grid.appendChild(makeField('acMaxSearchResults', 'Risultati ricerca', 'number', 'Da 1 a 25.', { min: '1', max: '25' }));
-        grid.appendChild(makeField('acCacheHours', 'Cache metadati', 'number', 'Ore, da 1 a 720.', { min: '1', max: '720' }));
-        grid.appendChild(makeField('acNegativeCacheHours', 'Cache negativa', 'number', 'Ore, da 1 a 168.', { min: '1', max: '168' }));
-        grid.appendChild(makeField('acRequestDelay', 'Pausa richieste', 'number', 'Millisecondi tra richieste AnimeClick.', { min: '500', max: '10000' }));
+        grid.appendChild(makeField('acMaxSearchResults', 'Risultati ricerca', 'number', 'Da 1 a 50.', { min: '1', max: '50' }));
+        grid.appendChild(makeField('acCacheHours', 'Cache metadati', 'number', 'Ore, da 1 a 8760.', { min: '1', max: '8760' }));
+        grid.appendChild(makeField('acNegativeCacheHours', 'Attesa dopo una ricerca vuota (ore)', 'number', '0 disattiva la memorizzazione dei risultati vuoti.', { min: '0', max: '8760' }));
+        grid.appendChild(makeField('acRequestDelay', 'Pausa richieste (millisecondi)', 'number', 'Almeno 500, per rispettare il sito AnimeClick.', { min: '500', max: '60000' }));
         advanced.body.appendChild(grid);
         advanced.body.appendChild(makeField('acBaseUrl', 'URL base AnimeClick', 'url', 'Modifica solo in caso di cambio dominio.'));
         advanced.body.appendChild(makeField('acUserAgent', 'User-Agent', 'text', 'Identificativo HTTP del plugin.', { spellcheck: 'false' }));
@@ -1863,10 +1834,11 @@
             });
             actions.appendChild(purge);
         } else {
-            var identify = el('button', 'ac-btn ac-btn-sm ac-btn-ghost ac-audit-series-action', 'Identifica in Strumenti');
+            var identify = el('button', 'ac-btn ac-btn-sm ac-btn-ghost ac-audit-series-action', 'Correggi abbinamento');
             identify.type = 'button';
             identify.addEventListener('click', function () {
                 val('acItemId').value = id;
+                val('acSelectedItem').textContent = valueOf(item, 'name') || valueOf(item, 'seriesName') || 'Serie selezionata dalla libreria';
                 val('acAnimeClickId').value = '';
                 activateTab(page.querySelector('#acTabStrumenti'), true);
                 toast('ID elemento compilato: cerca l’ID AnimeClick e conferma.', 'success');
@@ -2389,11 +2361,13 @@
        network, which is how a service running in the house is reached. */
     function isPrivateAiHost(host) {
         if (host === 'localhost' || host === '::1' || host === '[::1]') return true;
+        var ipv6 = host.replace(/^\[|\]$/g, '');
+        if (ipv6.indexOf(':') !== -1) return /^(?:f[cd][0-9a-f]{2}|fe[89ab][0-9a-f]):/i.test(ipv6);
         var octets = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
         if (octets) {
             var a = parseInt(octets[1], 10);
             var b = parseInt(octets[2], 10);
-            return a === 10 || a === 127 || (a === 169 && b === 254)
+            return a === 10 || a === 127
                 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
         }
         return host.indexOf('.') === -1
@@ -2431,7 +2405,7 @@
 
     function aiCredentialAvailable() {
         return !!val('acAiApiKey').value.trim()
-            || (!aiEndpointChanged() && !!(savedConfig && savedConfig.AiApiKey));
+            || (!val('acClearAiKey').checked && !aiEndpointChanged() && !!(savedConfig && savedConfig.AiApiKey));
     }
 
     /* The selectable services come from the server, so this list never drifts from the one the
@@ -2441,14 +2415,18 @@
             aiProviders = asArray(list);
             var select = val('acAiProvider');
             if (!select) return;
-            var chosen = (savedConfig && savedConfig.AiProvider) || '';
+            var chosen = select.value || (savedConfig && savedConfig.AiProvider) || '';
             clear(select);
+            var empty = el('option', null, 'Scegli un servizio…');
+            empty.value = '';
+            select.appendChild(empty);
             aiProviders.forEach(function (provider) {
                 var option = el('option', null, valueOf(provider, 'displayName'));
                 option.value = valueOf(provider, 'id');
                 select.appendChild(option);
             });
-            if (chosen) select.value = chosen;
+            ensureProviderOption(chosen);
+            select.value = chosen;
             updateAiProviderHint();
         }).catch(function () {
             // Without the list the saved profile still works; only the menu is unavailable.
@@ -2461,6 +2439,14 @@
             if (valueOf(aiProviders[i], 'id') === id) return aiProviders[i];
         }
         return null;
+    }
+
+    function ensureProviderOption(id) {
+        var select = val('acAiProvider');
+        if (!id || Array.prototype.some.call(select.options, function (option) { return option.value === id; })) return;
+        var option = el('option', null, id + ' (profilo salvato)');
+        option.value = id;
+        select.appendChild(option);
     }
 
     function updateAiProviderHint() {
@@ -2508,7 +2494,8 @@
         setChecked('acEnableThemeSongs', config.EnableThemeSongs, true);
         setChecked('acEnableCollections', config.EnableCollections, false);
 
-        setChecked('acEnableEpisodeSynopsisTranslation', config.EnableEpisodeSynopsisTranslation, false);
+        setChecked('acEnableEpisodeSynopsisTranslation', config.EnableEpisodeSynopsisTranslation, true);
+        setChecked('acEnableAiTranslation', config.EnableAiTranslation, true);
         setChecked('acEnableTvdbSynopsis', config.EnableTvdbSynopsis, false);
         setValue('acTvdbApiKey', config.TvdbApiKey, '');
         setValue('acTmdbApiKey', config.TmdbApiKey, '');
@@ -2519,7 +2506,9 @@
             : 'Inserisci la chiave del servizio AI';
         setValue('acAiEndpoint', config.AiEndpoint, '');
         setValue('acAiModel', config.AiModel, '');
-        if (val('acAiProvider') && config.AiProvider) val('acAiProvider').value = config.AiProvider;
+        setChecked('acClearAiKey', false, false);
+        ensureProviderOption(config.AiProvider);
+        if (val('acAiProvider')) val('acAiProvider').value = config.AiProvider || '';
         setValue('acEpisodeTranslationTimeoutSec', config.EpisodeTranslationTimeoutSec, 90);
         setValue('acTranslationCacheHours', config.TranslationCacheHours, 87600);
 
@@ -2555,6 +2544,7 @@
         config.EnableCollections = val('acEnableCollections').checked;
 
         config.EnableEpisodeSynopsisTranslation = val('acEnableEpisodeSynopsisTranslation').checked;
+        config.EnableAiTranslation = val('acEnableAiTranslation').checked;
         config.EnableTvdbSynopsis = val('acEnableTvdbSynopsis').checked;
         config.TvdbApiKey = val('acTvdbApiKey').value.trim();
         config.TmdbApiKey = val('acTmdbApiKey').value.trim();
@@ -2571,7 +2561,8 @@
             }
 
             var freshAiEndpoint = normalizeAiEndpoint(config.AiEndpoint);
-            if (!enteredAiKey && freshAiEndpoint != null && normalizedAiEndpoint !== freshAiEndpoint) {
+            if (!enteredAiKey && config.AiApiKey && !val('acClearAiKey').checked
+                && freshAiEndpoint != null && normalizedAiEndpoint !== freshAiEndpoint) {
                 // The configuration may have changed in another admin tab after this
                 // page loaded. Never pair its newly persisted key with our stale URL.
                 throw new Error('Il profilo AI è cambiato sul server: ricarica la pagina o reinserisci la chiave.');
@@ -2584,14 +2575,17 @@
 
         if (enteredAiKey) {
             config.AiApiKey = enteredAiKey;
+        } else if (val('acClearAiKey').checked) {
+            config.AiApiKey = '';
+            config.OllamaCloudApiKey = '';
         }
 
         config.EpisodeTranslationTimeoutSec = parseInt(val('acEpisodeTranslationTimeoutSec').value, 10) || 90;
-        config.TranslationCacheHours = parseInt(val('acTranslationCacheHours').value, 10) || 87600;
+        config.TranslationCacheHours = Number(val('acTranslationCacheHours').value);
 
         config.MaxSearchResults = parseInt(val('acMaxSearchResults').value, 10) || 10;
         config.CacheHours = parseInt(val('acCacheHours').value, 10) || 48;
-        config.NegativeCacheHours = parseInt(val('acNegativeCacheHours').value, 10) || 12;
+        config.NegativeCacheHours = Number(val('acNegativeCacheHours').value);
         config.RequestDelayMilliseconds = parseInt(val('acRequestDelay').value, 10) || 1000;
         config.BaseUrl = val('acBaseUrl').value.trim() || 'https://www.animeclick.it';
         config.UserAgent = val('acUserAgent').value.trim();
@@ -2599,6 +2593,18 @@
     }
 
     function validateForm() {
+        var invalid = Array.prototype.find.call(page.querySelectorAll('input[type="number"]'), function (input) {
+            return input.id.indexOf('acFallback') !== 0 && (!input.value.trim() || !input.checkValidity());
+        });
+        if (invalid) {
+            var panel = invalid.closest('.ac-panel');
+            activateTab(page.querySelector('.ac-tab[data-panel="' + panel.dataset.panel + '"]'), false);
+            for (var parent = invalid.parentElement; parent && parent !== panel; parent = parent.parentElement) {
+                if (parent.tagName === 'DETAILS') parent.open = true;
+            }
+            invalid.focus();
+            return 'Controlla «' + page.querySelector('label[for="' + invalid.id + '"]').textContent + '»: il valore deve essere compreso tra ' + invalid.min + ' e ' + invalid.max + '.';
+        }
         var enteredEndpoint = val('acAiEndpoint').value.trim();
         if (enteredEndpoint && normalizeAiEndpoint(enteredEndpoint) == null) {
             return 'L’endpoint AI deve essere HTTPS (o HTTP verso un indirizzo della tua rete) '
@@ -2611,9 +2617,9 @@
         }
 
         var provider = currentAiProvider();
-        if (provider && valueOf(provider, 'requiresApiKey')
-            && aiEndpointChanged() && !val('acAiApiKey').value.trim()) {
-            return 'Reinserisci la chiave del servizio AI dopo aver cambiato endpoint.';
+        if (aiEndpointChanged() && savedConfig && savedConfig.AiApiKey
+            && !val('acClearAiKey').checked && !val('acAiApiKey').value.trim()) {
+            return 'Dopo aver cambiato servizio, inserisci la nuova chiave oppure seleziona «Rimuovi la chiave salvata».';
         }
 
         return null;
@@ -2779,13 +2785,14 @@
 
             typeOptions.forEach(function (entry) {
                 var row = el('div', 'ac-library-type');
-                row.appendChild(el('span', 'ac-library-type-name', valueOf(entry, 'type') || 'Tipo'));
+                var typeNames = { Series: 'Serie', Season: 'Stagioni', Episode: 'Episodi', Movie: 'Film' };
+                row.appendChild(el('span', 'ac-library-type-name', typeNames[valueOf(entry, 'type')] || 'Contenuti'));
                 var badges = el('div', 'ac-row');
                 var metadata = analyzeProvider(entry, 'Metadata');
-                var metadataBadge = el('span', 'ac-badge ' + metadata.tone, metadata.label);
+                var metadataBadge = el('span', 'ac-badge ' + (metadata.enabled ? 'success' : 'neutral'), metadata.enabled ? 'Attivo' : 'Non attivo');
                 badges.appendChild(metadataBadge);
                 var images = analyzeProvider(entry, 'Image');
-                if (images.enabled) badges.appendChild(el('span', 'ac-badge ' + images.tone, images.label));
+                if (images.enabled) badges.appendChild(el('span', 'ac-badge neutral', 'Locandine disponibili'));
                 row.appendChild(badges);
                 library.appendChild(row);
             });
@@ -2951,19 +2958,37 @@
     /* ===== actions ===== */
 
     function saveCurrentConfiguration() {
+        if (!configLoaded || saving) return Promise.reject(new Error('Attendi il caricamento delle impostazioni.'));
         var validationError = validateForm();
         if (validationError) {
             toast(validationError, 'error');
             return Promise.reject(new Error(validationError));
         }
+        var original = Object.assign({}, savedConfig);
+        var edited;
+        try { edited = readForm(Object.assign({}, original)); }
+        catch (error) { return Promise.reject(error); }
+        var changed = Object.keys(edited).filter(function (key) { return edited[key] !== original[key]; });
+        saving = true;
+        page.querySelector('.ac-main').inert = true;
+        val('acBtnDiscard').disabled = true;
         return getPluginConfig().then(function (config) {
-            return savePluginConfig(readForm(config));
+            var conflict = changed.some(function (key) { return config[key] !== original[key] && config[key] !== edited[key]; });
+            var aiChanged = changed.some(function (key) { return key.indexOf('Ai') === 0; });
+            if (aiChanged) conflict = conflict || ['AiEndpoint', 'AiProvider', 'AiApiKey'].some(function (key) { return config[key] !== original[key]; });
+            if (conflict) throw new Error('Le stesse impostazioni sono cambiate in un’altra sessione. Ricarica la pagina prima di salvare.');
+            changed.forEach(function (key) { config[key] = edited[key]; });
+            return savePluginConfig(config);
         }).then(function () {
             return getPluginConfig();
         }).then(function (config) {
             loadForm(config);
             toast('Configurazione salvata', 'success');
             return config;
+        }).finally(function () {
+            saving = false;
+            page.querySelector('.ac-main').inert = false;
+            val('acBtnDiscard').disabled = false;
         });
     }
 
@@ -3002,6 +3027,7 @@
             // Choosing a service fills in its own endpoint and clears the model, because a model
             // name from one vendor means nothing to another.
             var provider = currentAiProvider();
+            val('acAiApiKey').value = '';
             if (provider) {
                 val('acAiEndpoint').value = valueOf(provider, 'chatEndpoint') || '';
                 val('acAiModel').value = '';
@@ -3159,11 +3185,38 @@
             });
         });
 
+        page.querySelector('#acBtnFindItem').addEventListener('click', function () {
+            var query = val('acItemSearch').value.trim();
+            if (query.length < 2) { toast('Scrivi almeno due caratteri del titolo.', 'error'); return; }
+            var button = this;
+            var host = val('acItemCandidates');
+            setBusy(button, true, 'Cerca titolo', 'Ricerca…');
+            clear(host);
+            request('GET', 'Items?Recursive=true&IncludeItemTypes=Series,Movie&Limit=15&SearchTerm=' + encodeURIComponent(query)).then(function (result) {
+                var items = asArray(valueOf(result, 'items'));
+                if (!items.length) host.appendChild(el('p', 'ac-state', 'Nessun titolo trovato. Prova con un nome più breve.'));
+                items.forEach(function (item) {
+                    var name = valueOf(item, 'name') || 'Senza titolo';
+                    var year = valueOf(item, 'productionYear');
+                    var choose = el('button', 'ac-btn ac-btn-ghost', name + (year ? ' (' + year + ')' : ''));
+                    choose.type = 'button';
+                    choose.addEventListener('click', function () {
+                        val('acItemId').value = valueOf(item, 'id');
+                        val('acSelectedItem').textContent = 'Selezionato: ' + name;
+                        clear(host);
+                        val('acAnimeClickId').focus();
+                    });
+                    host.appendChild(choose);
+                });
+            }).catch(function (error) { host.appendChild(el('p', 'ac-state error', truncate(error.message, 240))); })
+                .finally(function () { setBusy(button, false, 'Cerca titolo', 'Ricerca…'); });
+        });
+
         page.querySelector('#acBtnIdentify').addEventListener('click', function () {
             var itemId = val('acItemId').value.trim();
             var animeClickId = val('acAnimeClickId').value.trim();
             if (!itemId || !animeClickId) {
-                toast('Inserisci entrambi gli ID.', 'error');
+                toast('Seleziona un titolo e incolla il link o l’ID AnimeClick.', 'error');
                 return;
             }
             var button = this;
@@ -3181,7 +3234,7 @@
                 var success = !!valueOf(response, 'success');
                 clear(result);
                 result.appendChild(makeCallout(
-                    success ? 'Aggiornamento completato' : 'Operazione incompleta',
+                    success ? 'Abbinamento salvato' : 'Operazione incompleta',
                     success ? 'L’ID AnimeClick è stato salvato e il refresh è stato richiesto.' : truncate(valueOf(response, 'error') || 'Errore sconosciuto.', 300),
                     success ? 'good' : 'warn'
                 ));
@@ -3204,26 +3257,56 @@
         buildSinossiPanel();
         buildLibreriaPanel();
         buildStrumentiPanel();
+        buildDiagnosticsPanel();
         initTabs();
         wireActions();
     }
 
     function show(pageElement) {
+        if (page === pageElement && configLoaded) return;
         page = pageElement;
+        var sequence = ++loadSequence;
+        configLoaded = false;
+        savedConfig = null;
+        dirty = false;
+        var main = page.querySelector('.ac-main');
+        main.inert = true;
+        main.setAttribute('aria-busy', 'true');
+        var state = page.querySelector('#acLoadState');
+        state.hidden = false;
+        state.textContent = 'Caricamento delle impostazioni…';
         if (page.getAttribute('data-ac-built') !== V) {
             buildPage();
             page.setAttribute('data-ac-built', V);
         }
 
         getPluginConfig().then(function (config) {
+            if (sequence !== loadSequence) return;
+            configLoaded = true;
             loadForm(config);
+            main.inert = false;
+            main.setAttribute('aria-busy', 'false');
+            state.hidden = true;
             loadAiProviders();
             loadLibraryHealth();
         }).catch(function (error) {
-            toast('Impossibile caricare la configurazione: ' + truncate(error.message, 240), 'error');
+            if (sequence !== loadSequence) return;
+            main.setAttribute('aria-busy', 'false');
+            clear(state);
+            state.className = 'ac-state error';
+            state.appendChild(el('span', null, 'Impossibile caricare le impostazioni. ' + truncate(error.message, 160) + ' '));
+            var retry = el('button', 'ac-btn', 'Riprova');
+            retry.type = 'button';
+            retry.addEventListener('click', function () { show(pageElement); });
+            state.appendChild(retry);
         });
     }
 
+    window.addEventListener('beforeunload', function (event) {
+        if (!dirty) return;
+        event.preventDefault();
+        event.returnValue = '';
+    });
     window.AC = window.AC || {};
     window.AC.config = { show: show };
 }());

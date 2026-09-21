@@ -215,7 +215,7 @@ public class AnimeClickAniListResolver
                 variables = new { search = title }
             });
 
-            var client = _httpClientFactory.CreateClient();
+            using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
             client.Timeout = TimeSpan.FromSeconds(8);
             client.MaxResponseContentBufferSize = MaximumResponseBytes;
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://graphql.anilist.co")

@@ -123,11 +123,7 @@ public class AnimeClickAiTranslator
         // is both billed and latency-bound at the model. Truncating before the cache key keeps
         // a truncated and an untruncated run from colliding. 8000 characters is the same limit
         // the diagnostics preview endpoint already applies.
-        var plain = StripHtml(sourceText);
-        if (plain is { Length: > MaximumSourceCharacters })
-        {
-            plain = plain[..MaximumSourceCharacters];
-        }
+        var plain = NormalizeSourceText(sourceText);
 
         if (string.IsNullOrWhiteSpace(plain)
             || !IsConfigured(configuration, out var endpointUri))
@@ -172,7 +168,7 @@ public class AnimeClickAiTranslator
             }
 
             var body = AnimeClickAiProviders.BuildRequestBody(dialect, model, SystemPrompt, plain);
-            var client = _httpClientFactory.CreateClient();
+            using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
             client.Timeout = TimeSpan.FromSeconds(
                 Math.Clamp(configuration.EpisodeTranslationTimeoutSec, 5, 120));
             client.MaxResponseContentBufferSize = MaximumResponseBytes;
@@ -324,6 +320,7 @@ public class AnimeClickAiTranslator
     {
         endpointUri = null!;
         if (configuration is null
+            || !configuration.EnableAiTranslation
             || string.IsNullOrWhiteSpace(configuration.AiModel)
             || !TryNormalizeEndpoint(configuration.AiEndpoint, out endpointUri))
         {
@@ -379,6 +376,15 @@ public class AnimeClickAiTranslator
             + $"::{ShortHash(sourceIdentity)}::{ShortHash(model)}::{ShortHash(endpoint)}"
             + $"::{ShortHash(apiKey)}::{PromptVersion}::{ShortHash(plainText)}";
 
+    internal static string NormalizeSourceText(string sourceText)
+    {
+        var plain = StripHtml(sourceText);
+        if (plain.Length <= MaximumSourceCharacters) return plain;
+        var length = char.IsHighSurrogate(plain[MaximumSourceCharacters - 1])
+            ? MaximumSourceCharacters - 1 : MaximumSourceCharacters;
+        return plain[..length];
+    }
+
     private static string ShortHash(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..24];
 
@@ -421,7 +427,7 @@ public class AnimeClickAiTranslator
         try
         {
             var body = AnimeClickAiProviders.BuildRequestBody(dialect, model, testSystemPrompt, testUserContent);
-            var client = _httpClientFactory.CreateClient();
+            using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec <= 0 ? 90 : timeoutSec, 5, 120));
 
             // Same ceiling as the production path. Without it a misconfigured endpoint — or a URL
@@ -506,7 +512,7 @@ public class AnimeClickAiTranslator
 
         try
         {
-            var client = _httpClientFactory.CreateClient();
+            using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(timeoutSec <= 0 ? 30 : timeoutSec, 5, 120));
             client.MaxResponseContentBufferSize = MaximumResponseBytes;
 

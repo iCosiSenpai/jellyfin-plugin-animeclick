@@ -7,143 +7,98 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jellyfin: ['12.0.0', '12.1.0']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: '9.0.x'
-      - name: Restore
-        run: dotnet restore AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj
-      - name: Verify hardcoded versions match the project version
+          dotnet-version: '10.0.x'
+      - name: Verify embedded versions
         shell: bash
         run: |
           set -euo pipefail
           PROJECT_VERSION="$(dotnet msbuild AnimeClick.Plugin.csproj -nologo -getProperty:Version | tr -d '\r' | tail -n 1)"
-          echo "Project version: ${PROJECT_VERSION}"
-          # The version is repeated by hand in the config page (cache-busting query strings and
-          # the displayed version), in the config page's JavaScript and in the default
-          # User-Agent. Forgetting one at release time is silent: the browser keeps serving the
-          # previous CSS/JS against a new backend. These files must contain no four-part version
-          # literal other than the current one.
           status=0
           for file in Configuration/configPage.html Web/assets/animeclick-config.js PluginConfiguration.cs; do
             while IFS=: read -r line found; do
               if [[ "${found}" != "${PROJECT_VERSION}" ]]; then
-                echo "::error file=${file},line=${line}::version ${found} does not match project version ${PROJECT_VERSION}"
+                echo "::error file=${file},line=${line}::version ${found} does not match ${PROJECT_VERSION}"
                 status=1
               fi
             done < <(grep -noE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' "${file}" || true)
           done
           exit "${status}"
-      - name: Build
-        run: dotnet build AnimeClick.Plugin.csproj -c Release --no-restore
-      - name: Test
-        run: dotnet test AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release --no-restore
+      - name: Build and test server compatibility
+        run: dotnet test AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release -p:JellyfinVersion=${{ matrix.jellyfin }} -warnaserror
+      - name: Build diagnostic harness
+        run: dotnet build tools/AnimeClick.Harness/AnimeClick.Harness.csproj -c Release -p:JellyfinVersion=${{ matrix.jellyfin }} -warnaserror
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tools/AnimeClick.WebTests/package-lock.json
+      - run: npm ci
+        working-directory: tools/AnimeClick.WebTests
+      - run: npx playwright install --with-deps chromium
+        working-directory: tools/AnimeClick.WebTests
+      - run: npm test
+        working-directory: tools/AnimeClick.WebTests
+      - run: npm audit --audit-level=high
+        working-directory: tools/AnimeClick.WebTests
 
   release:
-    needs: build
+    needs: [build, web]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    env:
-      CHECKSUM: ''
-      SOURCE_URL: ''
-      VERSION: ''
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: '9.0.x'
-
-      - name: Verify tag matches project version
+          dotnet-version: '10.0.x'
+      - name: Verify tag and release notes
         shell: bash
         run: |
           set -euo pipefail
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PROJECT_VERSION="$(dotnet msbuild AnimeClick.Plugin.csproj -nologo -getProperty:Version | tr -d '\r' | tail -n 1)"
-          if [[ ! "${TAG_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tag must use vMAJOR.MINOR.PATCH.REVISION; got ${GITHUB_REF_NAME}" >&2
-            exit 1
-          fi
-          if [[ "${TAG_VERSION}" != "${PROJECT_VERSION}" ]]; then
-            echo "Tag ${TAG_VERSION} does not match project version ${PROJECT_VERSION}" >&2
-            exit 1
-          fi
+          [[ "${TAG_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "${TAG_VERSION}" == "${PROJECT_VERSION}" ]]
+          test -s "docs/releases/${TAG_VERSION}.md"
           echo "VERSION=${TAG_VERSION}" >> "${GITHUB_ENV}"
-
-      - name: Publish
-        run: dotnet publish AnimeClick.Plugin.csproj -c Release -o publish
-
-      - name: Package and validate release metadata
+      - name: Publish against the minimum supported ABI
+        run: dotnet publish AnimeClick.Plugin.csproj -c Release -p:JellyfinVersion=12.0.0 -o publish -warnaserror
+      - name: Package distributable dependencies only
         shell: bash
         run: |
           set -euo pipefail
-          rm -f AnimeClick.Plugin.zip
-          # LICENSE e NOTICE viaggiano con il programma: la GPL richiede che la licenza
-          # accompagni la distribuzione, e il NOTICE dichiara i termini aggiuntivi
-          # ammessi dalla sezione 7(e) su nome e logo. Jellyfin carica le DLL e ignora
-          # il resto, quindi due file di testo in piu' non cambiano l'installazione.
           zip -j AnimeClick.Plugin.zip publish/AnimeClick.Plugin.dll publish/HtmlAgilityPack.dll LICENSE NOTICE
-          CHECKSUM_VALUE="$(md5sum AnimeClick.Plugin.zip | cut -d ' ' -f 1 | tr 'a-f' 'A-F')"
-          SOURCE_VALUE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/AnimeClick.Plugin.zip"
-          [[ -n "${CHECKSUM_VALUE}" ]]
-          [[ "${SOURCE_VALUE}" == https://github.com/*/releases/download/v*/AnimeClick.Plugin.zip ]]
-          echo "CHECKSUM=${CHECKSUM_VALUE}" >> "${GITHUB_ENV}"
-          echo "SOURCE_URL=${SOURCE_VALUE}" >> "${GITHUB_ENV}"
-
-      # A tag creates only a draft. The maintainer downloads that authenticated
-      # asset, records its exact checksum, publishes the draft, smoke-tests the now
-      # public sourceUrl, and only then commits and pushes the Jellyfin manifest.
+          unzip -t AnimeClick.Plugin.zip
+          md5sum AnimeClick.Plugin.zip
+          sha256sum AnimeClick.Plugin.zip
+      # Verify the draft asset, publish, then verify its PUBLIC URL before updating
+      # the catalog. Never point a catalog entry at a draft. See docs/RELEASING.md.
       - name: Create gated draft release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           name: AnimeClick Metadata ${{ github.ref_name }}
           files: AnimeClick.Plugin.zip
-          generate_release_notes: true
+          body_path: docs/releases/${{ env.VERSION }}.md
           draft: true
           prerelease: false
           make_latest: false
-          body: |
-            ## AnimeClick Metadata Plugin ${{ github.ref_name }}
-
-            AniList ha spento la propria API. Il plugin smette di bussare a una porta chiusa.
-
-            **Il problema**
-            - AniList risponde `403` a chiunque, con «The AniList API has been temporarily
-              disabled due to severe stability issues». Non è un errore del plugin e non è una
-              chiave sbagliata: il servizio è stato disattivato da chi lo gestisce.
-            - Il plugin ci riprovava a ogni elemento della libreria, due volte per elemento,
-              pagando ogni volta il ritardo fra le richieste e scrivendo un avviso identico.
-              Su una libreria di qualche centinaio di titoli sono centinaia di righe di log che
-              non dicono niente di nuovo — ed è il rumore che rende invisibile il guasto dopo.
-
-            **Cosa cambia**
-            - Dopo tre fallimenti di fila le chiamate ad AniList vengono sospese, e si riprova
-              dopo cinque minuti, poi dieci, venti, fino a un'ora. Un solo tentativo alla volta
-              verifica se il servizio è tornato, invece di riversargli addosso l'intera libreria.
-            - L'avviso nel log si scrive quando le richieste vengono sospese, non a ogni
-              elemento. Al ritorno di AniList l'interruttore si riarma da solo.
-            - Un `429` non conta: significa «più piano», non «sono giù», e ha già la sua pausa.
-              Un errore di rete isolato nemmeno, perché serve una serie di fallimenti.
-            - Quando le chiamate sono sospese non viene scritta alcuna cache negativa: appena
-              AniList torna, il primo aggiornamento può risolvere l'identità senza aspettare
-              la scadenza di una cache che con il guasto non c'entra nulla.
-
-            **Niente di perso**
-            - L'identificativo AniList è un dato accessorio: titoli, trame, generi e cast
-              continuano ad arrivare da AniClick e, dove serve, da TMDB. Gli identificativi già
-              salvati restano dove sono.
-
-            **Compatibilità:** Jellyfin 10.11.x (ABI 10.11.8.0)
-            **Versione:** `${{ env.VERSION }}`
-            **Checksum MD5:** `${{ env.CHECKSUM }}`
-            **Source URL manifest:** `${{ env.SOURCE_URL }}`
-
-            > **Procedura di pubblicazione:** questa release nasce come draft. Scaricare l'asset
-            > con `gh`, calcolarne l'MD5, pubblicare la draft, verificare l'URL pubblico e lo
-            > stesso MD5, quindi aggiungere e pushare la voce in `manifest.json` nello stesso
-            > giro. Il manifest non deve mai puntare a una draft, perché l'asset risponde 404.

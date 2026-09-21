@@ -258,17 +258,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         => Task.FromResult<IEnumerable<RemoteSearchResult>>([]);
 
     public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
-    {
-        // Defense in depth: see AnimeClickSeriesProvider.GetImageResponse.
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        if (!AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, url, out var imageUri))
-        {
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
-        }
-
-        var client = _httpClientFactory.CreateClient();
-        return client.GetAsync(imageUri, cancellationToken);
-    }
+        => AnimeClickHttp.GetImageAsync(_httpClientFactory, url,
+            Plugin.Instance?.Configuration ?? new PluginConfiguration(), cancellationToken);
 
     private async Task<AnimeClickEpisode?> ResolveEpisodeAsync(
         MetadataResult<Episode> result,

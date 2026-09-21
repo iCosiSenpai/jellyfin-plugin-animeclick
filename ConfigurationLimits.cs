@@ -74,7 +74,10 @@ internal static class ConfigurationLimits
         if (string.IsNullOrEmpty(trimmed)
             || !Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
             || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
-            || string.IsNullOrEmpty(uri.Host))
+            || string.IsNullOrEmpty(uri.Host)
+            || !string.IsNullOrEmpty(uri.UserInfo)
+            || !string.IsNullOrEmpty(uri.Query)
+            || !string.IsNullOrEmpty(uri.Fragment))
         {
             return DefaultBaseUrl;
         }

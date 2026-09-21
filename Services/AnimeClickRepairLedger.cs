@@ -3,8 +3,12 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using AnimeClick.Plugin.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace AnimeClick.Plugin.Services;
@@ -55,6 +59,9 @@ public sealed class AnimeClickRepairAttempt
     /// older one could not, so its "no source" verdicts must not be inherited.
     /// </summary>
     public string PluginVersion { get; set; } = string.Empty;
+
+    /// <summary>One-way fingerprint; never persists API credentials in the ledger.</summary>
+    public string SourceFingerprint { get; set; } = string.Empty;
 }
 
 /// <summary>
@@ -87,6 +94,7 @@ public sealed class AnimeClickRepairLedger : IDisposable
     private readonly ConcurrentDictionary<Guid, AnimeClickRepairAttempt> _entries = new();
     private readonly AnimeClickCacheService _cache;
     private readonly ILogger<AnimeClickRepairLedger> _logger;
+    private readonly Func<PluginConfiguration> _configuration;
     private readonly SemaphoreSlim _loadGate = new(1, 1);
     private readonly SemaphoreSlim _flushGate = new(1, 1);
     private readonly Timer _flushTimer;
@@ -95,10 +103,12 @@ public sealed class AnimeClickRepairLedger : IDisposable
 
     public AnimeClickRepairLedger(
         AnimeClickCacheService cache,
-        ILogger<AnimeClickRepairLedger> logger)
+        ILogger<AnimeClickRepairLedger> logger,
+        Func<PluginConfiguration>? configuration = null)
     {
         _cache = cache;
         _logger = logger;
+        _configuration = configuration ?? (() => Plugin.Instance?.Configuration ?? new PluginConfiguration());
         _flushTimer = new Timer(_ => TriggerFlush(), null, Timeout.Infinite, Timeout.Infinite);
     }
 
@@ -179,6 +189,7 @@ public sealed class AnimeClickRepairLedger : IDisposable
         }
 
         var now = DateTimeOffset.UtcNow;
+        var sourceFingerprint = SourceFingerprint(_configuration());
         _entries.AddOrUpdate(
             itemId,
             _ => new AnimeClickRepairAttempt
@@ -187,7 +198,8 @@ public sealed class AnimeClickRepairLedger : IDisposable
                 Detail = detail ?? string.Empty,
                 AttemptedAt = now,
                 Attempts = 1,
-                PluginVersion = CurrentPluginVersion
+                PluginVersion = CurrentPluginVersion,
+                SourceFingerprint = sourceFingerprint
             },
             (_, existing) => new AnimeClickRepairAttempt
             {
@@ -195,7 +207,8 @@ public sealed class AnimeClickRepairLedger : IDisposable
                 Detail = detail ?? string.Empty,
                 AttemptedAt = now,
                 Attempts = existing.Attempts + 1,
-                PluginVersion = CurrentPluginVersion
+                PluginVersion = CurrentPluginVersion,
+                SourceFingerprint = sourceFingerprint
             });
 
         ScheduleFlush();
@@ -214,7 +227,8 @@ public sealed class AnimeClickRepairLedger : IDisposable
             return false;
         }
 
-        return SuppressionWindow(attempt.Outcome) is { } window && Age(attempt, now) < window;
+        return !IsStaleVerdict(attempt)
+            && SuppressionWindow(attempt.Outcome) is { } window && Age(attempt, now) < window;
     }
 
     /// <summary>
@@ -326,9 +340,23 @@ public sealed class AnimeClickRepairLedger : IDisposable
     /// verdicts would keep hiding episodes that are now resolvable. Everything else is kept: an
     /// applied repair or a lock does not become wrong across an upgrade.
     /// </summary>
-    private static bool IsStaleVerdict(AnimeClickRepairAttempt attempt)
-        => string.Equals(attempt.Outcome, nameof(AnimeClickRepairOutcome.NoSource), StringComparison.Ordinal)
-            && !string.Equals(attempt.PluginVersion, CurrentPluginVersion, StringComparison.Ordinal);
+    private bool IsStaleVerdict(AnimeClickRepairAttempt attempt)
+        => SuppressionWindow(attempt.Outcome) is not null
+            && (!string.Equals(attempt.PluginVersion, CurrentPluginVersion, StringComparison.Ordinal)
+                || !string.Equals(attempt.SourceFingerprint, SourceFingerprint(_configuration()), StringComparison.Ordinal));
+
+    internal static string SourceFingerprint(PluginConfiguration configuration)
+    {
+        // A newly enabled source/model must get a chance immediately, without waiting seven days.
+        var payload = JsonSerializer.Serialize(new object?[]
+        {
+            configuration.BaseUrl, configuration.EnableEpisodeSynopsisTranslation,
+            configuration.TmdbApiKey, configuration.EnableTvdbSynopsis, configuration.TvdbApiKey,
+            configuration.EnableAiTranslation, configuration.AiProvider,
+            configuration.AiEndpoint, configuration.AiModel, configuration.AiApiKey
+        });
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+    }
 
     private void ScheduleFlush()
     {

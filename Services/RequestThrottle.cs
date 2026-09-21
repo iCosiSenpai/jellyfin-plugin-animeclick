@@ -26,15 +26,17 @@ internal sealed class RequestThrottle
 {
     private static readonly TimeSpan MaximumServerBackoff = TimeSpan.FromMinutes(15);
 
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly object _gate = new();
+    private readonly TimeProvider _clock;
     private readonly TimeSpan _minimumInterval;
     private readonly string _service;
-    private DateTime _nextRequestUtc = DateTime.MinValue;
+    private DateTimeOffset _nextRequestUtc = DateTimeOffset.MinValue;
 
-    public RequestThrottle(string service, TimeSpan minimumInterval)
+    public RequestThrottle(string service, TimeSpan minimumInterval, TimeProvider? clock = null)
     {
         _service = service;
         _minimumInterval = minimumInterval;
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>Name of the paced service, for logging by the caller.</summary>
@@ -47,20 +49,22 @@ internal sealed class RequestThrottle
     /// </summary>
     public async Task WaitAsync(CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        while (true)
         {
-            var remaining = _nextRequestUtc - DateTime.UtcNow;
-            if (remaining > TimeSpan.Zero)
+            cancellationToken.ThrowIfCancellationRequested();
+            TimeSpan remaining;
+            lock (_gate)
             {
-                await Task.Delay(remaining, cancellationToken).ConfigureAwait(false);
+                var now = _clock.GetUtcNow();
+                remaining = _nextRequestUtc - now;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    _nextRequestUtc = now.Add(_minimumInterval);
+                    return;
+                }
             }
-
-            _nextRequestUtc = DateTime.UtcNow.Add(_minimumInterval);
-        }
-        finally
-        {
-            _gate.Release();
+            // No lock is held during a server backoff. A 429 can extend it immediately.
+            await Task.Delay(remaining, _clock, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -70,24 +74,19 @@ internal sealed class RequestThrottle
     /// </summary>
     public TimeSpan NoticeRateLimit(HttpResponseMessage? response)
     {
-        var delay = ReadRetryAfter(response) ?? TimeSpan.FromSeconds(30);
+        var delay = ReadRetryAfter(response, _clock.GetUtcNow()) ?? TimeSpan.FromSeconds(30);
         if (delay > MaximumServerBackoff)
         {
             delay = MaximumServerBackoff;
         }
 
-        var until = DateTime.UtcNow.Add(delay);
-        _gate.Wait();
-        try
+        var until = _clock.GetUtcNow().Add(delay);
+        lock (_gate)
         {
             if (until > _nextRequestUtc)
             {
                 _nextRequestUtc = until;
             }
-        }
-        finally
-        {
-            _gate.Release();
         }
 
         return delay;
@@ -98,7 +97,7 @@ internal sealed class RequestThrottle
         => statusCode == HttpStatusCode.TooManyRequests
            || statusCode == HttpStatusCode.ServiceUnavailable;
 
-    private static TimeSpan? ReadRetryAfter(HttpResponseMessage? response)
+    private static TimeSpan? ReadRetryAfter(HttpResponseMessage? response, DateTimeOffset now)
     {
         var retryAfter = response?.Headers.RetryAfter;
         if (retryAfter?.Delta is { } delta && delta > TimeSpan.Zero)
@@ -108,7 +107,7 @@ internal sealed class RequestThrottle
 
         if (retryAfter?.Date is { } date)
         {
-            var fromDate = date - DateTimeOffset.UtcNow;
+            var fromDate = date - now;
             if (fromDate > TimeSpan.Zero)
             {
                 return fromDate;

@@ -119,7 +119,9 @@ public static class AnimeClickSearchScorer
             || format.Contains("ONA", StringComparison.OrdinalIgnoreCase)
             || format.Contains("Special", StringComparison.OrdinalIgnoreCase);
 
-        return seriesRequest ? isTelevision : isMovie || (!isTelevision && !isSideContent);
+        return seriesRequest
+            ? isTelevision || (!isMovie && isSideContent && !format.Contains("Special", StringComparison.OrdinalIgnoreCase))
+            : isMovie || (!isTelevision && !isSideContent);
     }
 
     public static int Score(AnimeClickSearchResult result, string query, int? productionYear, bool seriesRequest)
@@ -183,10 +185,7 @@ public static class AnimeClickSearchScorer
                 score -= 60;
             }
 
-            if (format.Contains("Special", StringComparison.OrdinalIgnoreCase)
-                || format.Contains("OVA", StringComparison.OrdinalIgnoreCase)
-                || format.Contains("OAV", StringComparison.OrdinalIgnoreCase)
-                || format.Contains("ONA", StringComparison.OrdinalIgnoreCase))
+            if (format.Contains("Special", StringComparison.OrdinalIgnoreCase))
             {
                 score -= 80;
             }

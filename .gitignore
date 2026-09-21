@@ -37,3 +37,5 @@ temp_extract/
 
 # Scratch locale: screenshot e appunti trascinati nel workspace, mai da pubblicare.
 tmp/
+node_modules/
+test-results/

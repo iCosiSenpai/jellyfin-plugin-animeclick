@@ -1,0 +1,6 @@
+{
+  "name": "animeclick-web-tests",
+  "private": true,
+  "scripts": { "test": "node --test config.test.cjs" },
+  "devDependencies": { "playwright": "1.63.0" }
+}

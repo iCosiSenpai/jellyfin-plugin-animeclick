@@ -58,7 +58,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     public override string Name => "AnimeClick Plugin";
 
-    public override string Description => "Autorità metadati anime in italiano con fallback cloud controllato.";
+    public override string Description => "Titoli, trame ed episodi degli anime in italiano da AnimeClick.";
 
     public IEnumerable<PluginPageInfo> GetPages()
     {
@@ -71,10 +71,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 Name = Name,
                 EmbeddedResourcePath = ns + ".Configuration.configPage.html",
 
-                // Show the plugin in the dashboard's left drawer. NOTE: Jellyfin 10.11's web
-                // client renders every plugin menu entry with a fixed Material "folder" icon
-                // and ignores PluginPageInfo.MenuIcon, so a custom AnimeClick logo in the
-                // sidebar is not achievable on this server version.
+                // Keep the plugin directly reachable from the administration menu.
                 EnableInMainMenu = true
             },
             // Shared assets (served via /web/configurationpage?name=...)

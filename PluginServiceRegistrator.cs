@@ -15,6 +15,12 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
     public void RegisterServices(IServiceCollection services)
     {
+        services.AddHttpClient(AnimeClickHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false,
+            AutomaticDecompression = System.Net.DecompressionMethods.All
+        });
         // Resolve HttpClient through the shared IHttpClientFactory (like every other network
         // client here) instead of registering a typed client. AddHttpClient<AnimeClickClient>()
         // keys its options by the type name, which clashes and crashes registration if two
