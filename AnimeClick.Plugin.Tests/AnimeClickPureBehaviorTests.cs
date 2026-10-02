@@ -210,8 +210,8 @@ public class AnimeClickPureBehaviorTests
             AnimeClickAuditReason.PendingRefresh,
             AnimeClickLibraryAudit.ClassifyEpisode(
                 "426549/vecchio-slug",
-                "Why Are We Here?",
-                titleNeedsRepair: false,
+                "Episode 5",
+                titleNeedsRepair: true,
                 catalog));
         Assert.Equal(
             AnimeClickAuditReason.Ok,

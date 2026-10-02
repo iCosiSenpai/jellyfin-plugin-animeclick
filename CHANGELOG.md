@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0.0
+
+La tua libreria con analisi automatica, viste separate, avanzamento reale e interruzione dei lavori. Recupero dei soli titoli mancanti con protezione dei metadati esistenti. Abbinamenti della comunità e invio automatico delle correzioni su GitHub, entrambi facoltativi e disattivati di default.
+
+- [Note complete](docs/releases/1.1.0.0.md)
+- [Audit e verifiche](docs/AUDIT-1.1.md)
+
 ## 1.0.0.0
 
 Major per Jellyfin 12 e .NET 10: frontend ridisegnato, identificazione automatica più conservativa, identificazione manuale integrata nel refresh Jellyfin e correzioni di cache, concorrenza, rete e traduzioni.

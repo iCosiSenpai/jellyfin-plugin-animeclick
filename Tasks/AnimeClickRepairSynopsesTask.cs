@@ -36,6 +36,7 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
 
+    private readonly AnimeClickActivityService _activities;
     private readonly AnimeClickLibraryQualityService _qualityService;
     private readonly AnimeClickRepairLedger _repairLedger;
     private readonly ILogger<AnimeClickRepairSynopsesTask> _logger;
@@ -43,8 +44,10 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
     public AnimeClickRepairSynopsesTask(
         AnimeClickLibraryQualityService qualityService,
         AnimeClickRepairLedger repairLedger,
-        ILogger<AnimeClickRepairSynopsesTask> logger)
+        ILogger<AnimeClickRepairSynopsesTask> logger,
+        AnimeClickActivityService? activities = null)
     {
+        _activities = activities ?? new AnimeClickActivityService();
         _qualityService = qualityService;
         _repairLedger = repairLedger;
         _logger = logger;
@@ -79,6 +82,22 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
     /// <inheritdoc />
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
+        if (!_activities.Begin(AnimeClickActivityService.Synopses)) return;
+        try { await ExecuteCoreAsync(progress, cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException)
+        {
+            _activities.Finish(AnimeClickActivityService.Synopses, "Cancelled", "Completamento interrotto. Gli aggiornamenti già accodati possono terminare.");
+            if (cancellationToken.IsCancellationRequested) throw;
+        }
+        catch (Exception)
+        {
+            _activities.Finish(AnimeClickActivityService.Synopses, "Failed", "Completamento non riuscito. Consulta la diagnostica.");
+            throw;
+        }
+    }
+
+    private async Task ExecuteCoreAsync(IProgress<double> progress, CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(progress);
 
         var report = await _qualityService.AuditAsync(cancellationToken).ConfigureAwait(false);
@@ -91,6 +110,7 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
                 "AnimeClick: nessuna sinossi da completare (in traduzione={Waiting} senza fonte={NoSource})",
                 report.WaitingTranslationCount,
                 report.NoSourceCount);
+            _activities.Finish(AnimeClickActivityService.Synopses, "Completed", "Nessuna sinossi da completare.");
             progress.Report(100);
             return;
         }
@@ -100,10 +120,21 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
         var withoutSource = 0;
         var queuedTotal = 0;
         var rounds = 0;
+        var processed = 0;
+        var skipped = 0;
+        var errors = 0;
 
-        while (rounds < MaximumRounds && !cancellationToken.IsCancellationRequested)
+        var attempted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _activities.Update(AnimeClickActivityService.Synopses, initialActionable, 0, 0, 0, 0, "Preparazione del primo lotto…");
+        while (rounds < MaximumRounds)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_activities.Get(AnimeClickActivityService.Synopses).State == "Cancelling") throw new OperationCanceledException();
+            // Never submit a stalled item twice in one run.
+            foreach (var item in report.Series.SelectMany(group => group.Items))
+                if (attempted.Contains(item.Id)) item.CanRepair = false;
             var batch = AnimeClickLibraryQualityService.SelectRepairBatch(report);
+            foreach (var id in batch) attempted.Add(id);
             if (batch.Count == 0)
             {
                 break;
@@ -120,9 +151,16 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
 
             queuedTotal += result.QueuedCount;
             rounds++;
-            await WaitForRoundAsync(batch, roundStart, cancellationToken).ConfigureAwait(false);
+            processed += result.SkippedCount + result.SuppressedCount;
+            skipped += result.SkippedCount + result.SuppressedCount;
+            _activities.Update(AnimeClickActivityService.Synopses, initialActionable, processed,
+                applied, skipped + waiting + withoutSource, errors, $"Lotto {rounds}: {result.QueuedCount} elementi accodati, attesa degli esiti…");
+            await WaitForRoundAsync(result.QueuedItemIds, roundStart, cancellationToken).ConfigureAwait(false);
 
-            var outcomes = CountOutcomes(batch, roundStart);
+            var outcomes = CountOutcomes(result.QueuedItemIds, roundStart);
+            processed += outcomes.Recorded;
+            skipped += outcomes.Other;
+            errors += outcomes.Errors;
             applied += outcomes.Applied;
             waiting += outcomes.Waiting;
             withoutSource += outcomes.NoSource;
@@ -134,10 +172,7 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
                 outcomes.Waiting,
                 outcomes.NoSource);
 
-            if (cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
+            cancellationToken.ThrowIfCancellationRequested();
 
             report = await _qualityService.AuditAsync(cancellationToken).ConfigureAwait(false);
             progress.Report(ComputeProgress(initialActionable, report.RepairableCount));
@@ -151,6 +186,12 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
             waiting,
             withoutSource,
             report.RepairableCount);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_activities.Get(AnimeClickActivityService.Synopses).State == "Cancelling") throw new OperationCanceledException();
+        _activities.Update(AnimeClickActivityService.Synopses, initialActionable, Math.Min(initialActionable, processed),
+            applied, skipped + waiting + withoutSource, errors, "Verifica finale…");
+        _activities.Finish(AnimeClickActivityService.Synopses, report.RepairableCount > 0 || errors > 0 ? "Partial" : "Completed",
+            $"{applied} sinossi aggiornate · {waiting} in traduzione · {withoutSource} senza fonte · {errors} errori · {report.RepairableCount} ancora da verificare.");
         progress.Report(100);
     }
 
@@ -181,21 +222,22 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
         CancellationToken cancellationToken)
     {
         var deadline = DateTimeOffset.UtcNow + RoundTimeout;
-        while (DateTimeOffset.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
+        var baseline = _activities.Get(AnimeClickActivityService.Synopses);
+        while (DateTimeOffset.UtcNow < deadline)
         {
-            if (CountOutcomes(batch, roundStart).Recorded >= batch.Count)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_activities.Get(AnimeClickActivityService.Synopses).State == "Cancelling") throw new OperationCanceledException();
+            var outcomes = CountOutcomes(batch, roundStart);
+            _activities.Update(AnimeClickActivityService.Synopses, baseline.Total,
+                Math.Min(baseline.Total, baseline.Processed + outcomes.Recorded), baseline.Applied + outcomes.Applied,
+                baseline.Skipped + outcomes.Waiting + outcomes.NoSource + outcomes.Other, baseline.Errors + outcomes.Errors,
+                $"Lotto in corso: {outcomes.Recorded}/{batch.Count} esiti ricevuti. Le traduzioni possono continuare in background.");
+            if (outcomes.Recorded >= batch.Count)
             {
                 return;
             }
 
-            try
-            {
-                await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
+            await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -205,6 +247,8 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
         var applied = 0;
         var waiting = 0;
         var noSource = 0;
+        var errors = 0;
+        var other = 0;
         foreach (var id in batch)
         {
             if (!Guid.TryParse(id, out var itemId)
@@ -233,10 +277,12 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
             {
                 noSource++;
             }
+            else if (attempt.Outcome == nameof(AnimeClickRepairOutcome.Error)) errors++;
+            else other++;
         }
 
-        return new RoundOutcomes(recorded, applied, waiting, noSource);
+        return new RoundOutcomes(recorded, applied, waiting, noSource, errors, other);
     }
 
-    private sealed record RoundOutcomes(int Recorded, int Applied, int Waiting, int NoSource);
+    private sealed record RoundOutcomes(int Recorded, int Applied, int Waiting, int NoSource, int Errors, int Other);
 }

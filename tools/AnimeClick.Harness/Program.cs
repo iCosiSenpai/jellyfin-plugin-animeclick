@@ -195,7 +195,7 @@ internal static class Program
         CancellationToken cancellationToken)
     {
         var report = new AnimeReport { AnimeClickId = animeClickId };
-        var animeUrl = $"{BaseUrl}/anime/{animeClickId.Trim('/')}";
+        var animeUrl = AnimeClickClient.BuildAnimeUrl(BaseUrl, animeClickId);
 
         var detailHtml = await fetcher.GetAsync(animeUrl, cancellationToken).ConfigureAwait(false);
         if (detailHtml is null)
@@ -704,7 +704,7 @@ internal static class Program
                     return existing;
                 }
 
-                var url = $"{BaseUrl}/anime/{animeClickId.Trim('/')}";
+                var url = AnimeClickClient.BuildAnimeUrl(BaseUrl, animeClickId);
                 var html = await fetcher.GetAsync(url, cancellationToken).ConfigureAwait(false);
                 LibraryDiff.SeasonSource? source = null;
                 if (html is not null)
@@ -837,7 +837,7 @@ internal static class Program
         string animeClickId,
         CancellationToken cancellationToken)
     {
-        var url = $"{BaseUrl}/anime/{animeClickId.Trim('/')}/relazioni";
+        var url = AnimeClickClient.BuildAnimeUrl(BaseUrl, animeClickId) + "/relazioni";
         var html = await fetcher.GetAsync(url, cancellationToken).ConfigureAwait(false);
         if (html is null)
         {

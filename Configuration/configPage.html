@@ -8,10 +8,10 @@
         <div class="ac-shell" id="acConfigShell">
             <header class="ac-masthead">
                 <div class="ac-brand">
-                    <img src="configurationpage?name=AnimeClickLogo&amp;v=1.0.0.0" class="ac-logo" alt="" />
+                    <img src="configurationpage?name=AnimeClickLogo&amp;v=1.1.0.0" class="ac-logo" alt="" />
                     <div><strong>AnimeClick</strong><p class="ac-note">I tuoi anime, in italiano.</p></div>
                 </div>
-                <span class="ac-version" id="acVersion">v1.0.0.0</span>
+                <span class="ac-version" id="acVersion">v1.1.0.0</span>
             </header>
             <div id="acLoadState" class="ac-state" role="status" aria-live="polite">Caricamento delle impostazioni…</div>
             <div class="ac-workspace">
@@ -20,6 +20,7 @@
                     <button type="button" class="ac-tab" id="acTabLibreria" role="tab" data-panel="libreria" aria-controls="acPanelLibreria" aria-selected="false" tabindex="-1">La tua libreria</button>
                     <button type="button" class="ac-tab" id="acTabMetadati" role="tab" data-panel="metadati" aria-controls="acPanelMetadati" aria-selected="false" tabindex="-1">Preferenze</button>
                     <button type="button" class="ac-tab" id="acTabSinossi" role="tab" data-panel="sinossi" aria-controls="acPanelSinossi" aria-selected="false" tabindex="-1">Fonti aggiuntive</button>
+                    <button type="button" class="ac-tab" id="acTabCommunity" role="tab" data-panel="community" aria-controls="acPanelCommunity" aria-selected="false" tabindex="-1">Comunità</button>
                     <button type="button" class="ac-tab" id="acTabStrumenti" role="tab" data-panel="strumenti" aria-controls="acPanelStrumenti" aria-selected="false" tabindex="-1">Avanzate</button>
                 </nav>
                 <main class="ac-main" aria-busy="true">
@@ -27,6 +28,7 @@
                     <div class="ac-panel" data-panel="libreria" id="acPanelLibreria" role="tabpanel" aria-labelledby="acTabLibreria" tabindex="0" hidden></div>
                     <div class="ac-panel" data-panel="metadati" id="acPanelMetadati" role="tabpanel" aria-labelledby="acTabMetadati" tabindex="0" hidden></div>
                     <div class="ac-panel" data-panel="sinossi" id="acPanelSinossi" role="tabpanel" aria-labelledby="acTabSinossi" tabindex="0" hidden></div>
+                    <div class="ac-panel" data-panel="community" id="acPanelCommunity" role="tabpanel" aria-labelledby="acTabCommunity" tabindex="0" hidden></div>
                     <div class="ac-panel" data-panel="strumenti" id="acPanelStrumenti" role="tabpanel" aria-labelledby="acTabStrumenti" tabindex="0" hidden></div>
                 </main>
             </div>
@@ -46,7 +48,7 @@
     </div></div>
     <script>
     (function () {
-        var V = '1.0.0.0';
+        var V = '1.1.0.0';
         var pg = document.getElementById('AnimeClickConfigPage');
         function asset(name) { return 'configurationpage?name=' + name + '&v=' + V; }
         function failed() {
@@ -77,9 +79,23 @@
             script.addEventListener('error', function () { script.remove(); failed(); });
             document.head.appendChild(script);
         }
+        function ensureLibrary(done) {
+            var id = 'ac-library-js-' + V;
+            var existing = document.getElementById(id);
+            if (existing) {
+                if (existing.dataset.loaded) done();
+                else existing.addEventListener('load', done, { once: true });
+                return;
+            }
+            var script = document.createElement('script');
+            script.id = id; script.src = asset('AnimeClickLibraryJs');
+            script.addEventListener('load', function () { script.dataset.loaded = '1'; done(); });
+            script.addEventListener('error', function () { script.remove(); failed(); });
+            document.head.appendChild(script);
+        }
         pg.addEventListener('pageshow', function () {
             ensureCss();
-            ensureJs(function () { window.AC.config.show(pg); });
+            ensureLibrary(function () { ensureJs(function () { window.AC.config.show(pg); }); });
         });
     })();
     </script>

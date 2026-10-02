@@ -21,7 +21,7 @@ namespace AnimeClick.Plugin.Providers;
 /// overview fallback. Raw AnimeClick numbering is reconciled against Jellyfin at
 /// match time; ambiguous layouts are left untouched rather than guessed.
 /// </summary>
-public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, EpisodeInfo>, IHasOrder
+public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, EpisodeInfo>, IHasOrder, IAnimeClickTitleResolver
 {
     private static readonly SemaphoreStripe CacheFillLocks = new();
 
@@ -261,6 +261,21 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         => AnimeClickHttp.GetImageAsync(_httpClientFactory, url,
             Plugin.Instance?.Configuration ?? new PluginConfiguration(), cancellationToken);
 
+    public async Task<string?> ResolveTitleAsync(
+        Episode episode, AnimeClickTitleRepairSession refreshedCatalogs, CancellationToken cancellationToken)
+    {
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (!configuration.EnableEpisodeTitles || episode.IndexNumber is null or < 0) return null;
+        var root = episode.Series?.GetProviderId("AnimeClick");
+        var identity = AnimeClickEpisodeIdentity.Resolve(root, episode.Season?.GetProviderId("AnimeClick"));
+        if (!AnimeClickClient.TryNormalizeAnimeClickId(identity.MatchingId, out var card)) return null;
+        var match = await ResolveEpisodeAsync(new MetadataResult<Episode> { Item = new Episode() },
+            card, identity.IsSeasonSpecific, root, episode.ParentIndexNumber, episode.IndexNumber.Value,
+            episode.IndexNumberEnd, episode.GetProviderId("AnimeClick"), episode.Name, episode.Path,
+            false, configuration, cancellationToken, refreshedCatalogs).ConfigureAwait(false);
+        return match?.Title;
+    }
+
     private async Task<AnimeClickEpisode?> ResolveEpisodeAsync(
         MetadataResult<Episode> result,
         string mainAnimeClickId,
@@ -274,7 +289,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         string? episodePath,
         bool populateMetadata,
         PluginConfiguration configuration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AnimeClickTitleRepairSession? refreshedCatalogs = null)
     {
         if (!AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, mainAnimeClickId, out var mainAnimeUrl))
         {
@@ -343,7 +359,11 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         // Counts are part of the raw cache identity. A refreshed detail page that changes
         // from 1x24 to 2 cours cannot reuse a snapshot created under the old declaration.
         var cacheKey = BuildCatalogCacheKey(animeClickId, declaredEpisodes, declaredSeasons);
-        var catalog = await _cache
+        // A deliberate recheck must see titles published since the last scan. Refresh once per
+        // actual resolved card, then share the fresh catalog across this run's episodes.
+        if (refreshedCatalogs?.Unavailable.Contains(cacheKey) == true) return null;
+        if (refreshedCatalogs?.Refreshed.Add(cacheKey) == true) _cache.ClearKey(cacheKey);
+        var catalog = refreshedCatalogs?.Catalogs.GetValueOrDefault(cacheKey) ?? await _cache
             .GetAsync<AnimeClickEpisodeCatalog>(cacheKey, configuration.CacheHours, cancellationToken)
             .ConfigureAwait(false);
         _logger.LogDebug("AnimeClick episode catalog cache {State}: {Key}", catalog is null ? "miss" : "hit", cacheKey);
@@ -381,6 +401,11 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                     }
                     else
                     {
+                        if (refreshedCatalogs is not null)
+                        {
+                            refreshedCatalogs.Unavailable.Add(cacheKey);
+                            return null;
+                        }
                         _logger.LogWarning(
                             "AnimeClick: episode pagination for {Id} was incomplete; using {Count} rows without caching",
                             animeClickId,
@@ -388,11 +413,18 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                     }
                 }
             }
+            catch
+            {
+                refreshedCatalogs?.Unavailable.Add(cacheKey);
+                throw;
+            }
             finally
             {
                 fillLock.Release();
             }
         }
+
+        if (refreshedCatalogs is not null) refreshedCatalogs.Catalogs[cacheKey] = catalog;
 
         // A resolved season card numbers its own episodes from one, so the library boundaries stop
         // being the reference for this match.

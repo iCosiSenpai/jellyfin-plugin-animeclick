@@ -1,9 +1,8 @@
-/* AnimeClick — premium configuration dashboard.
-   Cloud-first onboarding, authority visibility and privacy-safe diagnostics. */
+/* AnimeClick administrative workspace. Local audits, scoped repairs and opt-in community. */
 (function () {
     'use strict';
 
-    var V = '1.0.0.0';
+    var V = '1.1.0.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -121,14 +120,14 @@
         return path;
     }
 
-    function request(method, path, body) {
+    function request(method, path, body, timeoutMilliseconds) {
         var headers = { Accept: 'application/json' };
         var auth = authHeader();
         if (auth) headers.Authorization = auth;
         var options = { method: method, credentials: 'same-origin', headers: headers };
         var controller = new AbortController();
         options.signal = controller.signal;
-        var timeout = setTimeout(function () { controller.abort(); }, 130000);
+        var timeout = setTimeout(function () { controller.abort(); }, timeoutMilliseconds || 130000);
         if (body !== undefined) {
             headers['Content-Type'] = 'application/json';
             options.body = JSON.stringify(body);
@@ -447,6 +446,8 @@
             panel.setAttribute('aria-hidden', selected ? 'false' : 'true');
         });
         if (shouldFocus) tab.focus();
+        if (tab.dataset.panel === 'libreria' && configLoaded) enterLibrary();
+        else stopActivityPolling();
     }
 
     function initTabs() {
@@ -895,6 +896,85 @@
         panel.appendChild(advanced.details);
     }
 
+    /* ===== library workspace ===== */
+
+    var libraryUi;
+    function buildLibraryDashboard(panel) {
+        if (libraryUi) libraryUi.dispose();
+        libraryUi = window.AC.createLibrary({
+            page: page, el: el, val: val, valueOf: valueOf, request: request, makeCard: makeCard, setBusy: setBusy,
+            renderAudit: renderAudit, renderQualityAudit: renderQualityAudit,
+            updateTitleControls: updateTitleAuditControls, updateQualityControls: updateQualityAuditControls,
+            titleReport: function () { return titleAuditView.report; }
+        });
+        libraryUi.build(panel);
+    }
+    function enterLibrary() { if (libraryUi) libraryUi.enter(); }
+    function stopActivityPolling() { if (libraryUi) libraryUi.stop(); }
+    function pollActivities() { if (libraryUi) libraryUi.poll(); }
+
+    function buildCommunityPanel() {
+        var panel = val('acPanelCommunity'); clear(panel);
+        var card = makeCard('Facoltativo · disattivato all’installazione', 'Abbinamenti della comunità',
+            'Quando correggi una serie o un film, puoi aiutare anche gli altri utenti a riconoscerlo. Ogni proposta viene verificata prima di entrare negli abbinamenti approvati.');
+        card.body.appendChild(makeCheck('acEnableCommunityMappings', 'Usa gli abbinamenti approvati',
+            'Scarica da GitHub una lista di ID pubblici verificati, al massimo una volta al giorno. Aiuta a identificare opere nuove con ID TMDB, TVDB o AniList.'));
+        card.body.appendChild(makeCheck('acEnableCommunitySharing', 'Condividi automaticamente le mie correzioni',
+            'Sì: dopo una correzione pubblica su GitHub soltanto gli ID dell’opera. No: nessun invio. Predefinito: No.'));
+        card.body.appendChild(makeCallout('Cosa viene pubblicato',
+            'Tipo (serie o film), ID AnimeClick e ID TMDB, TVDB o AniList. La segnalazione è pubblica e associata al tuo account GitHub. Non include utenti Jellyfin, percorsi, file, URL del server, trame o immagini. Disattivare l’opzione ferma gli invii futuri; le segnalazioni già pubblicate si gestiscono su GitHub.'));
+        card.body.appendChild(makeSecretField('acCommunityGitHubToken', 'Token GitHub per l’invio automatico',
+            'Usa un token del tuo account che possa creare issue in <a href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick" target="_blank" rel="noopener noreferrer">questo repository</a>. È conservato nella configurazione amministrativa del server e inviato soltanto a api.github.com. Non serve per leggere gli abbinamenti.'));
+        card.body.appendChild(makeCheck('acClearCommunityToken', 'Rimuovi il token salvato', 'Salva le modifiche per rimuoverlo.'));
+        var actions = el('div', 'ac-row');
+        var status = el('button', 'ac-btn ac-btn-ghost', 'Controlla invii'); status.type = 'button'; status.id = 'acCommunityStatus';
+        var retry = el('button', 'ac-btn ac-btn-ghost', 'Riprova invii falliti'); retry.type = 'button'; retry.id = 'acCommunityRetry';
+        actions.appendChild(status); actions.appendChild(retry); card.body.appendChild(actions);
+        var result = makeLiveState('acCommunityResult'); card.body.appendChild(result);
+        function check(method, route, button) {
+            var idle = button.textContent; setBusy(button, true, idle, 'Controllo…');
+            request(method, 'Plugins/AnimeClick/Community/' + route).then(function (report) {
+                result.className = 'ac-state';
+                result.textContent = (valueOf(report, 'pending') || 0) + ' invii in attesa · ' + (valueOf(report, 'failed') || 0)
+                    + ' falliti. ' + (valueOf(report, 'message') || '');
+            }).catch(function (error) { result.className = 'ac-state error'; result.textContent = error.message; })
+                .finally(function () { setBusy(button, false, idle, 'Controllo…'); });
+        }
+        status.addEventListener('click', function () { check('GET', 'Status', status); });
+        retry.addEventListener('click', function () { check('POST', 'Retry', retry); });
+        panel.appendChild(card.card);
+        var preview = makeCard('', 'Controlla i dati prima di condividere',
+            'Seleziona un film o una serie in Avanzate → Correggi un abbinamento. Qui puoi vedere gli ID che una futura correzione invierebbe. L’anteprima non pubblica nulla.');
+        var button = el('button', 'ac-btn ac-btn-ghost', 'Mostra anteprima dell’elemento selezionato'); button.type = 'button'; button.id = 'acCommunityPreview';
+        var output = el('pre', 'ac-community-preview'); output.id = 'acCommunityPreviewData'; output.hidden = true;
+        button.addEventListener('click', function () {
+            var id = val('acItemId').value.trim();
+            output.hidden = false;
+            if (!id) { output.textContent = 'Seleziona prima un film o una serie nella sezione Avanzate.'; return; }
+            setBusy(button, true, 'Mostra anteprima dell’elemento selezionato', 'Caricamento…');
+            request('GET', 'Plugins/AnimeClick/Community/Preview?itemId=' + encodeURIComponent(id)).then(function (mapping) {
+                output.textContent = JSON.stringify(mapping, null, 2);
+            }).catch(function (error) { output.textContent = error.message; }).finally(function () {
+                setBusy(button, false, 'Mostra anteprima dell’elemento selezionato', 'Caricamento…');
+            });
+        });
+        preview.body.appendChild(button); preview.body.appendChild(output); panel.appendChild(preview.card);
+        var exportButton = el('button', 'ac-btn ac-btn-ghost', 'Esporta i collegamenti della libreria'); exportButton.type = 'button';
+        exportButton.id = 'acCommunityExport';
+        exportButton.addEventListener('click', function () {
+            setBusy(exportButton, true, 'Esporta i collegamenti della libreria', 'Esportazione…');
+            request('GET', 'Plugins/AnimeClick/Community/Export').then(function (dataset) {
+                var url = URL.createObjectURL(new Blob([JSON.stringify(dataset, null, 2)], { type: 'application/json' }));
+                var link = el('a'); link.href = url; link.download = 'animeclick-abbinamenti.json';
+                document.body.appendChild(link); link.click(); link.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+                toast('Esportazione scaricata: nessun dato pubblicato.', 'success');
+            }).catch(function (error) { toast('Esportazione non riuscita: ' + error.message, 'error'); })
+                .finally(function () { setBusy(exportButton, false, 'Esporta i collegamenti della libreria', 'Esportazione…'); });
+        });
+        preview.body.appendChild(exportButton);
+        preview.body.appendChild(el('p', 'ac-note', 'L’esportazione contiene solo gli ID pubblici dei film e delle serie già collegati. Il file rimane sul tuo dispositivo; puoi esaminarlo e proporre gli abbinamenti al progetto.'));
+    }
+
     /* ===== library audit ===== */
 
     /* Tone per cause, so the colour says how much the user can do about it: red is a real
@@ -1106,7 +1186,7 @@
     }
 
     function updateTitleAuditControls() {
-        var busy = titleAuditView.busy;
+        var busy = titleAuditView.busy || (libraryUi && libraryUi.active('titles'));
         var automatic = val('acBtnRunTitles');
         if (automatic && automatic.getAttribute('aria-busy') !== 'true') automatic.disabled = busy;
         var mainAudit = val('acBtnAudit');
@@ -1222,9 +1302,9 @@
             'Sistema tutti i titoli',
             'Ricontrollare'
             + (recoverable ? ' i ' + recoverable + ' episodi recuperabili' : ' gli episodi recuperabili')
-            + '? Non c\'è nessun tetto: l\'attività lavora tutto l\'arretrato, distanziando le richieste '
-            + 'ad AnimeClick con il ritardo configurato. Il lavoro prosegue in background e '
-            + 'l\'avanzamento è visibile in Attività pianificate.'
+            + '? Verranno completati solo i nomi vuoti, generici o derivati dal file. '
+            + 'Titoli già compilati, numerazione, abbinamenti, immagini e trame sono conservati. '
+            + 'L’avanzamento apparirà qui e il lavoro continua a pagina chiusa.'
         ).then(function (confirmed) {
             if (!confirmed) return;
             var operationId = beginTitleAuditOperation();
@@ -1238,7 +1318,8 @@
             request('POST', 'Plugins/AnimeClick/RunMissingTitlesTask').then(function (response) {
                 state.className = 'ac-state success';
                 state.textContent = (valueOf(response, 'message') || 'Ricontrollo avviato.')
-                    + ' Il completamento dei refresh continua in background.';
+                    + ' Segui l’avanzamento nel riquadro Attività.';
+                pollActivities();
                 toast('Ricontrollo dei titoli avviato', 'success');
             }).catch(function (error) {
                 state.className = 'ac-state error';
@@ -1324,7 +1405,7 @@
             state.textContent = visible.length + ' gruppi mostrati su ' + groups.length
                 + ' · ' + visibleItems + ' elementi corrispondenti';
         }
-        var busy = qualityAuditView.busy;
+        var busy = qualityAuditView.busy || (libraryUi && libraryUi.active('synopses'));
         var automatic = val('acBtnQualityRepair');
         if (automatic && automatic.getAttribute('aria-busy') !== 'true') {
             // The server task walks the whole backlog, so a batch already queued no longer blocks it.
@@ -1451,6 +1532,7 @@
                 state.className = 'ac-state success';
                 state.textContent = valueOf(response, 'message')
                     || 'Completamento avviato: l’avanzamento è in Attività pianificate.';
+                pollActivities();
                 toast('Completamento delle sinossi avviato', 'success');
             }).catch(function (error) {
                 state.className = 'ac-state error';
@@ -1465,13 +1547,12 @@
     function buildLibreriaPanel() {
         var panel = page.querySelector('#acPanelLibreria');
         clear(panel);
+        buildLibraryDashboard(panel);
 
         var audit = makeCard(
             'Titoli episodio',
-            'Cosa manca e cosa si può recuperare',
-            'Per sistemare tutto basta «Sistema tutti i titoli»: nessun tetto, richieste distanziate, '
-            + 'prosegue in background. L\'analisi legge solo le schede in cache e non contatta AnimeClick; '
-            + 'clic su un contatore per filtrare.'
+            'Completa i titoli mancanti',
+            'Il ricontrollo completa i nomi vuoti o generici. I titoli già compilati e le tue correzioni sono conservati.'
         );
         var auditActions = el('div', 'ac-row ac-audit-primary-actions');
         var auditButton = el('button', 'ac-btn ac-btn-ghost', 'Analizza la libreria');
@@ -1543,6 +1624,7 @@
         var list = el('div', 'ac-library-list ac-audit-list');
         list.id = 'acAuditList';
         audit.body.appendChild(list);
+        audit.card.id = 'acLibraryTitles';
         panel.appendChild(audit.card);
 
         val('acAuditSearch').addEventListener('input', function () {
@@ -1595,10 +1677,8 @@
 
         var quality = makeCard(
             'Sinossi e trame',
-            'Cosa manca e cosa si può completare',
-            'Per sistemare tutto basta «Completa tutte le sinossi»: procede a lotti, si ferma da solo e '
-            + 'prosegue a pagina chiusa. L\'elenco mostra solo ciò che ha bisogno di attenzione; '
-            + 'clic su un contatore per filtrare.'
+            'Completa le trame mancanti',
+            'Recupera le sinossi vuote o in inglese dalle fonti abilitate. I testi italiani e i campi bloccati sono conservati.'
         );
         var qualityActions = el('div', 'ac-row ac-audit-primary-actions');
         var qualityAuditButton = el('button', 'ac-btn ac-btn-primary', 'Analizza la qualità');
@@ -1655,6 +1735,8 @@
         var qualityList = el('div', 'ac-library-list ac-audit-list');
         qualityList.id = 'acQualityList';
         quality.body.appendChild(qualityList);
+        quality.card.id = 'acLibrarySynopses';
+        quality.card.hidden = true;
         panel.appendChild(quality.card);
 
         val('acQualitySearch').addEventListener('input', function () {
@@ -1707,19 +1789,14 @@
             });
         });
 
-        panel.appendChild(makeCallout(
-            'Bulk sicuro, senza modifiche alla cieca',
-            'Entrambe le azioni sono anche attività settimanali di Jellyfin: quello che le fonti pubblicano '
-            + 'dopo arriva da solo. Nessun testo italiano viene sovrascritto e i campi bloccati restano intatti.',
-            'good'
-        ));
-
-        panel.appendChild(makeCallout(
-            'Una stagione con titoli da sistemare',
-            'Quando l’analisi segnala «Nessun abbinamento», apri la stagione in Jellyfin e scrivi l’ID AnimeClick '
-            + 'di quel cour nel campo AnimeClick della stagione. L’ID di stagione ha la precedenza su quello della serie.',
-            'warn'
-        ));
+        // The common scan replaces two separate introductory actions.
+        auditActions.hidden = true;
+        qualityActions.hidden = true;
+        var advanced = makeDetails('Diagnosi approfondita dei titoli',
+            'Leggi su AnimeClick le schede selezionate, senza modificare la libreria.');
+        advanced.details.addEventListener('toggle', function () { audit.card.classList.toggle('ac-title-selection', advanced.details.open); });
+        advanced.body.appendChild(auditBulk);
+        auditControls.appendChild(advanced.details);
     }
 
     function auditSeasonChips(item) {
@@ -1885,21 +1962,21 @@
             summary,
             'Da recuperare',
             String(recoverable),
-            'un ricontrollo può scrivere il titolo',
+            'episodi da verificare',
             recoverable ? 'warn' : 'good'
         );
         addPriorityTile(
             summary,
             'In attesa di AnimeClick',
             String(waiting),
-            'riga abbinata, titolo non ancora pubblicato',
+            'titolo non ancora pubblicato',
             'neutral'
         );
         addPriorityTile(
             summary,
             'Non recuperabili',
             String(unavailable),
-            'la scheda non pubblica titoli, oppure serve un intervento manuale',
+            'senza fonte o da identificare',
             'neutral'
         );
         addPriorityTile(
@@ -2493,6 +2570,11 @@
         setValue('acEpisodeLayoutOverrides', config.EpisodeLayoutOverrides, '');
         setChecked('acEnableThemeSongs', config.EnableThemeSongs, true);
         setChecked('acEnableCollections', config.EnableCollections, false);
+        setChecked('acEnableCommunityMappings', config.EnableCommunityMappings, false);
+        setChecked('acEnableCommunitySharing', config.EnableCommunitySharing, false);
+        val('acCommunityGitHubToken').value = '';
+        val('acCommunityGitHubToken').placeholder = config.CommunityGitHubToken ? 'Token salvato — lascia vuoto per mantenerlo' : 'Token personale GitHub';
+        setChecked('acClearCommunityToken', false, false);
 
         setChecked('acEnableEpisodeSynopsisTranslation', config.EnableEpisodeSynopsisTranslation, true);
         setChecked('acEnableAiTranslation', config.EnableAiTranslation, true);
@@ -2542,6 +2624,10 @@
         config.EpisodeLayoutOverrides = val('acEpisodeLayoutOverrides').value.trim();
         config.EnableThemeSongs = val('acEnableThemeSongs').checked;
         config.EnableCollections = val('acEnableCollections').checked;
+        config.EnableCommunityMappings = val('acEnableCommunityMappings').checked;
+        config.EnableCommunitySharing = val('acEnableCommunitySharing').checked;
+        if (val('acClearCommunityToken').checked) config.CommunityGitHubToken = '';
+        if (val('acCommunityGitHubToken').value.trim()) config.CommunityGitHubToken = val('acCommunityGitHubToken').value.trim();
 
         config.EnableEpisodeSynopsisTranslation = val('acEnableEpisodeSynopsisTranslation').checked;
         config.EnableAiTranslation = val('acEnableAiTranslation').checked;
@@ -2593,6 +2679,12 @@
     }
 
     function validateForm() {
+        if (val('acEnableCommunitySharing').checked && !val('acCommunityGitHubToken').value.trim()
+            && (!savedConfig.CommunityGitHubToken || val('acClearCommunityToken').checked)) {
+            activateTab(val('acTabCommunity'), false);
+            val('acCommunityGitHubToken').focus();
+            return 'Per l’invio automatico serve il tuo token GitHub con permesso di creare segnalazioni nel repository del plugin.';
+        }
         var invalid = Array.prototype.find.call(page.querySelectorAll('input[type="number"]'), function (input) {
             return input.id.indexOf('acFallback') !== 0 && (!input.value.trim() || !input.checkValidity());
         });
@@ -3145,24 +3237,6 @@
             });
         });
 
-        page.querySelector('#acBtnRunTitles').addEventListener('click', function () {
-            var button = this;
-            var state = page.querySelector('#acRunTitlesState');
-            setBusy(button, true, 'Esegui ora il ricontrollo', 'Avvio…');
-            state.className = 'ac-state';
-            state.textContent = 'Accodamento…';
-            request('POST', 'Plugins/AnimeClick/RunMissingTitlesTask').then(function (response) {
-                state.className = 'ac-state success';
-                state.textContent = valueOf(response, 'message') || 'Ricontrollo accodato.';
-                toast('Ricontrollo dei titoli avviato', 'success');
-            }).catch(function (error) {
-                state.className = 'ac-state error';
-                state.textContent = truncate(error.message, 240);
-            }).finally(function () {
-                setBusy(button, false, 'Esegui ora il ricontrollo', 'Avvio…');
-            });
-        });
-
         page.querySelector('#acBtnClearCache').addEventListener('click', function () {
             var button = this;
             confirmModal('Svuota tutta la cache', 'Vuoi invalidare metadati, risoluzioni e traduzioni memorizzate?').then(function (confirmed) {
@@ -3238,6 +3312,8 @@
                     success ? 'L’ID AnimeClick è stato salvato e il refresh è stato richiesto.' : truncate(valueOf(response, 'error') || 'Errore sconosciuto.', 300),
                     success ? 'good' : 'warn'
                 ));
+                var communityMessage = valueOf(response, 'communityMessage');
+                if (communityMessage && communityMessage !== 'Disattivata') result.appendChild(el('p', 'ac-note', communityMessage));
                 toast(success ? 'Identificazione completata' : 'Identificazione incompleta', success ? 'success' : 'error');
             }).catch(function (error) {
                 clear(result);
@@ -3257,13 +3333,17 @@
         buildSinossiPanel();
         buildLibreriaPanel();
         buildStrumentiPanel();
+        buildCommunityPanel();
         buildDiagnosticsPanel();
         initTabs();
         wireActions();
     }
 
     function show(pageElement) {
-        if (page === pageElement && configLoaded) return;
+        if (page === pageElement && configLoaded) {
+            if (val('acTabLibreria').getAttribute('aria-selected') === 'true') enterLibrary();
+            return;
+        }
         page = pageElement;
         var sequence = ++loadSequence;
         configLoaded = false;
@@ -3289,6 +3369,7 @@
             state.hidden = true;
             loadAiProviders();
             loadLibraryHealth();
+            if (val('acTabLibreria').getAttribute('aria-selected') === 'true') enterLibrary();
         }).catch(function (error) {
             if (sequence !== loadSequence) return;
             main.setAttribute('aria-busy', 'false');

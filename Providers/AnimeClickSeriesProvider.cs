@@ -32,6 +32,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
     private readonly ILogger<AnimeClickSeriesProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickTmdbClient _tmdbClient;
+    private readonly AnimeClickCommunityService? _community;
 
     public AnimeClickSeriesProvider(
         AnimeClickClient client,
@@ -41,7 +42,8 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         AnimeClickAniListResolver aniListResolver,
         ILogger<AnimeClickSeriesProvider> logger,
         AnimeClickTmdbClient tmdbClient,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        AnimeClickCommunityService? community = null)
     {
         _client = client;
         _cache = cache;
@@ -51,6 +53,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         _logger = logger;
         _httpClientFactory = httpClientFactory;
         _tmdbClient = tmdbClient;
+        _community = community;
     }
 
     public string Name => "AnimeClick";
@@ -81,6 +84,12 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         {
             _logger.LogWarning("AnimeClick SeriesProvider ignored invalid provider ID '{ProviderId}'", animeClickId);
             url = null;
+        }
+
+        if (string.IsNullOrWhiteSpace(animeClickId) && _community is not null)
+        {
+            var approvedId = await _community.ResolveAsync("Series", info.ProviderIds, configuration, cancellationToken).ConfigureAwait(false);
+            if (approvedId is not null) AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, approvedId, out url);
         }
 
         if (url is null && !string.IsNullOrWhiteSpace(info.Name))

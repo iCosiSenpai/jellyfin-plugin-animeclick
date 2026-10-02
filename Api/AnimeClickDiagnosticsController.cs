@@ -40,6 +40,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
     private readonly AnimeClickLibraryQualityService _qualityService;
     private readonly ILibraryManager _libraryManager;
     private readonly ITaskManager _taskManager;
+    private readonly AnimeClickActivityService _activities;
     private readonly ILogger<AnimeClickDiagnosticsController> _logger;
 
     public AnimeClickDiagnosticsController(
@@ -56,7 +57,8 @@ public class AnimeClickDiagnosticsController : ControllerBase
         AnimeClickLibraryQualityService qualityService,
         ILibraryManager libraryManager,
         ITaskManager taskManager,
-        ILogger<AnimeClickDiagnosticsController> logger)
+        ILogger<AnimeClickDiagnosticsController> logger,
+        AnimeClickActivityService? activities = null)
     {
         _searchProvider = searchProvider;
         _episodeListLoader = episodeListLoader;
@@ -71,6 +73,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         _qualityService = qualityService;
         _libraryManager = libraryManager;
         _taskManager = taskManager;
+        _activities = activities ?? new AnimeClickActivityService();
         _logger = logger;
     }
 
@@ -589,13 +592,20 @@ public class AnimeClickDiagnosticsController : ControllerBase
     [HttpPost("RunSynopsisRepairTask")]
     public ActionResult<RunTaskResponse> RunSynopsisRepairTask()
     {
-        _taskManager.CancelIfRunningAndQueue<AnimeClickRepairSynopsesTask>();
+        if (!_activities.TryQueue(AnimeClickActivityService.Synopses))
+            return Ok(new RunTaskResponse { Message = "Il completamento è già in corso." });
+        try { _taskManager.QueueIfNotRunning<AnimeClickRepairSynopsesTask>(); }
+        catch
+        {
+            _activities.Finish(AnimeClickActivityService.Synopses, "Failed", "Jellyfin non ha potuto avviare il completamento. Riprova.");
+            throw;
+        }
         _logger.LogInformation("AnimeClick: completamento sinossi accodato dalla pagina di configurazione");
         return Ok(new RunTaskResponse
         {
             Queued = true,
             Message = "Completamento delle sinossi avviato. Procede a lotti finché non resta niente da "
-                + "sistemare; l'avanzamento è visibile in Attività pianificate."
+                + "sistemare; l'avanzamento è visibile nella pagina della libreria."
         });
     }
 
@@ -606,14 +616,38 @@ public class AnimeClickDiagnosticsController : ControllerBase
     [HttpPost("RunMissingTitlesTask")]
     public ActionResult<RunTaskResponse> RunMissingTitlesTask()
     {
-        _taskManager.CancelIfRunningAndQueue<AnimeClickRefreshMissingTitlesTask>();
+        if (!_activities.TryQueue(AnimeClickActivityService.Titles))
+            return Ok(new RunTaskResponse { Message = "Il ricontrollo è già in corso." });
+        try { _taskManager.QueueIfNotRunning<AnimeClickRefreshMissingTitlesTask>(); }
+        catch
+        {
+            _activities.Finish(AnimeClickActivityService.Titles, "Failed", "Jellyfin non ha potuto avviare il ricontrollo. Riprova.");
+            throw;
+        }
         _logger.LogInformation("AnimeClick: title re-check queued from the configuration page");
         return Ok(new RunTaskResponse
         {
             Queued = true,
-            Message = "Ricontrollo dei titoli accodato. L'avanzamento è visibile in Attività pianificate."
+            Message = "Ricontrollo avviato: verranno completati soltanto i titoli mancanti."
         });
     }
+
+    [HttpGet("Activities")]
+    public ActionResult<IEnumerable<AnimeClickActivity>> Activities()
+        => Ok(new[] { _activities.Get(AnimeClickActivityService.Titles), _activities.Get(AnimeClickActivityService.Synopses) });
+
+    [HttpPost("CancelActivity")]
+    public IActionResult CancelActivity([FromBody] CancelActivityRequest request)
+    {
+        if (request?.Key is not (AnimeClickActivityService.Titles or AnimeClickActivityService.Synopses))
+            return BadRequest(new { error = "Attività non valida." });
+        _activities.Cancel(request.Key);
+        if (request.Key == AnimeClickActivityService.Titles) _taskManager.CancelIfRunning<AnimeClickRefreshMissingTitlesTask>();
+        else _taskManager.CancelIfRunning<AnimeClickRepairSynopsesTask>();
+        return Ok(_activities.Get(request.Key));
+    }
+
+    public sealed class CancelActivityRequest { public string Key { get; set; } = string.Empty; }
 
     /// <summary>
     /// True when this library asks AnimeClick for its metadata. A library that does not is none of

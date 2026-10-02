@@ -49,17 +49,28 @@ async function main() {
     const plugins = await call('/Plugins');
     const plugin = plugins.find(p => p.Id?.replaceAll('-', '').toLowerCase() === pluginId.replaceAll('-', ''));
     assert.ok(plugin, 'Plugin is absent: ' + JSON.stringify(plugins));
-    assert.equal(plugin?.Version, '1.0.0.0');
+    assert.equal(plugin?.Version, '1.1.0.0');
     assert.equal(plugin.Status, 'Active');
     const config = await call('/Plugins/' + pluginId + '/Configuration');
     assert.equal(config.EnableEpisodeSynopsisTranslation, true);
     assert.equal(config.AiModel, '');
+    assert.equal(config.EnableCommunityMappings, false);
+    assert.equal(config.EnableCommunitySharing, false);
+    assert.equal(config.CommunityGitHubToken, '');
     await call('/Plugins/' + pluginId + '/Configuration', { ...config, NegativeCacheHours: 0 }, 204);
     assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).NegativeCacheHours, 0);
     const providers = await call('/Plugins/AnimeClick/AiProviders');
     assert.ok(providers.length > 1);
     await call('/Plugins/AnimeClick/LibraryQualityAudit');
     await call('/Plugins/AnimeClick/LibraryAudit');
+    const activities = await call('/Plugins/AnimeClick/Activities');
+    assert.equal(activities.length, 2);
+    await call('/Plugins/AnimeClick/CancelActivity', { Key: 'invalid' }, 400);
+    await call('/Plugins/AnimeClick/Community/Status');
+    const exported = await call('/Plugins/AnimeClick/Community/Export');
+    assert.deepEqual(exported, { schemaVersion: 1, mappings: [] });
+    await call('/Plugins/AnimeClick/Community/Preview?itemId=invalid', undefined, 400);
+    await call('/Plugins/AnimeClick/Community/Retry', {});
     await call('/Plugins/AnimeClick/IdentifyStatus?itemId=invalid', undefined, 400);
     await call('/Plugins/AnimeClick/IdentifyAndRefresh', { ItemId: randomUUID(), AnimeClickId: 'https://evil.invalid/anime/1/x' }, 400);
     await call('/Plugins/AnimeClick/IdentifyAndRefresh', { ItemId: randomUUID(), AnimeClickId: '72/naruto' }, 404);
@@ -70,6 +81,10 @@ async function main() {
     const adminToken = token;
     token = ordinaryAuth.AccessToken;
     await call('/Plugins/AnimeClick/AiProviders', undefined, 403);
+    await call('/Plugins/AnimeClick/Activities', undefined, 403);
+    await call('/Plugins/AnimeClick/Community/Status', undefined, 403);
+    await call('/Plugins/AnimeClick/Community/Export', undefined, 403);
+    await call('/Plugins/AnimeClick/RunMissingTitlesTask', {}, 403);
     token = adminToken;
 
     const browser = await chromium.launch({ headless: true });
@@ -98,6 +113,16 @@ async function main() {
         await page.locator('#acBtnSave').click();
         await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
         assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).PreferItalianTitle, expectedTitlePreference);
+        await page.getByRole('tab', { name: 'La tua libreria', exact: true }).click();
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acBtnRunTitles').click();
+        await page.getByRole('dialog').getByRole('button', { name: 'Conferma', exact: true }).click();
+        await page.locator('#acActivityBadge_titles').filter({ hasText: 'Completata' }).waitFor({ timeout: 30000 });
+        assert.equal((await call('/Plugins/AnimeClick/Activities')).find(a => a.Key === 'titles').State, 'Completed');
+        await page.getByRole('tab', { name: 'Comunità', exact: true }).click();
+        assert.equal(await page.locator('#acEnableCommunitySharing').isChecked(), false);
+        await page.locator('#acCommunityStatus').click();
+        await page.locator('#acCommunityResult').filter({ hasText: 'disattivata' }).waitFor();
         // The host cancels outstanding home-page requests on navigation. Report that
         // separately; do not hide any other browser exception or plugin failure.
         const cancellations = errors.filter(e => e.message === 'CancelledError');
@@ -106,4 +131,6 @@ async function main() {
     } finally { await browser.close(); }
     console.log(`Jellyfin ${info.Version}: plugin load, configuration, admin APIs, access controls and real web UI PASS`);
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+// A prematurely drained event loop must never produce a false successful smoke test.
+process.exitCode = 1;
+main().then(() => { process.exitCode = 0; }, error => { console.error(error); });

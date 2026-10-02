@@ -61,9 +61,26 @@ Non copiare le DLL del server dalla cartella di compilazione: il pacchetto conti
 | **La tua libreria** | Analizzare i campi incompleti e avviare i recuperi disponibili |
 | **Preferenze** | Scegliere quali titoli, trame e altri metadati importare |
 | **Fonti aggiuntive** | Aggiungere TMDB, TheTVDB o un servizio di traduzione, solo se servono |
+| **Comunità** | Leggere abbinamenti approvati o condividere automaticamente le correzioni, con consenso esplicito |
 | **Avanzate** | Correggere un abbinamento, gestire la cache o aprire la diagnostica |
 
 Le impostazioni tecniche sono raccolte in sezioni espandibili. Le modifiche restano nel modulo finché non premi **Salva modifiche**; **Annulla** ripristina l’ultima configurazione caricata. Un errore di caricamento non rende modificabile una configurazione vuota.
+
+### La tua libreria
+
+La pagina analizza automaticamente i dati locali senza modificarli. **Titoli episodio** e **Trame e sinossi** hanno viste separate; apri una serie per i dettagli e usa **Aggiorna analisi** per rileggere lo stato. Gli errori parziali sono visibili e puoi riprovare.
+
+**Sistema tutti i titoli** rilegge le liste AnimeClick e completa soltanto nomi vuoti, segnaposto o derivati dal file. Conserva i titoli già compilati, anche quando differiscono da AnimeClick, e scrive solo il nome: numerazione, ID, trame e immagini restano invariati. Rispetta i blocchi, le modifiche manuali intervenute durante la ricerca e la disabilitazione del provider per gli episodi.
+
+Il riquadro **Attività** mostra fase, avanzamento, elementi verificati, aggiornati, saltati e in errore. Tornando alla pagina ritrovi il lavoro in corso. **Interrompi** ferma il recupero; per le sinossi, i refresh già consegnati a Jellyfin possono comunque terminare. Lo stato dettagliato delle attività riguarda la sessione corrente del server e si azzera dopo un riavvio.
+
+### Abbinamenti della comunità
+
+Entrambe le opzioni sono **disattivate di default**. Puoi attivare la lettura degli abbinamenti approvati senza condividere nulla. Per l’**invio automatico quando correggi un abbinamento**, attiva la condivisione e configura un token del tuo account GitHub capace di creare issue nel repository del plugin.
+
+Ogni proposta pubblica contiene soltanto il tipo dell’opera e gli ID AnimeClick/TMDB/TVDB/AniList, ed è associata al tuo account GitHub. Non contiene file, percorsi, utenti Jellyfin, URL del server, cronologia o testi della libreria. Anteprima, esportazione locale e stato degli invii sono nella pagina Comunità. La disattivazione interrompe gli invii futuri; le issue già pubblicate restano su GitHub.
+
+Il plugin usa solo correzioni revisionate nel dataset del progetto, inizialmente vuoto, senza cambiare gli ID AnimeClick già presenti. Questo è il suo modo di apprendere dagli errori; non addestra un modello AI. Dettagli e procedura di revisione in [community/README.md](community/README.md).
 
 ### Correggere un abbinamento
 
@@ -103,6 +120,7 @@ Le traduzioni sono conservate in cache in base a testo, fonte, modello, endpoint
 ## Privacy e rete
 
 - AnimeClick riceve le ricerche e le richieste alle sue pagine. Il plugin applica cache, ritardo fra richieste e gestione dei limiti del sito.
+- GitHub riceve le richieste al dataset soltanto se abiliti la lettura; riceve proposte pubbliche e la credenziale del contribuente soltanto se abiliti l’invio automatico. Il token è inviato esclusivamente a `api.github.com`, senza redirect.
 - Le integrazioni facoltative ricevono i dati necessari alla loro funzione. L’AI riceve il testo della sinossi da tradurre, non il file video.
 - Le chiavi sono conservate nella configurazione Jellyfin: proteggi l’accesso amministrativo, i file e i backup. Non condividere configurazioni o log senza rimuovere i segreti.
 - La pagina del plugin non carica immagini promozionali esterne. Le funzioni amministrative richiedono un account amministratore.
@@ -135,7 +153,7 @@ npx playwright install --with-deps chromium
 npm test
 ```
 
-La pipeline esegue le due varianti backend e i test browser; il pacchetto viene sempre compilato contro la versione minima. I risultati, i difetti corretti e i limiti della verifica sono nel [rapporto di audit](docs/AUDIT-1.0.md). La procedura di rilascio è in [RELEASING](docs/RELEASING.md).
+La pipeline esegue le due varianti backend, i test browser e la validazione degli abbinamenti; il pacchetto viene sempre compilato contro la versione minima. I risultati, i difetti corretti e i limiti della verifica sono nel [rapporto di audit 1.1](docs/AUDIT-1.1.md), con il [precedente audit](docs/AUDIT-1.0.md) per la major. La procedura di rilascio è in [RELEASING](docs/RELEASING.md).
 
 `tools/AnimeClick.Harness` riusa parser e matcher reali su pagine AnimeClick o su un confronto in sola lettura con Jellyfin. La verifica runtime `tools/AnimeClick.WebTests/runtime-smoke.cjs` è riservata a **server localhost nuovi e usa-e-getta**: configura utenti di prova e modifica le preferenze del plugin. Non è uno strumento per la produzione.
 
