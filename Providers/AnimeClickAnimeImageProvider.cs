@@ -20,13 +20,13 @@ using AnimeClick.Plugin.Services;
 namespace AnimeClick.Plugin.Providers;
 
 /// <summary>
-/// Fallback image provider for anime Series and Movies: returns the Italian
+/// Integrated image provider for anime Series and Movies, with the Italian
 /// poster (locandina) already parsed by <see cref="AnimeClickHtmlParser"/> from
 /// the AnimeClick anime page (og:image / itemprop='image').
 ///
-/// Priority is intentionally low (<see cref="Order"/> = 100) so AniList,
-/// FanartTV and other image providers with a lower order win when they have
-/// images; AnimeClick only fills the gap when nobody else delivered a poster.
+/// Priority relative to other installed plugins stays low (<see cref="Order"/> = 100), so AniList,
+/// FanartTV and other image providers can still be composed with it. Internally
+/// Fanart and TMDB artwork precede the AnimeClick poster.
 /// This does NOT block other providers — it never calls SetImage and only
 /// contributes a candidate via the normal IRemoteImageProvider flow.
 /// </summary>
@@ -42,17 +42,19 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
     private readonly AnimeClickClient _client;
     private readonly AnimeClickCacheService _cache;
     private readonly AnimeClickHtmlParser _parser;
+    private readonly AnimeClickArtwork? _artwork;
 
     public AnimeClickAnimeImageProvider(
         IHttpClientFactory httpClientFactory,
         AnimeClickClient client,
         AnimeClickCacheService cache,
-        AnimeClickHtmlParser parser)
+        AnimeClickHtmlParser parser, AnimeClickArtwork? artwork = null)
     {
         _httpClientFactory = httpClientFactory;
         _client = client;
         _cache = cache;
         _parser = parser;
+        _artwork = artwork;
     }
 
     public string Name => "AnimeClick";
@@ -67,7 +69,7 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
         // AnimeClick exposes only a single cover image (BannerUrl == ImageUrl today),
         // so we only contribute a Primary (locandina). If a real backdrop/logo becomes
         // available in the parser, add ImageType.Backdrop / Logo here.
-        return [ImageType.Primary];
+        return [ImageType.Primary, ImageType.Backdrop, ImageType.Logo, ImageType.Art, ImageType.Banner, ImageType.Thumb, ImageType.Disc];
     }
 
     public async Task<IEnumerable<RemoteImageInfo>> GetImages(BaseItem item, CancellationToken cancellationToken)
@@ -75,6 +77,7 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
         var results = new List<RemoteImageInfo>();
 
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (_artwork is not null) results.AddRange(await _artwork.GetImagesAsync(item, configuration, cancellationToken).ConfigureAwait(false));
         if (!configuration.EnableAnimeClickImages)
         {
             return results;

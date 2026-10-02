@@ -13,20 +13,18 @@
 Titoli, trame e puntate degli anime in italiano, direttamente nella tua libreria Jellyfin.
 La fonte principale è [AnimeClick.it](https://www.animeclick.it/): **non serve una chiave API per iniziare**.
 
-Il plugin cerca un abbinamento verificabile fra il tuo titolo e la scheda AnimeClick. Se i dati sono ambigui, lascia il campo invariato e permette di correggere l’abbinamento. TMDB, TheTVDB e la traduzione AI sono integrazioni facoltative, non requisiti.
+Il plugin cerca un abbinamento verificabile fra il tuo titolo e la scheda AnimeClick. Se i dati sono ambigui, lascia il campo invariato e permette di correggere l’abbinamento. Dalla **1.2.0**, AnimeClick può essere l’**unico provider remoto di metadati e immagini per le librerie anime**: integra direttamente TMDB, TheTVDB e Fanart. AnimeClick resta la prima fonte per i metadati; Fanart ha precedenza per le immagini, seguito da TMDB alla risoluzione originale.
 
 ## Inizia da qui
 
-1. In **Dashboard → Plugin → Repository**, aggiungi:
+1. Installa la [release 1.2.0.0](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/tag/v1.2.0.0) seguendo l’installazione manuale qui sotto. Questa release non aggiorna il catalogo pubblico Jellyfin.
+2. In **Preferenze**, lascia attive **Completa i metadati dalle fonti integrate** e **Immagini TMDB ad alta risoluzione**. Non serve un altro plugin TMDB.
+3. In **Fonti aggiuntive**, configura la tua [chiave API TMDB](https://developer.themoviedb.org/docs/getting-started). Per le immagini Fanart, inserisci la [chiave personale Fanart](https://fanart.tv/get-an-api-key/): è sufficiente anche da sola. TheTVDB è una seconda fonte testuale facoltativa.
+4. Se vuoi completare anche i testi disponibili solo in inglese, abilita e configura un servizio AI e il suo modello. Senza AI vengono usati i testi già italiani; non vengono importate trame inglesi come italiane.
+5. Nelle librerie dedicate agli anime abilita **AnimeClick come unico provider remoto** per serie, stagioni, episodi e film, sia per i metadati sia per le immagini. I lettori NFO, le immagini locali e gli estrattori integrati di Jellyfin possono restare attivi. Gli altri plugin possono restare installati per le librerie non anime.
+6. **Inizio** mostra dove è attivo il plugin; **La tua libreria** aiuta a trovare i campi mancanti. Prova un aggiornamento su un solo titolo, conservando le immagini e i campi bloccati.
 
-   ```text
-   https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json
-   ```
-
-2. Dal catalogo installa **AnimeClick Metadata** e riavvia Jellyfin.
-3. Nelle impostazioni della tua libreria abilita AnimeClick: **primo fra i provider metadati, ultimo fra quelli delle immagini**.
-4. Apri la pagina del plugin. **Inizio** mostra quali librerie lo usano; **La tua libreria** aiuta a trovare titoli e trame da completare.
-5. Aggiorna i metadati di un titolo per provarlo.
+Per il catalogo delle versioni precedenti, il repository Jellyfin resta `https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json`.
 
 Le normali impostazioni di Jellyfin continuano a contare: abilitazione per tipo di contenuto, ordine dei provider e blocchi dei metadati.
 
@@ -60,7 +58,7 @@ Non copiare le DLL del server dalla cartella di compilazione: il pacchetto conti
 | **Inizio** | Controllare l’attivazione nelle librerie e capire da dove partire |
 | **La tua libreria** | Analizzare i campi incompleti e avviare i recuperi disponibili |
 | **Preferenze** | Scegliere quali titoli, trame e altri metadati importare |
-| **Fonti aggiuntive** | Aggiungere TMDB, TheTVDB o un servizio di traduzione, solo se servono |
+| **Fonti aggiuntive** | Configurare TMDB, Fanart, TheTVDB e la traduzione |
 | **Comunità** | Leggere abbinamenti approvati o condividere automaticamente le correzioni, con consenso esplicito |
 | **Avanzate** | Correggere un abbinamento, gestire la cache o aprire la diagnostica |
 
@@ -92,9 +90,9 @@ Un titolo numerico come “86” viene cercato come titolo, non interpretato aut
 
 ## Cosa importa
 
-Titolo italiano, trama, generi, tag, cast e staff, immagini delle persone, trailer/PV, sigle e locandina italiana. Studi, valutazioni, date e altri campi non localizzati dipendono dall’opzione avanzata di sovrascrittura, disattivata per impostazione predefinita.
+Titolo italiano, trama, generi, tag, cast e staff, immagini delle persone, trailer/PV, sigle e locandina italiana. Studi, valutazioni, date e altri campi neutri vengono importati anche con le fonti integrate, attive per impostazione predefinita. Disattivandole, quei campi tornano sotto l’opzione avanzata di sovrascrittura.
 
-Il plugin non usa i commenti degli utenti come sinossi, non rimpiazza la durata rilevata dai file e rispetta i blocchi dei metadati. La locandina AnimeClick è una riserva: i provider immagini ad alta risoluzione mantengono la precedenza. Le immagini già presenti rimangono fino a un aggiornamento immagini richiesto esplicitamente. La soglia predefinita è 400 pixel di larghezza, modificabile nelle preferenze aggiuntive.
+Il plugin non usa i commenti degli utenti come sinossi, non rimpiazza la durata rilevata dai file e rispetta i blocchi dei metadati. La locandina AnimeClick è una riserva: Fanart e TMDB ad alta risoluzione mantengono la precedenza. Le immagini già presenti rimangono fino a un aggiornamento immagini richiesto esplicitamente. La soglia predefinita è 400 pixel di larghezza, modificabile nelle preferenze aggiuntive.
 
 ### Episodi e stagioni
 
@@ -108,11 +106,27 @@ Per un titolo assente o generico, la precedenza è AnimeClick, poi un titolo ita
 
 L’analisi locale non interroga queste API: **Da verificare** e **Assenti su AnimeClick** indicano cosa il recupero può controllare, senza garantire che le altre fonti abbiano un titolo. La conferma dichiara la possibile traduzione e il suo costo; l’attività mostra fonte e fase, e conta i titoli recuperati e tradotti.
 
+### Immagini integrate
+
+L’unico provider immagini **AnimeClick** propone nell’ordine:
+
+1. **Fanart**, se configurato: locandine, sfondi anche 4K, loghi, banner, clearart e artwork delle stagioni.
+2. **TMDB** alla risoluzione originale: poster, sfondi, loghi, stagioni, fotogrammi degli episodi e ritratti del cast.
+3. **AnimeClick**: locandina italiana, con il filtro di larghezza minima configurabile.
+
+Le immagini Fanart delle serie usano l’ID TheTVDB; quelle dei film l’ID TMDB. La chiave personale Fanart è sufficiente; una chiave di progetto è facoltativa. Crea le chiavi su [Fanart](https://fanart.tv/get-an-api-key/) e verifica la connessione nelle impostazioni. Le chiavi viaggiano nelle intestazioni dell’API Fanart e non nelle URL delle immagini; vengono accettati soltanto i CDN controllati. [Documentazione ufficiale Fanart v3.2](https://api.fanart.tv/).
+
+L’installazione e l’analisi non sostituiscono le immagini presenti. La loro sostituzione resta una scelta esplicita nel refresh Jellyfin.
+
 ### Trame e fonti facoltative
 
 Per ogni testo descrittivo la precedenza è AnimeClick, una fonte già italiana e infine una fonte inglese tradotta. I valori generici, come «N/D», «Trama non disponibile» o «Episode 12», non bloccano il recupero. Titolo e trama vengono risolti separatamente: un titolo valido AnimeClick resta prioritario anche se la trama arriva da un’altra fonte.
 
-Serie e film usano gli ID esterni già presenti: titoli e trame da TheTVDB/TMDB, generi italiani da TMDB o generi TheTVDB tradotti, tag TMDB tradotti. Se manca un’identità certa o un testo utile, il campo resta disponibile agli altri provider Jellyfin. Studi, nomi propri, date, numeri e ID non vengono tradotti; per dare precedenza ad AnimeClick anche sui campi neutri attiva la relativa preferenza avanzata. I singoli interruttori dei campi restano rispettati.
+Con le fonti integrate attive, serie e film identificano direttamente l’opera su TMDB. Gli ID manuali hanno precedenza; in loro assenza si usa un ID IMDb/TheTVDB oppure un titolo o alias esatto, formato film/serie e anno, cercando soltanto risultati di animazione. Remake ambigui e identità discordanti non vengono scelti automaticamente. Gli ID TMDB/TheTVDB/IMDb verificati diventano disponibili anche agli episodi, senza un altro plugin che li aggiunga.
+
+Titoli e trame provengono da TheTVDB/TMDB; i generi italiani da TMDB o quelli inglesi TheTVDB tradotti; i tag TMDB vengono tradotti quando mancano quelli AnimeClick. TMDB completa titolo originale, date, studio, valutazione, classificazione italiana, stato della serie, cast e trailer mancanti. Stagioni ed episodi mantengono sempre la numerazione locale; i file che contengono più episodi non ricevono dati di un singolo episodio. Nomi propri, codici dei paesi, date, numeri e ID non vengono tradotti. Tutti gli interruttori dei campi restano rispettati.
+
+**Non occorrono altri provider Jellyfin per questa catena**, ma occorrono le chiavi delle fonti che vuoi usare e un servizio AI configurato per l’inglese. Se nessun catalogo ha il dato, o l’identità non è certa, il campo resta invariato. La modalità autonoma non promette copertura universale e non inventa metadati. Puoi disattivare le fonti integrate per tornare alla composizione con altri provider; l’opzione avanzata di precedenza dei campi neutri rimane disponibile per quel caso.
 
 Per le sinossi episodio la precedenza è:
 
@@ -134,7 +148,7 @@ Le traduzioni sono conservate in cache in base a testo, fonte, modello, endpoint
 - Le integrazioni facoltative ricevono i dati necessari alla loro funzione. L’AI riceve soltanto il testo da tradurre (titolo, trama, generi o tag), senza file video, percorsi, ID o informazioni sugli utenti.
 - Le chiavi sono conservate nella configurazione Jellyfin: proteggi l’accesso amministrativo, i file e i backup. Non condividere configurazioni o log senza rimuovere i segreti.
 - La pagina del plugin non carica immagini promozionali esterne. Le funzioni amministrative richiedono un account amministratore.
-- Le immagini accettano destinazioni AnimeClick consentite; i redirect vengono verificati prima della richiesta successiva. Le API esterne non seguono automaticamente redirect con credenziali.
+- Le immagini accettano soltanto le destinazioni AnimeClick consentite e i CDN TMDB/Fanart controllati; i redirect vengono verificati prima della richiesta successiva. Le API esterne non seguono automaticamente redirect con credenziali.
 - I servizi AI pubblici richiedono HTTPS. HTTP è ammesso per destinazioni locali supportate, ma le chiavi AI non vengono inviate su HTTP. Il collegamento fra browser e Jellyfin va protetto separatamente.
 
 ## Problemi frequenti
@@ -171,7 +185,7 @@ La pipeline esegue le due varianti backend, i test browser e la validazione degl
 
 Il progetto non è affiliato con AnimeClick.it. L’autorizzazione allo scraping per questo progetto e le condizioni d’uso sono riportate in [NOTICE](NOTICE); mantieni cache e limitazione delle richieste e non usarlo per raccolte massive o commerciali.
 
-Metadati da [AnimeClick.it](https://www.animeclick.it/), opzionalmente [TheTVDB](https://thetvdb.com/) e [TMDB](https://www.themoviedb.org/).
+Metadati da [AnimeClick.it](https://www.animeclick.it/), opzionalmente [TheTVDB](https://thetvdb.com/), [TMDB](https://www.themoviedb.org/) e [Fanart](https://fanart.tv/).
 
 **TheTVDB:** Metadata provided by TheTVDB. Please consider adding missing information or [subscribing](https://thetvdb.com/subscribe).
 
@@ -182,3 +196,5 @@ Codice sotto [GNU GPL v3](LICENSE). Le condizioni relative al nome, al logo e al
 [Release](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases) · [Segnalazioni](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues) · [Buy Me a Coffee](https://buymeacoffee.com/iCosiSenpai) · [PayPal](https://www.paypal.com/donate/?hosted_button_id=5A4E26XC45GLQ)
 
 Copyright (C) 2026 Alessio Cosi (iCosiSenpai)
+
+Artwork provided by Fanart.tv.

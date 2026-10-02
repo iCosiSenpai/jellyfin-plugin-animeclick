@@ -22,7 +22,7 @@ namespace AnimeClick.Plugin.Services;
 /// non-2xx, parse error, 404) so the metadata pipeline is never crashed.
 /// Results are cached via <see cref="AnimeClickCacheService"/>.
 /// </summary>
-public class AnimeClickTmdbClient
+public partial class AnimeClickTmdbClient
 {
     private const string BaseUrl = "https://api.themoviedb.org/3";
     private const int ApiTimeoutSeconds = 15;
@@ -43,7 +43,6 @@ public class AnimeClickTmdbClient
     // The episode keys are per episode, so on a large library that dictionary accumulated one
     // SemaphoreSlim per episode for the lifetime of the process. Separate pools per purpose so
     // that a future nested acquisition cannot deadlock on a shared non-reentrant gate.
-    private readonly SemaphoreStripe _resolveGates = new();
     private readonly SemaphoreStripe _episodeGates = new();
 
     public AnimeClickTmdbClient(
@@ -69,79 +68,10 @@ public class AnimeClickTmdbClient
         string cacheKey,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(configuration.TmdbApiKey))
-        {
-            return null;
-        }
-
-        var missCacheKey = cacheKey + "::miss";
-        var cached = await _cache
-            .GetAsync<int?>(cacheKey, configuration.CacheHours, cancellationToken)
-            .ConfigureAwait(false);
-        if (cached is > 0)
-        {
-            return cached;
-        }
-
-        var cachedMiss = await _cache
-            .GetAsync<string>(missCacheKey, configuration.NegativeCacheHours, cancellationToken)
-            .ConfigureAwait(false);
-        if (string.Equals(cachedMiss, "miss", StringComparison.Ordinal))
-        {
-            return null;
-        }
-
-        var gate = _resolveGates.Get("resolve::" + cacheKey);
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            cached = await _cache
-                .GetAsync<int?>(cacheKey, configuration.CacheHours, cancellationToken)
-                .ConfigureAwait(false);
-            if (cached is > 0)
-            {
-                return cached;
-            }
-
-            cachedMiss = await _cache
-                .GetAsync<string>(missCacheKey, configuration.NegativeCacheHours, cancellationToken)
-                .ConfigureAwait(false);
-            if (string.Equals(cachedMiss, "miss", StringComparison.Ordinal))
-            {
-                return null;
-            }
-
-            var titles = new[] { originalTitle, fallbackTitle }
-                .Where(title => !string.IsNullOrWhiteSpace(title))
-                .Select(title => title!.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            var allSearchesCompleted = titles.Length > 0;
-            foreach (var title in titles)
-            {
-                var lookup = await SearchTvAsync(title, year, configuration, cancellationToken)
-                    .ConfigureAwait(false);
-                allSearchesCompleted &= lookup.Completed;
-                if (!lookup.Id.HasValue)
-                {
-                    continue;
-                }
-
-                await _cache.SetAsync(cacheKey, lookup.Id.Value, cancellationToken).ConfigureAwait(false);
-                return lookup.Id.Value;
-            }
-
-            if (allSearchesCompleted)
-            {
-                await _cache.SetAsync(missCacheKey, "miss", cancellationToken).ConfigureAwait(false);
-            }
-
-            return null;
-        }
-        finally
-        {
-            gate.Release();
-        }
+        // The legacy episode chain uses the same verified resolver as full metadata.
+        // Older first-result caches are deliberately not trusted for identity discovery.
+        return await ResolveAnimeIdAsync(new Dictionary<string, string>(), originalTitle, fallbackTitle, year,
+            false, configuration, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -319,59 +249,6 @@ public class AnimeClickTmdbClient
 
     private static string BuildEpisodeTranslationsCacheKey(int series, int season, int episode)
         => $"tmdbEpisodeTranslations:v3::{series}::{season}::{episode}";
-
-    private async Task<ExternalIdLookupResult> SearchTvAsync(
-        string title,
-        int? year,
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var client = BuildClient(configuration);
-
-            await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
-            using var response = await client
-                .GetAsync(BuildSearchTvUrl(configuration.TmdbApiKey, title, year), cancellationToken)
-                .ConfigureAwait(false);
-            if (RequestThrottle.IsRateLimited(response.StatusCode))
-            {
-                var pause = Throttle.NoticeRateLimit(response);
-                _logger.LogWarning(
-                    "TmdbClient: TMDB ha risposto {Status}; pausa di {Pause} prima della prossima richiesta",
-                    response.StatusCode,
-                    pause);
-                return ExternalIdLookupResult.Incomplete;
-            }
-
-            if (response.StatusCode == HttpStatusCode.NotFound)
-            {
-                return ExternalIdLookupResult.ConfirmedMiss;
-            }
-
-            if (response.StatusCode == HttpStatusCode.Unauthorized)
-            {
-                _logger.LogWarning(
-                    "TmdbClient: TMDB rejected the API key (401); check it in the plugin settings");
-                return ExternalIdLookupResult.Incomplete;
-            }
-
-            response.EnsureSuccessStatusCode();
-            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            return TryParseFirstTvId(json, year, out var id)
-                ? new ExternalIdLookupResult(id, true)
-                : ExternalIdLookupResult.Incomplete;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "TmdbClient: search/tv failed for \"{Title}\"", title);
-            return ExternalIdLookupResult.Incomplete;
-        }
-    }
 
     private async Task<EpisodeTranslationsFetchResult> FetchEpisodeTranslationsAsync(
         int tmdbId,
@@ -809,10 +686,15 @@ public class AnimeClickTmdbClient
         return ParseKnownLabels(json, id, isMovie ? "keywords" : "results").Take(20).ToArray();
     }
 
-    private async Task<string?> GetKnownMetadataJsonAsync(string key, string url, PluginConfiguration configuration, CancellationToken token)
+    private async Task<string?> GetKnownMetadataJsonAsync(string key, string url, PluginConfiguration configuration, CancellationToken token, Func<JsonElement, bool>? validate = null)
     {
         var cached = await _cache.GetAsync<string>(key, configuration.CacheHours, token).ConfigureAwait(false);
-        if (cached is not null) return cached;
+        if (cached is not null)
+        {
+            using var cachedDocument = JsonDocument.Parse(cached);
+            if (validate is null || validate(cachedDocument.RootElement)) return cached;
+            return null;
+        }
         if (await _cache.GetAsync<string>(key + "::empty", configuration.NegativeCacheHours, token).ConfigureAwait(false) == "empty") return null;
         try
         {
@@ -828,7 +710,7 @@ public class AnimeClickTmdbClient
             if (!response.IsSuccessStatusCode) return null;
             var json = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
             using var document = JsonDocument.Parse(json);
-            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            if (document.RootElement.ValueKind != JsonValueKind.Object || (validate is not null && !validate(document.RootElement))) return null;
             await _cache.SetAsync(key, json, token).ConfigureAwait(false);
             return json;
         }
@@ -1130,12 +1012,6 @@ public class AnimeClickTmdbClient
             new(null, false, true);
         public static EpisodeTranslationsFetchResult Incomplete { get; } =
             new(null, false, false);
-    }
-
-    private sealed record ExternalIdLookupResult(int? Id, bool Completed)
-    {
-        public static ExternalIdLookupResult ConfirmedMiss { get; } = new(null, true);
-        public static ExternalIdLookupResult Incomplete { get; } = new(null, false);
     }
 
     /// <summary>Parses the overview field from a tv/season/episode response (testable, no network).</summary>

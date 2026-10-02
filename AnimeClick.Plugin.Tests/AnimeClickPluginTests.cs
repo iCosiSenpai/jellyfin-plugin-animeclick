@@ -76,7 +76,10 @@ public class AnimeClickPluginTests
     public void TestConfigDefaults()
 {
     var configuration = new AnimeClick.Plugin.Configuration.PluginConfiguration();
-    Assert(!configuration.OverwriteNonItalianFields, "New installations fill non-localized gaps conservatively.");
+    Assert(!configuration.OverwriteNonItalianFields, "Advanced overwrite remains off when integrated metadata is disabled.");
+    Assert(configuration.EnableIntegratedMetadata, "Internal metadata sources are enabled by default.");
+    Assert(configuration.EnableIntegratedImages, "Internal TMDB artwork is enabled by default.");
+    Assert(configuration.EnableFanartImages, "Fanart is enabled but needs a configured key.");
     Assert(configuration.EnableAnimeClickImages, "Fallback images are enabled by default.");
     Assert(configuration.EnableEpisodeSynopsisTranslation, "Native episode synopses need no external account.");
     Assert(string.IsNullOrEmpty(configuration.AiModel), "No AI model is guessed on a new installation.");

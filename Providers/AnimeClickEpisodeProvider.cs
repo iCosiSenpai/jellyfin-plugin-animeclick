@@ -36,6 +36,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickMetadataFallbackService _fallbackService;
     private readonly AnimeClickEpisodeTitleFallback? _titleFallback;
+    private readonly AnimeClickIntegratedMetadata? _integrated;
 
     public AnimeClickEpisodeProvider(
         AnimeClickClient client,
@@ -47,7 +48,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         ILogger<AnimeClickEpisodeProvider> logger,
         IHttpClientFactory httpClientFactory,
         AnimeClickMetadataFallbackService fallbackService,
-        AnimeClickEpisodeTitleFallback? titleFallback = null)
+        AnimeClickEpisodeTitleFallback? titleFallback = null,
+        AnimeClickIntegratedMetadata? integrated = null)
     {
         _client = client;
         _cache = cache;
@@ -59,6 +61,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         _httpClientFactory = httpClientFactory;
         _fallbackService = fallbackService;
         _titleFallback = titleFallback;
+        _integrated = integrated;
     }
 
     public string Name => "AnimeClick";
@@ -76,9 +79,12 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
     public int Order => 0;
 
-    public async Task<MetadataResult<Episode>> GetMetadata(EpisodeInfo info, CancellationToken cancellationToken)
+    public Task<MetadataResult<Episode>> GetMetadata(EpisodeInfo info, CancellationToken cancellationToken)
+        => GetMetadataAsync(info, Plugin.Instance?.Configuration ?? new PluginConfiguration(), cancellationToken);
+
+    internal async Task<MetadataResult<Episode>> GetMetadataAsync(EpisodeInfo info,
+        PluginConfiguration configuration, CancellationToken cancellationToken)
     {
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var result = new MetadataResult<Episode> { Item = new Episode() };
         var existingEpisodeId = info.GetProviderId("AnimeClick");
         using var authorityLease = AnimeClickMetadataAuthorityStore.Begin<Episode>(
@@ -113,6 +119,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                     false, info.Path, info.SeriesProviderIds, info.ProviderIds).ConfigureAwait(false);
                 if (overview.Result is { } found) { result.Item.Overview = found.Value; result.HasMetadata = true; }
             }
+            if (_integrated is not null) result.HasMetadata |= await _integrated.CompleteEpisodeAsync(result.Item, info, configuration, cancellationToken).ConfigureAwait(false);
             if (result.HasMetadata) { AnimeClickNumberingGuard.Preserve(result.Item, info); authorityLease.Capture(result.Item); }
             return result;
         }
@@ -260,6 +267,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             }
         }
 
+        if (_integrated is not null) result.HasMetadata |= await _integrated.CompleteEpisodeAsync(result.Item, info, configuration, cancellationToken).ConfigureAwait(false);
         if (result.HasMetadata)
         {
             // Must happen for every published result: Jellyfin would otherwise overwrite the

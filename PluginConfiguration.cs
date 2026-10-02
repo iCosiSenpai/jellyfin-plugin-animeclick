@@ -13,14 +13,24 @@ public class PluginConfiguration : BasePluginConfiguration
     public string CommunityGitHubToken { get; set; } = string.Empty;
 
     // ── Metadati ──
+    /// <summary>Resolve external identities and complete metadata internally, without other Jellyfin metadata plugins.</summary>
+    public bool EnableIntegratedMetadata { get; set; } = true;
+
+    /// <summary>Offer original-resolution TMDB artwork before the AnimeClick cover; requires TmdbApiKey.</summary>
+    public bool EnableIntegratedImages { get; set; } = true;
+
+    public bool EnableFanartImages { get; set; } = true;
+    public string FanartPersonalApiKey { get; set; } = string.Empty;
+    public string FanartProjectApiKey { get; set; } = string.Empty;
+
     /// <summary>Usa il titolo italiano come nome della serie.</summary>
     public bool PreferItalianTitle { get; set; } = true;
 
     /// <summary>
     /// Se true, AnimeClick sovrascrive anche i campi non-italiani (titolo originale,
     /// studio, rating, data, classificazione) che altri provider (AniList/TMDB/OMDb)
-    /// gestiscono meglio. Se false (default), AnimeClick emette solo i campi localizzati
-    /// (titolo IT, sinossi IT, generi IT, tag, cast) e lascia i buchi agli altri provider.
+    /// gestiscono meglio. Con le fonti integrate disattivate, false (default) lascia i campi neutri agli altri
+    /// provider. Le fonti integrate includono quei campi da AnimeClick e completano i mancanti.
     /// </summary>
     public bool OverwriteNonItalianFields { get; set; } = false;
 
@@ -178,7 +188,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.1.2.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.2.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Schema of the persisted settings. One-time upgrades are gated on this rather than on whether

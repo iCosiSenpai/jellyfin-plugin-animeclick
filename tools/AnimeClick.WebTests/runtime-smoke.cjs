@@ -49,7 +49,7 @@ async function main() {
     const plugins = await call('/Plugins');
     const plugin = plugins.find(p => p.Id?.replaceAll('-', '').toLowerCase() === pluginId.replaceAll('-', ''));
     assert.ok(plugin, 'Plugin is absent: ' + JSON.stringify(plugins));
-    assert.equal(plugin?.Version, '1.1.2.0');
+    assert.equal(plugin?.Version, '1.2.0.0');
     assert.equal(plugin.Status, 'Active');
     const config = await call('/Plugins/' + pluginId + '/Configuration');
     assert.equal(config.EnableEpisodeSynopsisTranslation, true);
@@ -88,7 +88,23 @@ async function main() {
     await call('/Plugins/AnimeClick/Community/Status', undefined, 403);
     await call('/Plugins/AnimeClick/Community/Export', undefined, 403);
     await call('/Plugins/AnimeClick/RunMissingTitlesTask', {}, 403);
+    await call('/Plugins/AnimeClick/TestFanart', {}, 403);
     token = adminToken;
+    assert.equal((await call('/Plugins/AnimeClick/TestFanart', {})).Success, false);
+    const integratedConfig = await call('/Plugins/' + pluginId + '/Configuration');
+    assert.equal(integratedConfig.EnableIntegratedMetadata, true);
+    assert.equal(integratedConfig.EnableIntegratedImages, true);
+    assert.equal(integratedConfig.EnableFanartImages, true);
+    assert.equal(integratedConfig.FanartPersonalApiKey, '');
+    for (const [content, types] of [['tvshows', ['Series', 'Season', 'Episode']], ['movies', ['Movie']]]) {
+        const available = await call('/Libraries/AvailableOptions?libraryContentType=' + content);
+        for (const type of types) {
+            const options = available.TypeOptions.find(option => option.Type === type);
+            assert.ok(options, type + ' is supported');
+            assert.equal(options.MetadataFetchers.filter(provider => provider.Name === 'AnimeClick').length, 1, type + ' has one AnimeClick metadata provider');
+            assert.equal(options.ImageFetchers.filter(provider => provider.Name === 'AnimeClick').length, 1, type + ' has one AnimeClick image provider');
+        }
+    }
 
     const browser = await chromium.launch({ headless: true });
     try {

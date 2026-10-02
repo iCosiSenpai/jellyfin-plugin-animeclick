@@ -47,7 +47,11 @@ internal static class AnimeClickHttp
     internal static bool TryResolve(string baseUrl, string url, bool imagesOnly, out Uri uri)
     {
         uri = null!;
-        if (imagesOnly) return AnimeClickClient.TryResolveAllowedImageUri(baseUrl, url, out uri);
+        if (imagesOnly)
+        {
+            if (AnimeClickArtwork.IsTrustedUrl(url)) { uri = new Uri(url); return true; }
+            return AnimeClickClient.TryResolveAllowedImageUri(baseUrl, url, out uri);
+        }
         if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var origin)
             || !Uri.TryCreate(origin, url, out var target)
             || !string.IsNullOrEmpty(target.UserInfo)) return false;

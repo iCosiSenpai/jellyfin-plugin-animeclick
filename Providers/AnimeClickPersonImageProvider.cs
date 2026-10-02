@@ -24,15 +24,17 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickClient _animeClickClient;
     private readonly AnimeClickCacheService _cache;
+    private readonly AnimeClickArtwork? _artwork;
 
     public AnimeClickPersonImageProvider(
         IHttpClientFactory httpClientFactory,
         AnimeClickClient animeClickClient,
-        AnimeClickCacheService cache)
+        AnimeClickCacheService cache, AnimeClickArtwork? artwork = null)
     {
         _httpClientFactory = httpClientFactory;
         _animeClickClient = animeClickClient;
         _cache = cache;
+        _artwork = artwork;
     }
 
     public string Name => "AnimeClick";
@@ -52,13 +54,15 @@ public class AnimeClickPersonImageProvider : IRemoteImageProvider, IHasOrder
 
         if (item is not Person person) return results;
 
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (_artwork is not null) results.AddRange(await _artwork.GetImagesAsync(item, configuration, cancellationToken).ConfigureAwait(false));
+
         // Retrieve the relative URL of the actor's page from ProviderIds
         if (!person.ProviderIds.TryGetValue("AnimeClick", out var actorId) || string.IsNullOrWhiteSpace(actorId))
         {
             return results;
         }
 
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         if (!Uri.TryCreate(configuration.BaseUrl, UriKind.Absolute, out var baseUri)
             || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps)
             || !Uri.TryCreate(baseUri, actorId, out var personUri)

@@ -102,6 +102,10 @@ async function mount(options = {}) {
         }
         if (target.endsWith('/VirtualFolders')) return route.fulfill({ json: [{ Name: 'Anime', LibraryOptions: { TypeOptions: [{ Type: 'Series', MetadataFetchers: ['AnimeClick'], MetadataFetcherOrder: ['AnimeClick'] }] } }] });
         if (target.endsWith('/Items')) return route.fulfill({ json: { Items: [{ Id: 'safe-item-id', Name: 'Un titolo <img src=x onerror=alert(1)>', ProductionYear: 2026 }] } });
+        if (target.endsWith('/TestFanart')) {
+            state.fanartTest = request.postDataJSON();
+            return route.fulfill({ json: { Success: true, ImageCount: 90 } });
+        }
         if (target.endsWith('/IdentifyAndRefresh')) {
             state.identifications.push(request.postDataJSON());
             return route.fulfill({ json: { Success: true, RefreshTriggered: true } });
@@ -415,6 +419,33 @@ test('every metadata switch and numeric preference survives save and reload', as
         await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
         for (const { id, checked } of controls) assert.equal(state.config[id.slice(2)], !checked, id);
         for (const [id, value] of Object.entries(numbers)) assert.equal(await page.locator('#' + id).inputValue(), value, id);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('Fanart keys are editable, verified and preserved alongside the single-provider preferences', async () => {
+    const { page, state } = await mount({ config: { FanartPersonalApiKey: 'saved-fanart-personal', FanartProjectApiKey: '', EnableIntegratedMetadata: true, EnableIntegratedImages: true, EnableFanartImages: true } });
+    try {
+        await select(page, 'Fonti aggiuntive');
+        await page.getByText('Aggiungi Fanart', { exact: true }).click();
+        assert.equal(await page.locator('#acFanartPersonalApiKey').getAttribute('type'), 'password');
+        assert.equal(await page.locator('a[href="https://fanart.tv/get-an-api-key/"]').count(), 1);
+        await page.locator('#acFanartPersonalApiKey').fill('edited-fanart-personal');
+        await page.locator('#acFanartProjectApiKey').fill('edited-fanart-project');
+        await page.getByRole('button', { name: 'Verifica Fanart', exact: true }).click();
+        await page.locator('#acInlineResult_fanart').filter({ hasText: '90 immagini' }).waitFor();
+        assert.deepEqual(state.fanartTest, { personalApiKey: 'edited-fanart-personal', projectApiKey: 'edited-fanart-project' });
+        assert.equal(state.writes.length, 0);
+        await page.locator('#acBtnSave').click();
+        await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
+        assert.equal(state.config.FanartPersonalApiKey, 'edited-fanart-personal');
+        assert.equal(state.config.FanartProjectApiKey, 'edited-fanart-project');
+        await select(page, 'Preferenze');
+        await page.locator('#acPreferItalianTitle').uncheck();
+        await page.locator('#acBtnSave').click();
+        await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
+        assert.equal(state.config.FanartPersonalApiKey, 'edited-fanart-personal');
+        assert.equal(state.config.EnableIntegratedMetadata, true);
         assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });
