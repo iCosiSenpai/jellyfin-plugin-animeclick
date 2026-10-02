@@ -33,6 +33,11 @@ public class AnimeClickAiTranslator
         + "Mantieni i nomi propri dei personaggi e dei luoghi. Non aggiungere informazioni non presenti nel testo.";
 
     internal const string PromptVersion = "metadata-it-v2";
+    internal const string TitlePromptVersion = "episode-title-it-v1";
+    internal const string TitleSystemPrompt =
+        "Traduci dall'inglese all'italiano il titolo di un episodio anime. "
+        + "Restituisci soltanto il titolo tradotto, su una sola riga, senza spiegazioni o testo aggiunto. "
+        + "Conserva i nomi propri. Non scrivere una sinossi e non inventare dettagli.";
 
     /// <summary>Upper bound on the source text sent to the model, in characters.</summary>
     internal const int MaximumSourceCharacters = 8000;
@@ -167,7 +172,8 @@ public class AnimeClickAiTranslator
                 return cached;
             }
 
-            var body = AnimeClickAiProviders.BuildRequestBody(dialect, model, SystemPrompt, plain);
+            var body = AnimeClickAiProviders.BuildRequestBody(dialect, model,
+                fieldName == "episode-title" ? TitleSystemPrompt : SystemPrompt, plain);
             using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
             client.Timeout = TimeSpan.FromSeconds(
                 Math.Clamp(configuration.EpisodeTranslationTimeoutSec, 5, 120));
@@ -211,6 +217,8 @@ public class AnimeClickAiTranslator
             {
                 return null;
             }
+
+            if (fieldName == "episode-title" && AnimeClickEpisodeTitleFallback.CleanTitle(translated) is null) return null;
 
             if (publishToCache)
             {
@@ -374,7 +382,7 @@ public class AnimeClickAiTranslator
         string plainText)
         => $"translation:v4::{cacheScope}::{fieldName}::{sourceLanguage}-{targetLanguage}"
             + $"::{ShortHash(sourceIdentity)}::{ShortHash(model)}::{ShortHash(endpoint)}"
-            + $"::{ShortHash(apiKey)}::{PromptVersion}::{ShortHash(plainText)}";
+            + $"::{ShortHash(apiKey)}::{(fieldName == "episode-title" ? TitlePromptVersion : PromptVersion)}::{ShortHash(plainText)}";
 
     internal static string NormalizeSourceText(string sourceText)
     {

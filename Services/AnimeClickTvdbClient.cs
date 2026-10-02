@@ -280,14 +280,21 @@ public class AnimeClickTvdbClient
         PluginConfiguration configuration,
         CancellationToken cancellationToken)
     {
+        var episodes = await GetEpisodeRecordsAsync(tvdbId, language, configuration, cancellationToken).ConfigureAwait(false);
+        return episodes is null ? null : SelectOverview(episodes, season, episode);
+    }
+
+    private async Task<List<TvdbEpisodeRecord>?> GetEpisodeRecordsAsync(int tvdbId, string language,
+        PluginConfiguration configuration, CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(configuration.TvdbApiKey))
         {
             return null;
         }
 
         var lang = SanitizeTvdbLanguage(language);
-        // v4: the cached records now carry the absolute number, which older entries lack.
-        var listCacheKey = $"tvdbEpisodes:v4::{tvdbId}::{lang}";
+        // v5 adds the episode ID required to verify title translations.
+        var listCacheKey = $"tvdbEpisodes:v5::{tvdbId}::{lang}";
         var emptyCacheKey = listCacheKey + "::empty";
         var episodes = await _cache
             .GetAsync<List<TvdbEpisodeRecord>>(listCacheKey, configuration.CacheHours, cancellationToken)
@@ -360,7 +367,67 @@ public class AnimeClickTvdbClient
             }
         }
 
-        return SelectOverview(episodes, season, episode);
+        return episodes;
+    }
+
+    public async Task<string?> GetEpisodeTitleAsync(int seriesId, int season, int episode, string language,
+        string? expectedEpisodeId, PluginConfiguration configuration, CancellationToken token)
+    {
+        if (seriesId <= 0 || season < 0 || episode < 0 || string.IsNullOrWhiteSpace(configuration.TvdbApiKey)) return null;
+        var records = await GetEpisodeRecordsAsync(seriesId, "eng", configuration, token).ConfigureAwait(false);
+        if (records is null) return null;
+        var record = SelectTitleEpisode(records, season, episode, expectedEpisodeId);
+        if (record is null || record.Id <= 0) return null;
+        var lang = SanitizeTvdbLanguage(language);
+        var key = $"tvdbEpisodeTitle:v1::{record.Id}::{lang}";
+        var cached = await _cache.GetAsync<string>(key, configuration.CacheHours, token).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(cached)) return cached;
+        if (await _cache.GetAsync<string>(key + "::empty", configuration.NegativeCacheHours, token).ConfigureAwait(false) == "empty") return null;
+        try
+        {
+            var bearer = await LoginAsync(configuration, token).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(bearer)) return null;
+            using var client = BuildClient(configuration);
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+            await Throttle.WaitAsync(token).ConfigureAwait(false);
+            using var response = await client.GetAsync($"{BaseUrl}/episodes/{record.Id}/translations/{lang}", token).ConfigureAwait(false);
+            if (RequestThrottle.IsRateLimited(response.StatusCode)) { Throttle.NoticeRateLimit(response); return null; }
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                await _cache.SetAsync(key + "::empty", "empty", token).ConfigureAwait(false);
+                return null;
+            }
+            if (!response.IsSuccessStatusCode) return null;
+            var title = ParseTitleTranslation(await response.Content.ReadAsStringAsync(token).ConfigureAwait(false), lang);
+            if (!string.IsNullOrWhiteSpace(title)) await _cache.SetAsync(key, title, token).ConfigureAwait(false);
+            return title;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch { _logger.LogWarning("TheTVDB episode title unavailable for episode={Id} language={Language}", record.Id, lang); return null; }
+    }
+
+    internal static TvdbEpisodeRecord? SelectTitleEpisode(List<TvdbEpisodeRecord> records, int season, int episode, string? expectedId)
+    {
+        var matches = expectedId is not null ? records.Where(r => r.Id.ToString(CultureInfo.InvariantCulture) == expectedId)
+            : records.Where(r => r.SeasonNumber == season && r.Number == episode);
+        var unique = matches.Take(2).ToList();
+        if (unique.Count == 1) return unique[0];
+        if (expectedId is not null || unique.Count > 1 || season != 1
+            || episode <= records.Where(r => r.SeasonNumber == 1).Select(r => r.Number).DefaultIfEmpty(0).Max()) return null;
+        unique = records.Where(r => r.AbsoluteNumber == episode).Take(2).ToList();
+        return unique.Count == 1 ? unique[0] : null;
+    }
+
+    internal static string? ParseTitleTranslation(string json, string language)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var data = document.RootElement.GetProperty("data");
+            if (data.TryGetProperty("language", out var lang) && lang.GetString() != language) return null;
+            return data.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String ? name.GetString() : null;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException) { return null; }
     }
 
     /// <summary>
@@ -887,6 +954,7 @@ public class AnimeClickTvdbClient
 
                 records.Add(new TvdbEpisodeRecord
                 {
+                    Id = item.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.Number && id.TryGetInt32(out var parsedId) ? parsedId : 0,
                     SeasonNumber = season,
                     Number = number,
                     AbsoluteNumber = absolute,
@@ -956,9 +1024,10 @@ public class AnimeClickTvdbClient
     }
 }
 
-/// <summary>A single episode record parsed from the TVDB episodes list (season, number, overview).</summary>
+/// <summary>A single episode record with verified identity, numbering and overview.</summary>
 internal sealed class TvdbEpisodeRecord
 {
+    public int Id { get; set; }
     public int SeasonNumber { get; set; }
     public int Number { get; set; }
 

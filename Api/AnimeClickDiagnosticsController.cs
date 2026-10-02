@@ -185,7 +185,10 @@ public class AnimeClickDiagnosticsController : ControllerBase
         var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var response = new LibraryAuditResponse
         {
-            EpisodeTitlesEnabled = config.EnableEpisodeTitles
+            EpisodeTitlesEnabled = config.EnableEpisodeTitles,
+            AlternativeTitleLookupEnabled = config.EnableEpisodeTitleFallback
+                && (!string.IsNullOrWhiteSpace(config.TmdbApiKey)
+                    || config.EnableTvdbSynopsis && !string.IsNullOrWhiteSpace(config.TvdbApiKey))
         };
 
         // Two queries for the whole library instead of one per series: on a few thousand episodes
@@ -1529,6 +1532,7 @@ public sealed record FallbackChainStep(
 
 public sealed class LibraryAuditResponse
 {
+    public bool AlternativeTitleLookupEnabled { get; set; }
     /// <summary>False when the whole feature is off, which explains every missing title at once.</summary>
     public bool EpisodeTitlesEnabled { get; set; }
 

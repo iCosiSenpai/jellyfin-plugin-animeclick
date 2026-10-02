@@ -12,6 +12,9 @@ public sealed class AnimeClickTitleRepairSession
     internal HashSet<string> Refreshed { get; } = new(StringComparer.Ordinal);
     internal HashSet<string> Unavailable { get; } = new(StringComparer.Ordinal);
     internal Dictionary<string, AnimeClickEpisodeCatalog> Catalogs { get; } = new(StringComparer.Ordinal);
+    internal Action<string>? ReportPhase { get; set; }
+    internal string? LastSource { get; set; }
+    internal bool LastUsedAi { get; set; }
 }
 
 public interface IAnimeClickTitleResolver
@@ -35,9 +38,17 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
         var seasonNumber = episode.ParentIndexNumber;
         var path = episode.Path;
         var episodeId = episode.GetProviderId("AnimeClick");
+        var seriesTmdb = episode.Series?.GetProviderId("Tmdb");
+        var seriesTvdb = episode.Series?.GetProviderId("Tvdb");
+        var episodeTmdb = episode.GetProviderId("Tmdb");
+        var episodeTvdb = episode.GetProviderId("Tvdb");
         var title = await resolver.ResolveTitleAsync(episode, refreshedCatalogs, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(title) || AnimeClickHtmlParser.IsPlaceholderEpisodeText(title))
             return false;
+        var configuration = Plugin.Instance?.Configuration;
+        if (configuration is not null &&
+            (refreshedCatalogs.LastSource == "TheTVDB" && (!configuration.EnableTvdbSynopsis || string.IsNullOrWhiteSpace(configuration.TvdbApiKey))
+            || refreshedCatalogs.LastSource == "TMDB" && string.IsNullOrWhiteSpace(configuration.TmdbApiKey))) return false;
 
         // Re-read after network work: an administrator's correction or new identity wins.
         if (libraryManager.GetItemById(episode.Id) is not Episode current
@@ -49,6 +60,10 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
             || current.IndexNumber != number || current.ParentIndexNumber != seasonNumber
             || current.IndexNumberEnd != numberEnd || current.Path != path
             || current.GetProviderId("AnimeClick") != episodeId
+            || current.Series?.GetProviderId("Tmdb") != seriesTmdb || current.Series?.GetProviderId("Tvdb") != seriesTvdb
+            || current.GetProviderId("Tmdb") != episodeTmdb || current.GetProviderId("Tvdb") != episodeTvdb
+            || refreshedCatalogs.LastSource is not (null or "AnimeClick") && Plugin.Instance?.Configuration.EnableEpisodeTitleFallback == false
+            || refreshedCatalogs.LastUsedAi && Plugin.Instance?.Configuration.EnableAiTranslation == false
             || !ProviderEnabled(current)
             || Plugin.Instance?.Configuration.EnableEpisodeTitles == false)
             return false;

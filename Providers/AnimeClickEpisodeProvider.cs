@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using AnimeClick.Plugin.Configuration;
 using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Services;
+using AnimeClick.Plugin.Tasks;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
@@ -17,7 +18,7 @@ using Microsoft.Extensions.Logging;
 namespace AnimeClick.Plugin.Providers;
 
 /// <summary>
-/// Provides episode-level Italian titles from AnimeClick and optional Italian
+/// Provides episode-level Italian titles from AnimeClick and configured alternatives, plus optional Italian
 /// overview fallback. Raw AnimeClick numbering is reconciled against Jellyfin at
 /// match time; ambiguous layouts are left untouched rather than guessed.
 /// </summary>
@@ -34,6 +35,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
     private readonly ILogger<AnimeClickEpisodeProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickMetadataFallbackService _fallbackService;
+    private readonly AnimeClickEpisodeTitleFallback? _titleFallback;
 
     public AnimeClickEpisodeProvider(
         AnimeClickClient client,
@@ -44,7 +46,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         AnimeClickEpisodeLayoutResolver layoutResolver,
         ILogger<AnimeClickEpisodeProvider> logger,
         IHttpClientFactory httpClientFactory,
-        AnimeClickMetadataFallbackService fallbackService)
+        AnimeClickMetadataFallbackService fallbackService,
+        AnimeClickEpisodeTitleFallback? titleFallback = null)
     {
         _client = client;
         _cache = cache;
@@ -55,6 +58,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         _logger = logger;
         _httpClientFactory = httpClientFactory;
         _fallbackService = fallbackService;
+        _titleFallback = titleFallback;
     }
 
     public string Name => "AnimeClick";
@@ -101,6 +105,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         if (string.IsNullOrWhiteSpace(mainAnimeClickId)
             || !AnimeClickClient.TryNormalizeAnimeClickId(mainAnimeClickId, out var normalizedMainId))
         {
+            await ApplyTitleFallbackAsync(info, result, configuration, cancellationToken).ConfigureAwait(false);
+            if (result.HasMetadata) { AnimeClickNumberingGuard.Preserve(result.Item, info); authorityLease.Capture(result.Item); }
             return result;
         }
 
@@ -179,6 +185,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                     mainAnimeClickId);
             }
         }
+
+        await ApplyTitleFallbackAsync(info, result, configuration, cancellationToken).ConfigureAwait(false);
 
         if (configuration.EnableEpisodeSynopsisTranslation && seasonNumber.HasValue)
         {
@@ -268,12 +276,50 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         if (!configuration.EnableEpisodeTitles || episode.IndexNumber is null or < 0) return null;
         var root = episode.Series?.GetProviderId("AnimeClick");
         var identity = AnimeClickEpisodeIdentity.Resolve(root, episode.Season?.GetProviderId("AnimeClick"));
-        if (!AnimeClickClient.TryNormalizeAnimeClickId(identity.MatchingId, out var card)) return null;
-        var match = await ResolveEpisodeAsync(new MetadataResult<Episode> { Item = new Episode() },
-            card, identity.IsSeasonSpecific, root, episode.ParentIndexNumber, episode.IndexNumber.Value,
-            episode.IndexNumberEnd, episode.GetProviderId("AnimeClick"), episode.Name, episode.Path,
-            false, configuration, cancellationToken, refreshedCatalogs).ConfigureAwait(false);
-        return match?.Title;
+        if (AnimeClickClient.TryNormalizeAnimeClickId(identity.MatchingId, out var card))
+        {
+            refreshedCatalogs.ReportPhase?.Invoke("Cerco il titolo su AnimeClick…");
+            try
+            {
+                var match = await ResolveEpisodeAsync(new MetadataResult<Episode> { Item = new Episode() },
+                    card, identity.IsSeasonSpecific, root, episode.ParentIndexNumber, episode.IndexNumber.Value,
+                    episode.IndexNumberEnd, episode.GetProviderId("AnimeClick"), episode.Name, episode.Path,
+                    false, configuration, cancellationToken, refreshedCatalogs).ConfigureAwait(false);
+                if (AnimeClickEpisodeTitleFallback.CleanTitle(match?.Title) is { } native)
+                {
+                    refreshedCatalogs.LastSource = "AnimeClick";
+                    return native;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch { _logger.LogWarning("AnimeClick title unavailable; configured alternative sources will be checked."); }
+        }
+        if (_titleFallback is null || episode.ParentIndexNumber is null) return null;
+        var request = new AnimeClickEpisodeTitleRequest(episode.Series?.ProviderIds ?? [], episode.ProviderIds,
+            episode.ParentIndexNumber.Value, episode.IndexNumber.Value, episode.IndexNumberEnd);
+        var fallback = await _titleFallback.ResolveAsync(request, configuration, cancellationToken,
+            refreshedCatalogs.ReportPhase).ConfigureAwait(false);
+        if (fallback is null) return null;
+        refreshedCatalogs.LastSource = fallback.Source;
+        refreshedCatalogs.LastUsedAi = fallback.UsedAi;
+        return fallback.Title;
+    }
+
+    private async Task ApplyTitleFallbackAsync(EpisodeInfo info, MetadataResult<Episode> result,
+        PluginConfiguration configuration, CancellationToken token)
+    {
+        if (_titleFallback is null || !configuration.EnableEpisodeTitles || !configuration.EnableEpisodeTitleFallback
+            || AnimeClickEpisodeTitleFallback.CleanTitle(result.Item.Name) is not null
+            || info.IndexNumber is null || info.ParentIndexNumber is null
+            || !AnimeClickRefreshMissingTitlesTask.NeedsTitle(new Episode { Name = info.Name, Path = info.Path })) return;
+        var request = new AnimeClickEpisodeTitleRequest(info.SeriesProviderIds ?? [], info.ProviderIds ?? [],
+            info.ParentIndexNumber.Value, info.IndexNumber.Value, info.IndexNumberEnd);
+        var fallback = await _titleFallback.ResolveAsync(request, configuration, token).ConfigureAwait(false);
+        if (fallback is null) return;
+        result.Item.Name = fallback.Title;
+        result.HasMetadata = true;
+        _logger.LogInformation("AnimeClick episode title source={Source} ai={Ai} S{Season}E{Episode}",
+            fallback.Source, fallback.UsedAi, request.Season, request.Episode);
     }
 
     private async Task<AnimeClickEpisode?> ResolveEpisodeAsync(
