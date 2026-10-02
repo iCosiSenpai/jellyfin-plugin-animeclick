@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0.0
+
+AnimeClick come unico provider remoto per le librerie anime: identificazione TMDB verificata, completamento dei metadati senza altri plugin e immagini integrate Fanart → TMDB → AnimeClick. Chiavi Fanart personale e di progetto nelle impostazioni, con link e verifica. Numerazione, campi bloccati e immagini esistenti conservati.
+
+- [Note complete](docs/releases/1.2.0.0.md)
+- [Audit e verifiche](docs/AUDIT-1.2.md)
+
 ## 1.1.2.0
 
 AnimeClick primo campo per campo: i valori generici lasciano spazio alle fonti configurate. Recupero italiano e traduzione dall’inglese anche per serie, film, generi e tag, senza mescolare titolo e trama. Le immagini conservano la precedenza dei provider ad alta risoluzione; nessun aggiornamento immagini o riparazione viene avviato dall’installazione.

@@ -34,6 +34,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
     private readonly AnimeClickTmdbClient _tmdbClient;
     private readonly AnimeClickCommunityService? _community;
     private readonly AnimeClickAnimeTextFallback? _textFallback;
+    private readonly AnimeClickIntegratedMetadata? _integrated;
 
     public AnimeClickMovieProvider(
         AnimeClickClient client,
@@ -45,7 +46,8 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         IHttpClientFactory httpClientFactory,
         AnimeClickTmdbClient tmdbClient,
         AnimeClickCommunityService? community = null,
-        AnimeClickAnimeTextFallback? textFallback = null)
+        AnimeClickAnimeTextFallback? textFallback = null,
+        AnimeClickIntegratedMetadata? integrated = null)
     {
         _client = client;
         _cache = cache;
@@ -57,6 +59,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         _tmdbClient = tmdbClient;
         _community = community;
         _textFallback = textFallback;
+        _integrated = integrated;
     }
 
     public string Name => "AnimeClick";
@@ -67,9 +70,12 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
     /// </summary>
     public int Order => 0;
 
-    public async Task<MetadataResult<Movie>> GetMetadata(MovieInfo info, CancellationToken cancellationToken)
+    public Task<MetadataResult<Movie>> GetMetadata(MovieInfo info, CancellationToken cancellationToken)
+        => GetMetadataAsync(info, Plugin.Instance?.Configuration ?? new PluginConfiguration(), cancellationToken);
+
+    internal async Task<MetadataResult<Movie>> GetMetadataAsync(MovieInfo info,
+        PluginConfiguration configuration, CancellationToken cancellationToken)
     {
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var result = new MetadataResult<Movie> { Item = new Movie() };
 
         var animeClickId = info.GetProviderId("AnimeClick");
@@ -114,8 +120,8 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
 
         if (string.IsNullOrWhiteSpace(url))
         {
-            await FillItalianOverviewAsync(result.Item, info, configuration, cancellationToken).ConfigureAwait(false);
-            result.HasMetadata = !string.IsNullOrWhiteSpace(result.Item.Name) || !string.IsNullOrWhiteSpace(result.Item.Overview) || result.Item.Genres.Length > 0 || result.Item.Tags.Length > 0;
+            await FillItalianOverviewAsync(result, info, configuration, cancellationToken).ConfigureAwait(false);
+            result.HasMetadata |= !string.IsNullOrWhiteSpace(result.Item.Name) || !string.IsNullOrWhiteSpace(result.Item.Overview) || result.Item.Genres.Length > 0 || result.Item.Tags.Length > 0;
             if (result.HasMetadata) authorityLease.Capture(result.Item);
             return result;
         }
@@ -125,8 +131,8 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         var anime = cached ?? await FetchAnimeAsync(url, configuration, cacheKey, cancellationToken);
         if (anime is null)
         {
-            await FillItalianOverviewAsync(result.Item, info, configuration, cancellationToken).ConfigureAwait(false);
-            result.HasMetadata = !string.IsNullOrWhiteSpace(result.Item.Name) || !string.IsNullOrWhiteSpace(result.Item.Overview) || result.Item.Genres.Length > 0 || result.Item.Tags.Length > 0;
+            await FillItalianOverviewAsync(result, info, configuration, cancellationToken).ConfigureAwait(false);
+            result.HasMetadata |= !string.IsNullOrWhiteSpace(result.Item.Name) || !string.IsNullOrWhiteSpace(result.Item.Overview) || result.Item.Genres.Length > 0 || result.Item.Tags.Length > 0;
             if (result.HasMetadata) authorityLease.Capture(result.Item);
             return result;
         }
@@ -150,8 +156,6 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
 
         Map(result.Item, anime, configuration);
 
-        await FillItalianOverviewAsync(result.Item, info, configuration, cancellationToken)
-            .ConfigureAwait(false);
 
         // Map people to Jellyfin PersonInfo
         if (configuration.EnableCast)
@@ -180,6 +184,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
                 .ToList();
         }
 
+        await FillItalianOverviewAsync(result, info, configuration, cancellationToken, anime).ConfigureAwait(false);
         result.HasMetadata = true;
 
         // Preserve a verified Jellyfin ID. Only discover a new mapping when none
@@ -209,16 +214,15 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             }
         }
 
-        // Diagnostic: report which fields we left empty so the next provider
-        // (AniList, TMDB, OMDb) can fill them in.
+        // Report fields still missing after the configured internal sources.
         var emptyFields = new List<string>();
-        if (configuration.EnableGenres && anime.Genres.Count == 0) emptyFields.Add("Genres");
-        if (configuration.EnableStudios && anime.Studios.Count == 0) emptyFields.Add("Studios");
-        if (string.IsNullOrWhiteSpace(anime.OfficialRating)) emptyFields.Add("OfficialRating");
+        if (configuration.EnableGenres && result.Item.Genres.Length == 0) emptyFields.Add("Genres");
+        if (configuration.EnableStudios && result.Item.Studios.Length == 0) emptyFields.Add("Studios");
+        if (string.IsNullOrWhiteSpace(result.Item.OfficialRating)) emptyFields.Add("OfficialRating");
         if (emptyFields.Count > 0)
         {
             _logger.LogInformation(
-                "AnimeClick MovieProvider leaving fields for downstream providers: {Fields} (title=\"{Title}\")",
+                "AnimeClick MovieProvider missing fields after configured internal sources: {Fields} (title=\"{Title}\")",
                 string.Join(", ", emptyFields), anime.Title);
         }
 
@@ -341,14 +345,18 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
     /// in inglese, e in quel caso e' meglio nessuna sinossi che una in un'altra lingua.
     /// </remarks>
     private async Task FillItalianOverviewAsync(
-        Movie target,
+        MetadataResult<Movie> result,
         MovieInfo info,
         PluginConfiguration configuration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, AnimeClickAnime? anime = null)
     {
+        var target = result.Item;
+        if (_integrated is not null)
+            await _integrated.CompleteAsync(result, info.Name, info.Year, info.ProviderIds, anime, true, configuration, cancellationToken).ConfigureAwait(false);
+        var ids = AnimeClickIntegratedMetadata.MergeIds(target, info.ProviderIds);
         if (_textFallback is not null)
         {
-            await _textFallback.FillMissingAsync(target, info.Name, info.Path, info.ProviderIds, isMovie: true, configuration, cancellationToken).ConfigureAwait(false);
+            await _textFallback.FillMissingAsync(target, info.Name, info.Path, ids, isMovie: true, configuration, cancellationToken).ConfigureAwait(false);
             return;
         }
         if (!configuration.EnablePlot || !string.IsNullOrWhiteSpace(target.Overview))
@@ -425,9 +433,9 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         }
 
         // ── Campi non-italiani (language-neutral): solo se l'utente ha attivato
-        //    OverwriteNonItalianFields. Default false = li lascia ad AniList/TMDB/OMDb
-        //    (fill-gaps). Empty-guard comunque, per non cancellare valori esistenti. ──
-        if (configuration.OverwriteNonItalianFields)
+        //    Le fonti integrate includono anche questi campi senza altri plugin. In modalita'
+        //    composita resta disponibile OverwriteNonItalianFields. Non si emettono valori vuoti. ──
+        if (configuration.OverwriteNonItalianFields || configuration.EnableIntegratedMetadata)
         {
             if (AnimeClickMetadataText.Title(source.OriginalTitle) is { } originalTitle)
             {

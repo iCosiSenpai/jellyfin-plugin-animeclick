@@ -42,6 +42,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
     private readonly ITaskManager _taskManager;
     private readonly AnimeClickActivityService _activities;
     private readonly ILogger<AnimeClickDiagnosticsController> _logger;
+    private readonly AnimeClickFanartClient? _fanart;
 
     public AnimeClickDiagnosticsController(
         AnimeClickSeriesSearchProvider searchProvider,
@@ -58,7 +59,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         ILibraryManager libraryManager,
         ITaskManager taskManager,
         ILogger<AnimeClickDiagnosticsController> logger,
-        AnimeClickActivityService? activities = null)
+        AnimeClickActivityService? activities = null, AnimeClickFanartClient? fanart = null)
     {
         _searchProvider = searchProvider;
         _episodeListLoader = episodeListLoader;
@@ -75,6 +76,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         _taskManager = taskManager;
         _activities = activities ?? new AnimeClickActivityService();
         _logger = logger;
+        _fanart = fanart;
     }
 
     [HttpGet("TestLookup")]
@@ -886,6 +888,19 @@ public class AnimeClickDiagnosticsController : ControllerBase
         return Ok(result);
     }
 
+    [HttpPost("TestFanart")]
+    public async Task<IActionResult> TestFanart([FromBody] TestFanartRequest request, CancellationToken cancellationToken)
+    {
+        var configuration = new PluginConfiguration { EnableFanartImages = true,
+            FanartPersonalApiKey = request.PersonalApiKey ?? "", FanartProjectApiKey = request.ProjectApiKey ?? "" };
+        if (_fanart is null || (string.IsNullOrWhiteSpace(configuration.FanartPersonalApiKey) && string.IsNullOrWhiteSpace(configuration.FanartProjectApiKey)))
+            return Ok(new { Success = false, ErrorMessage = "Inserisci una chiave personale o di progetto Fanart." });
+        var data = await _fanart.GetArtworkAsync(550, true, configuration, cancellationToken).ConfigureAwait(false);
+        var images = data is { } root ? AnimeClickArtwork.ParseFanart(root, true, null, 0).Count : 0;
+        return Ok(new { Success = data.HasValue && images > 0, ImageCount = images,
+            ErrorMessage = data.HasValue && images > 0 ? null : "Fanart non ha restituito immagini valide. Verifica chiave e connessione." });
+    }
+
     /// <summary>
     /// Sends a trivial prompt to the AI profile currently entered in the form — provider, endpoint,
     /// key and model — and reports what came back. Kept reachable under the historical route name
@@ -1455,6 +1470,12 @@ public sealed class ClearCacheRequest
 public sealed class ClearCacheResponse
 {
     public int Removed { get; set; }
+}
+
+public sealed class TestFanartRequest
+{
+    public string? PersonalApiKey { get; set; }
+    public string? ProjectApiKey { get; set; }
 }
 
 public sealed class TestTmdbRequest

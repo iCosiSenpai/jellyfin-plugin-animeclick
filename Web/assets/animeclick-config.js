@@ -2,7 +2,7 @@
 (function () {
     'use strict';
 
-    var V = '1.1.2.0';
+    var V = '1.2.0.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -565,12 +565,12 @@
             'Salute dei provider di fallback',
             'I test usano i valori attualmente inseriti nel modulo. Le API key non vengono mai incluse nei risultati mostrati.'
         );
-        ['tmdb', 'ai', 'tvdb'].forEach(function (provider) {
-            var names = { tmdb: 'TMDB', ai: 'Traduzione AI', tvdb: 'TheTVDB' };
+        ['tmdb', 'ai', 'tvdb', 'fanart'].forEach(function (provider) {
+            var names = { tmdb: 'TMDB', ai: 'Traduzione AI', tvdb: 'TheTVDB', fanart: 'Fanart' };
             var roles = {
                 tmdb: 'Italiano nativo e fonte inglese',
                 ai: 'Ultimo fallback EN→IT',
-                tvdb: 'Prima fonte esterna italiana'
+                tvdb: 'Prima fonte esterna italiana', fanart: 'Artwork preferito ad alta risoluzione'
             };
             var row = el('div', 'ac-provider-row');
             var identity = el('div', 'ac-provider-identity');
@@ -617,7 +617,7 @@
         var features = makeCard(
             'Copertura',
             'Funzionalità attive',
-            'Riepilogo della configurazione salvata. I campi non disponibili restano agli altri provider Jellyfin.'
+            'Riepilogo della configurazione salvata. Le fonti integrate completano i campi mancanti dopo AnimeClick.'
         );
         var chips = el('div', 'ac-row');
         chips.id = 'acFeatureChips';
@@ -643,6 +643,7 @@
         ));
 
         var primary = makeCard('Essenziali', 'Identità italiana', 'I valori principali che definiscono la scheda nel catalogo.');
+        primary.body.appendChild(makeCheck('acEnableIntegratedMetadata', 'Completa i metadati dalle fonti integrate', 'Con una chiave TMDB il plugin identifica le opere e recupera direttamente i campi mancanti. Puoi tenere AnimeClick come unico provider metadati nelle librerie anime.'));
         primary.body.appendChild(makeCheck('acPreferItalianTitle', 'Titolo italiano', 'Usa il titolo AnimeClick come nome principale.'));
         primary.body.appendChild(makeCheck('acEnablePlot', 'Trama italiana', 'Importa la sinossi AnimeClick quando disponibile.'));
         primary.body.appendChild(makeCheck('acEnableEpisodeSynopsisTranslation', 'Trame degli episodi', 'Usa AnimeClick e le eventuali fonti aggiuntive che hai configurato.'));
@@ -662,7 +663,9 @@
         enrichment.body.appendChild(grid);
         panel.appendChild(enrichment.details);
 
-        var images = makeDetails('Locandine', 'AnimeClick può completare le immagini mancanti usando le proprie locandine.');
+        var images = makeDetails('Immagini', 'Precedenza: Fanart, TMDB alla risoluzione originale, locandina AnimeClick. Le immagini già salvate restano intatte.');
+        images.body.appendChild(makeCheck('acEnableIntegratedImages', 'Immagini TMDB ad alta risoluzione', 'Locandine, sfondi, loghi, stagioni, fotogrammi e ritratti. Richiede la chiave TMDB.'));
+        images.body.appendChild(makeCheck('acEnableFanartImages', 'Preferisci le immagini Fanart', 'Richiede una chiave Fanart nelle Fonti aggiuntive.'));
         images.body.appendChild(makeCheck('acEnableAnimeClickImages', 'Abilita locandina AnimeClick', 'Usala solo quando i provider immagini precedenti non producono un poster.'));
         images.body.appendChild(makeField(
             'acMinPosterWidth',
@@ -688,12 +691,12 @@
         advanced.body.appendChild(makeCheck(
             'acEnableStudios',
             'Studi AnimeClick',
-            'Effettivo soltanto quando la sovrascrittura dei campi non italiani è attiva.'
+            'Usato con le fonti integrate oppure con la sovrascrittura dei campi non italiani.'
         ));
         advanced.body.appendChild(makeCheck(
             'acEnableCommunityRating',
             'Valutazione community AnimeClick',
-            'Effettiva soltanto quando la sovrascrittura dei campi non italiani è attiva.'
+            'Usata con le fonti integrate oppure con la sovrascrittura dei campi non italiani.'
         ));
         advanced.body.appendChild(makeCheck(
             'acEnableCollections',
@@ -723,7 +726,7 @@
         clear(panel);
         panel.appendChild(makeCallout('Vuoi trovare più trame?', 'AnimeClick funziona da solo. Puoi aggiungere una fonte italiana oppure un servizio di traduzione per le descrizioni disponibili soltanto in inglese.', 'good'));
 
-        var sources = makeDetails('Aggiungi TMDB', 'Cerca titoli e trame italiani mancanti; può fornire testi inglesi da tradurre.');
+        var sources = makeDetails('Aggiungi TMDB', 'Per usare AnimeClick come unico provider: identifica le opere e completa metadati e immagini senza installare il plugin TMDB.');
         sources.body.appendChild(makeSecretField('acTmdbApiKey', 'Chiave API TMDB', 'Disponibile nelle <a href="https://developer.themoviedb.org/docs/getting-started" target="_blank" rel="noopener noreferrer">impostazioni API TMDB</a>.'));
         var tmdbTest = el('button', 'ac-btn', 'Verifica TMDB');
         tmdbTest.type = 'button';
@@ -732,6 +735,17 @@
         var tmdbResult = makeLiveState('acInlineResult_tmdb');
         sources.body.appendChild(tmdbResult);
         panel.appendChild(sources.details);
+
+        var fanart = makeDetails('Aggiungi Fanart', 'Immagini preferite: locandine, sfondi anche 4K, loghi, banner e artwork. Funziona anche con la sola chiave personale.');
+        fanart.body.appendChild(makeSecretField('acFanartPersonalApiKey', 'Chiave personale Fanart', 'Crea la chiave in <a href="https://fanart.tv/get-an-api-key/" target="_blank" rel="noopener noreferrer">Personal API Keys su Fanart</a>. È la chiave consigliata per il tuo server.'));
+        fanart.body.appendChild(makeSecretField('acFanartProjectApiKey', 'Chiave di progetto Fanart (facoltativa)', 'Per una chiave della sezione Project API Keys. Puoi usare la personale, quella di progetto o entrambe.'));
+        var fanartTest = el('button', 'ac-btn', 'Verifica Fanart');
+        fanartTest.type = 'button';
+        fanartTest.setAttribute('data-ac-test', 'fanart');
+        fanart.body.appendChild(fanartTest);
+        fanart.body.appendChild(makeLiveState('acInlineResult_fanart'));
+        fanart.body.appendChild(el('p', 'ac-field-desc', 'Artwork provided by Fanart.tv.'));
+        panel.appendChild(fanart.details);
 
         var tvdb = makeDetails('Aggiungi TheTVDB', 'Una fonte di titoli, trame e generi. AnimeClick resta la prima scelta; TheTVDB viene consultata prima di TMDB per i testi.');
         tvdb.body.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa TheTVDB', 'Richiede una chiave API del servizio.'));
@@ -2561,6 +2575,11 @@
 
         setChecked('acPreferItalianTitle', config.PreferItalianTitle, true);
         setChecked('acEnablePlot', config.EnablePlot, true);
+        setChecked('acEnableIntegratedMetadata', config.EnableIntegratedMetadata, true);
+        setChecked('acEnableIntegratedImages', config.EnableIntegratedImages, true);
+        setChecked('acEnableFanartImages', config.EnableFanartImages, true);
+        setValue('acFanartPersonalApiKey', config.FanartPersonalApiKey, '');
+        setValue('acFanartProjectApiKey', config.FanartProjectApiKey, '');
         setChecked('acOverwriteNonItalianFields', config.OverwriteNonItalianFields, false);
         setChecked('acEnableAnimeClickImages', config.EnableAnimeClickImages, true);
         setValue('acMinPosterWidth', config.MinPosterWidth, 400);
@@ -2616,6 +2635,11 @@
     function readForm(config) {
         config.PreferItalianTitle = val('acPreferItalianTitle').checked;
         config.EnablePlot = val('acEnablePlot').checked;
+        config.EnableIntegratedMetadata = val('acEnableIntegratedMetadata').checked;
+        config.EnableIntegratedImages = val('acEnableIntegratedImages').checked;
+        config.EnableFanartImages = val('acEnableFanartImages').checked;
+        config.FanartPersonalApiKey = val('acFanartPersonalApiKey').value.trim();
+        config.FanartProjectApiKey = val('acFanartProjectApiKey').value.trim();
         config.OverwriteNonItalianFields = val('acOverwriteNonItalianFields').checked;
         config.EnableAnimeClickImages = val('acEnableAnimeClickImages').checked;
         config.MinPosterWidth = parseInt(val('acMinPosterWidth').value, 10) || 0;
@@ -2742,7 +2766,7 @@
             ['Rating', config.EnableCommunityRating],
             ['Titoli episodi', config.EnableEpisodeTitles],
             ['Sigle', config.EnableThemeSongs],
-            ['Poster fallback', config.EnableAnimeClickImages],
+            ['Poster fallback', config.EnableAnimeClickImages], ['Metadati integrati', config.EnableIntegratedMetadata], ['Artwork TMDB', config.EnableIntegratedImages], ['Fanart', config.EnableFanartImages],
             ['Sinossi episodi', config.EnableEpisodeSynopsisTranslation],
             ['TVDB IT', config.EnableTvdbSynopsis]
         ];
@@ -2759,10 +2783,10 @@
     function updateHeroStats(config) {
         var providerStat = page.querySelector('#acStatProviders');
         if (providerStat) {
-            var count = [config.TmdbApiKey, config.AiApiKey, config.TvdbApiKey].filter(Boolean).length;
-            providerStat.querySelector('.ac-stat-value').textContent = count + '/3';
+            var count = [config.TmdbApiKey, config.AiApiKey, config.TvdbApiKey, config.FanartPersonalApiKey || config.FanartProjectApiKey].filter(Boolean).length;
+            providerStat.querySelector('.ac-stat-value').textContent = count + '/4';
             providerStat.querySelector('.ac-stat-sub').textContent = 'fallback configurati';
-            providerStat.className = 'ac-stat ' + (count === 3 ? 'good' : count > 0 ? 'warn' : '');
+            providerStat.className = 'ac-stat ' + (count === 4 ? 'good' : count > 0 ? 'warn' : '');
         }
         var cacheStat = page.querySelector('#acStatCache');
         if (cacheStat) {
@@ -2776,8 +2800,8 @@
                 config.EnablePlot,
                 config.EnableAnimeClickImages,
                 config.EnableGenres,
-                config.OverwriteNonItalianFields && config.EnableStudios,
-                config.OverwriteNonItalianFields && config.EnableCommunityRating,
+                (config.OverwriteNonItalianFields || config.EnableIntegratedMetadata) && config.EnableStudios,
+                (config.OverwriteNonItalianFields || config.EnableIntegratedMetadata) && config.EnableCommunityRating,
                 config.EnableCast,
                 config.EnableTags,
                 config.EnableProductionLocations,
@@ -2919,6 +2943,7 @@
     /* ===== diagnostics ===== */
 
     function providerPayload(provider) {
+        if (provider === 'fanart') return { personalApiKey: val('acFanartPersonalApiKey').value.trim(), projectApiKey: val('acFanartProjectApiKey').value.trim() };
         if (provider === 'tmdb') {
             return { apiKey: val('acTmdbApiKey').value.trim() };
         }
@@ -2948,6 +2973,7 @@
         var status = valueOf(result, 'statusCode');
         var error = valueOf(result, 'errorMessage');
         if (!success) return truncate(error || ('Verifica fallita' + (status ? ' · HTTP ' + status : '')), 300);
+        if (provider === 'fanart') return 'Fanart connesso · ' + (valueOf(result, 'imageCount') || 0) + ' immagini disponibili per il campione';
         if (provider === 'tmdb') {
             return 'Connessione valida' + (status ? ' · HTTP ' + status : '') +
                 (valueOf(result, 'sampleName') ? ' · Risultato: ' + truncate(valueOf(result, 'sampleName'), 80) : '');
@@ -2965,7 +2991,7 @@
         var endpoints = {
             tmdb: 'Plugins/AnimeClick/TestTmdb',
             ai: 'Plugins/AnimeClick/TestAi',
-            tvdb: 'Plugins/AnimeClick/TestTvdb'
+            tvdb: 'Plugins/AnimeClick/TestTvdb', fanart: 'Plugins/AnimeClick/TestFanart'
         };
         var inline = page.querySelector('#acInlineResult_' + provider);
         setBusy(button, true, button.getAttribute('data-idle-label') || button.textContent, 'Verifica…');

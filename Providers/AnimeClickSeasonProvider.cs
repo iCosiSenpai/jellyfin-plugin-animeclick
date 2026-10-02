@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using AnimeClick.Plugin.Configuration;
+using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Services;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Providers;
@@ -23,26 +24,38 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
     private readonly AnimeClickSeasonResolver _seasonResolver;
     private readonly ILogger<AnimeClickSeasonProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly AnimeClickIntegratedMetadata? _integrated;
+    private readonly AnimeClickClient? _client;
+    private readonly AnimeClickCacheService? _cache;
+    private readonly AnimeClickHtmlParser? _parser;
 
     public AnimeClickSeasonProvider(
         AnimeClickSeasonResolver seasonResolver,
         ILogger<AnimeClickSeasonProvider> logger,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory, AnimeClickIntegratedMetadata? integrated = null,
+        AnimeClickClient? client = null, AnimeClickCacheService? cache = null, AnimeClickHtmlParser? parser = null)
     {
         _seasonResolver = seasonResolver;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
+        _integrated = integrated;
+        _client = client;
+        _cache = cache;
+        _parser = parser;
     }
 
     public string Name => "AnimeClick";
 
     public int Order => 0;
 
-    public async Task<MetadataResult<Season>> GetMetadata(
+    public Task<MetadataResult<Season>> GetMetadata(
         SeasonInfo info,
         CancellationToken cancellationToken)
+        => GetMetadataAsync(info, Plugin.Instance?.Configuration ?? new PluginConfiguration(), cancellationToken);
+
+    internal async Task<MetadataResult<Season>> GetMetadataAsync(SeasonInfo info,
+        PluginConfiguration configuration, CancellationToken cancellationToken)
     {
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var result = new MetadataResult<Season> { Item = new Season() };
 
         var mainAnimeClickId = info.SeriesProviderIds?.GetValueOrDefault("AnimeClick");
@@ -63,13 +76,13 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
                     mainAnimeClickId);
             }
 
-            return result;
+            return await CompleteAsync().ConfigureAwait(false);
         }
 
         var seasonNumber = info.IndexNumber;
         if (!seasonNumber.HasValue || seasonNumber.Value <= 1)
         {
-            return result;
+            return await CompleteAsync().ConfigureAwait(false);
         }
 
         var resolvedId = await _seasonResolver
@@ -84,13 +97,46 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
             // AnimeClickNumberingGuard.
             AnimeClickNumberingGuard.Preserve(result.Item, info);
             result.HasMetadata = true;
+            // Only a distinct season card describes this season; never copy the entire series plot.
+            if (_client is not null && _cache is not null && _parser is not null
+                && AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, resolvedId, out var url))
+            {
+                try
+                {
+                    var key = "anime::" + url;
+                    var anime = await _cache.GetAsync<AnimeClickAnime>(key, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
+                    if (anime is null)
+                    {
+                        anime = _parser.ParseAnimePage(url, await _client.GetStringAsync(url, configuration, cancellationToken).ConfigureAwait(false));
+                        await _cache.SetAsync(key, anime, cancellationToken).ConfigureAwait(false);
+                    }
+                    if (configuration.PreferItalianTitle) result.Item.Name = AnimeClickMetadataText.Title(anime.Title)!;
+                    if (configuration.EnablePlot) result.Item.Overview = AnimeClickMetadataText.ItalianOverview(anime.Overview);
+                    if (configuration.EnableIntegratedMetadata || configuration.OverwriteNonItalianFields)
+                    {
+                        result.Item.PremiereDate = anime.PremiereDate?.UtcDateTime;
+                        result.Item.ProductionYear = anime.ProductionYear;
+                        if (configuration.EnableCommunityRating) result.Item.CommunityRating = anime.CommunityRating;
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch { _logger.LogWarning("AnimeClick season card unavailable; trying configured internal sources"); }
+            }
             _logger.LogInformation(
                 "AnimeClick: Season {Season} provider ID set → {Id}",
                 seasonNumber.Value,
                 resolvedId);
         }
 
-        return result;
+        return await CompleteAsync().ConfigureAwait(false);
+
+        async Task<MetadataResult<Season>> CompleteAsync()
+        {
+            if (_integrated is not null)
+                result.HasMetadata |= await _integrated.CompleteSeasonAsync(result.Item, info, configuration, cancellationToken).ConfigureAwait(false);
+            if (result.HasMetadata) AnimeClickNumberingGuard.Preserve(result.Item, info);
+            return result;
+        }
     }
 
     public Task<IEnumerable<RemoteSearchResult>> GetSearchResults(
