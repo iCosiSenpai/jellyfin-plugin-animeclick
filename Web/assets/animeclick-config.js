@@ -2,7 +2,7 @@
 (function () {
     'use strict';
 
-    var V = '1.1.1.0';
+    var V = '1.1.2.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -556,7 +556,7 @@
         var priorityGrid = el('div', 'ac-priority-grid');
         addPriorityTile(priorityGrid, 'Testo', 'Ordine 0', 'Titoli, trama, generi, tag e cast restano autorevoli.', 'good');
         addPriorityTile(priorityGrid, 'Immagini', 'Fallback 100', 'I provider ad alta risoluzione mantengono la precedenza.', 'neutral');
-        addPriorityTile(priorityGrid, 'Sinossi episodi', 'AnimeClick → IT → EN', 'Prima AnimeClick; l’AI traduce soltanto l’ultima fonte inglese.', 'warn');
+        addPriorityTile(priorityGrid, 'Recupero dei testi', 'AnimeClick → IT → EN', 'Per ogni campo: AnimeClick, poi una fonte italiana, infine inglese tradotto. I valori generici vengono scartati.', 'warn');
         authority.body.appendChild(priorityGrid);
         panel.appendChild(authority.card);
 
@@ -733,7 +733,7 @@
         sources.body.appendChild(tmdbResult);
         panel.appendChild(sources.details);
 
-        var tvdb = makeDetails('Aggiungi TheTVDB', 'Un’altra fonte di titoli e trame per gli episodi. Viene consultata prima di TMDB.');
+        var tvdb = makeDetails('Aggiungi TheTVDB', 'Una fonte di titoli, trame e generi. AnimeClick resta la prima scelta; TheTVDB viene consultata prima di TMDB per i testi.');
         tvdb.body.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa TheTVDB', 'Richiede una chiave API del servizio.'));
         tvdb.body.appendChild(makeSecretField('acTvdbApiKey', 'Chiave API TheTVDB', 'Disponibile dal <a href="https://thetvdb.com/dashboard" target="_blank" rel="noopener noreferrer">tuo account TheTVDB</a>.'));
         var tvdbTest = el('button', 'ac-btn', 'Verifica TheTVDB');
@@ -744,7 +744,7 @@
         tvdb.body.appendChild(el('p', 'ac-field-desc', 'Metadata provided by TheTVDB.'));
         panel.appendChild(tvdb.details);
 
-        var ai = makeDetails('Traduci trame e titoli mancanti', 'Facoltativo. Serve TMDB o TheTVDB come fonte. I servizi cloud possono avere un costo; vengono inviati soltanto i testi da tradurre.');
+        var ai = makeDetails('Traduci i testi mancanti', 'Titoli, trame, generi e tag, soltanto quando AnimeClick non li fornisce. Serve una fonte configurata; i servizi cloud possono avere un costo. Vengono inviati soltanto i testi da tradurre.');
         ai.body.appendChild(makeCheck('acEnableAiTranslation', 'Consenti la traduzione dall’inglese', 'Puoi disattivarla in qualsiasi momento mantenendo il servizio e la chiave salvati. Funziona solo dopo aver scelto un modello.'));
         ai.body.appendChild(makeSelect('acAiProvider', 'Servizio di traduzione', 'Scegli il servizio che vuoi usare.', [{ value: '', label: 'Scegli un servizio…' }]));
         var providerNote = el('div', 'ac-field-desc');

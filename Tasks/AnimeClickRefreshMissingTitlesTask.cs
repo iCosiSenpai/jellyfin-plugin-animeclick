@@ -165,7 +165,7 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
     internal static bool NeedsTitle(Episode episode)
     {
         var name = episode.Name;
-        if (string.IsNullOrWhiteSpace(name))
+        if (AnimeClickMetadataText.Title(name) is null)
         {
             return true;
         }

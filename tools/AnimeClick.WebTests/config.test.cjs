@@ -138,7 +138,7 @@ test('zero cache values survive saving and a failed provider list preserves the 
         await openDetails(page, 'Ricerca, rete e compatibilità');
         await page.locator('#acNegativeCacheHours').fill('0');
         await select(page, 'Fonti aggiuntive');
-        await openDetails(page, 'Traduci trame e titoli mancanti');
+        await openDetails(page, 'Traduci i testi mancanti');
         await openDetails(page, 'Indirizzo del servizio e tempi di attesa');
         await page.locator('#acTranslationCacheHours').fill('0');
         await page.locator('#acBtnSave').click();
@@ -224,7 +224,7 @@ test('removing a saved AI key also clears its legacy copy', async () => {
     const { page, state } = await mount({ config: { OllamaCloudApiKey: 'old-test-key' } });
     try {
         await select(page, 'Fonti aggiuntive');
-        await openDetails(page, 'Traduci trame e titoli mancanti');
+        await openDetails(page, 'Traduci i testi mancanti');
         await page.locator('#acClearAiKey').check();
         await page.locator('#acBtnSave').click();
         await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
@@ -252,7 +252,7 @@ test('a saved AI credential cannot silently move to another destination', async 
     const { page, state } = await mount();
     try {
         await select(page, 'Fonti aggiuntive');
-        await openDetails(page, 'Traduci trame e titoli mancanti');
+        await openDetails(page, 'Traduci i testi mancanti');
         await openDetails(page, 'Indirizzo del servizio e tempi di attesa');
         await page.locator('#acAiEndpoint').fill('https://different.example/v1/chat/completions');
         await page.locator('#acBtnSave').click();

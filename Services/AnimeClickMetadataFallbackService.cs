@@ -86,7 +86,9 @@ public sealed class AnimeClickMetadataFallbackService
         string? animeClickEpisodeId,
         PluginConfiguration configuration,
         CancellationToken cancellationToken,
-        string? refreshPath)
+        string? refreshPath,
+        IReadOnlyDictionary<string, string>? seriesIds = null,
+        IReadOnlyDictionary<string, string>? episodeIds = null)
         => ResolveEpisodeOverviewAsync(
             animeClickId,
             season,
@@ -95,7 +97,9 @@ public sealed class AnimeClickMetadataFallbackService
             configuration,
             cancellationToken,
             allowSynchronousTranslation: false,
-            refreshPath);
+            refreshPath,
+            seriesIds,
+            episodeIds);
 
     public Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
         string animeClickId,
@@ -121,7 +125,9 @@ public sealed class AnimeClickMetadataFallbackService
         PluginConfiguration configuration,
         CancellationToken cancellationToken,
         bool allowSynchronousTranslation,
-        string? refreshPath = null)
+        string? refreshPath = null,
+        IReadOnlyDictionary<string, string>? seriesIds = null,
+        IReadOnlyDictionary<string, string>? episodeIds = null)
     {
         var resolution = await ResolveEpisodeOverviewDetailedAsync(
                 animeClickId,
@@ -131,7 +137,9 @@ public sealed class AnimeClickMetadataFallbackService
                 configuration,
                 cancellationToken,
                 allowSynchronousTranslation,
-                refreshPath)
+                refreshPath,
+                seriesIds,
+                episodeIds)
             .ConfigureAwait(false);
         return resolution.Result;
     }
@@ -149,18 +157,27 @@ public sealed class AnimeClickMetadataFallbackService
         PluginConfiguration configuration,
         CancellationToken cancellationToken,
         bool allowSynchronousTranslation,
-        string? refreshPath = null)
+        string? refreshPath = null,
+        IReadOnlyDictionary<string, string>? seriesIds = null,
+        IReadOnlyDictionary<string, string>? episodeIds = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        int? KnownId(string provider) => seriesIds is not null && seriesIds.TryGetValue(provider, out var value)
+            && int.TryParse(value, out var id) && id > 0 ? id : null;
+        string? ExpectedEpisode(string provider) => episodeIds is not null && episodeIds.TryGetValue(provider, out var value) ? value : null;
+        var hasKnownSources = KnownId("Tvdb").HasValue || KnownId("Tmdb").HasValue;
+        var hasAnimeClickId = AnimeClickClient.TryNormalizeAnimeClickId(animeClickId, out var normalizedId);
         if (!configuration.EnableEpisodeSynopsisTranslation
             || season < 0
             || episode < 0
-            || !AnimeClickClient.TryNormalizeAnimeClickId(animeClickId, out var normalizedId))
+            || (!hasAnimeClickId && !hasKnownSources))
         {
             return new AnimeClickFallbackResolution(
                 null,
                 configuration.EnableEpisodeSynopsisTranslation ? "unresolvable-request" : "disabled");
         }
 
+        if (!hasAnimeClickId) normalizedId = "known-external";
         var total = Stopwatch.StartNew();
         long animeClickEpisodeMs = 0;
         long animeMs = 0;
@@ -207,10 +224,10 @@ public sealed class AnimeClickMetadataFallbackService
                         .ConfigureAwait(false);
                     stage.Stop();
                     animeClickEpisodeMs = stage.ElapsedMilliseconds;
-                    if (!string.IsNullOrWhiteSpace(animeClickOverview))
+                    if (AnimeClickMetadataText.ItalianOverview(animeClickOverview) is { } native)
                     {
                         return Finish(
-                            AnimeClickFallbackResult.NativeItalian(animeClickOverview, "AnimeClick"),
+                            AnimeClickFallbackResult.NativeItalian(native, "AnimeClick"),
                             "native-animeclick");
                     }
                 }
@@ -242,30 +259,33 @@ public sealed class AnimeClickMetadataFallbackService
             }
 
             stage.Restart();
-            var anime = await GetAnimeAsync(normalizedId, configuration, cancellationToken)
-                .ConfigureAwait(false);
+            AnimeClickAnime? anime = null;
+            if (hasAnimeClickId)
+            {
+                try { anime = await GetAnimeAsync(normalizedId, configuration, cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch { _logger.LogWarning("AnimeClick card unavailable; trying known external episode identities"); }
+            }
             stage.Stop();
             animeMs = stage.ElapsedMilliseconds;
-            if (anime is null)
-            {
-                return Finish(null, "anime-unavailable");
-            }
+            if (anime is null && !hasKnownSources) return Finish(null, "anime-unavailable");
 
-            int? tvdbId = null;
-            int? tmdbId = null;
+            int? tvdbId = KnownId("Tvdb");
+            int? tmdbId = KnownId("Tmdb");
 
             // 2) Native Italian: TVDB translations, then TMDB it-IT.
             if (tvdbConfigured)
             {
                 stage.Restart();
-                tvdbId = await _tvdbClient.ResolveTvdbSeriesIdAsync(
-                        anime.OriginalTitle,
-                        anime.Title,
-                        anime.ProductionYear,
-                        configuration,
-                        $"tvdbSeriesId:v3::{normalizedId}",
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                if (!hasKnownSources && anime is not null)
+                    tvdbId = await _tvdbClient.ResolveTvdbSeriesIdAsync(
+                            anime.OriginalTitle,
+                            anime.Title,
+                            anime.ProductionYear,
+                            configuration,
+                            $"tvdbSeriesId:v3::{normalizedId}",
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 if (tvdbId.HasValue)
                 {
                     var italian = await _tvdbClient.GetEpisodeOverviewAsync(
@@ -274,11 +294,11 @@ public sealed class AnimeClickMetadataFallbackService
                             episode,
                             "ita",
                             configuration,
-                            cancellationToken)
+                            cancellationToken, expectedEpisodeId: ExpectedEpisode("Tvdb"), requireExplicitTranslation: hasKnownSources)
                         .ConfigureAwait(false);
                     stage.Stop();
                     tvdbMs = stage.ElapsedMilliseconds;
-                    if (!string.IsNullOrWhiteSpace(italian))
+                    if (AnimeClickMetadataText.HasValue(italian))
                     {
                         return Finish(
                             AnimeClickFallbackResult.NativeItalian(italian, "TheTVDB"),
@@ -295,14 +315,15 @@ public sealed class AnimeClickMetadataFallbackService
             if (tmdbConfigured)
             {
                 stage.Restart();
-                tmdbId = await _tmdbClient.ResolveTmdbTvIdAsync(
-                        anime.OriginalTitle,
-                        anime.Title,
-                        anime.ProductionYear,
-                        configuration,
-                        $"tmdbTvId:v3::{normalizedId}",
-                        cancellationToken)
-                    .ConfigureAwait(false);
+                if (!hasKnownSources && anime is not null)
+                    tmdbId = await _tmdbClient.ResolveTmdbTvIdAsync(
+                            anime.OriginalTitle,
+                            anime.Title,
+                            anime.ProductionYear,
+                            configuration,
+                            $"tmdbTvId:v3::{normalizedId}",
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 if (tmdbId.HasValue)
                 {
                     var italian = await _tmdbClient.GetEpisodeOverviewAsync(
@@ -311,11 +332,11 @@ public sealed class AnimeClickMetadataFallbackService
                             episode,
                             "it-IT",
                             configuration,
-                            cancellationToken)
+                            cancellationToken, expectedEpisodeId: ExpectedEpisode("Tmdb"))
                         .ConfigureAwait(false);
                     stage.Stop();
                     tmdbMs = stage.ElapsedMilliseconds;
-                    if (!string.IsNullOrWhiteSpace(italian))
+                    if (AnimeClickMetadataText.HasValue(italian))
                     {
                         return Finish(
                             AnimeClickFallbackResult.NativeItalian(italian, "TMDB"),
@@ -347,16 +368,16 @@ public sealed class AnimeClickMetadataFallbackService
                         episode,
                         "en-US",
                         configuration,
-                        cancellationToken)
+                        cancellationToken, expectedEpisodeId: ExpectedEpisode("Tmdb"))
                     .ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(english))
+                if (AnimeClickMetadataText.HasValue(english))
                 {
                     sourceIdentity = $"tmdb:tv:{tmdbId.Value}:s{season}:e{episode}";
                     sourceName = "TMDB";
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(english) && tvdbId.HasValue)
+            if (!AnimeClickMetadataText.HasValue(english) && tvdbId.HasValue)
             {
                 english = await _tvdbClient.GetEpisodeOverviewAsync(
                         tvdbId.Value,
@@ -364,9 +385,9 @@ public sealed class AnimeClickMetadataFallbackService
                         episode,
                         "eng",
                         configuration,
-                        cancellationToken)
+                        cancellationToken, expectedEpisodeId: ExpectedEpisode("Tvdb"), requireExplicitTranslation: hasKnownSources)
                     .ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(english))
+                if (AnimeClickMetadataText.HasValue(english))
                 {
                     sourceIdentity = $"tvdb:series:{tvdbId.Value}:s{season}:e{episode}";
                     sourceName = "TheTVDB";
@@ -375,7 +396,7 @@ public sealed class AnimeClickMetadataFallbackService
 
             stage.Stop();
             englishMs = stage.ElapsedMilliseconds;
-            if (string.IsNullOrWhiteSpace(english)
+            if (!AnimeClickMetadataText.HasValue(english)
                 || string.IsNullOrWhiteSpace(sourceIdentity)
                 || !AnimeClickAiTranslator.IsConfigured(configuration, out _))
             {
@@ -396,7 +417,7 @@ public sealed class AnimeClickMetadataFallbackService
                 .ConfigureAwait(false);
             stage.Stop();
             translationMs = stage.ElapsedMilliseconds;
-            if (!string.IsNullOrWhiteSpace(translated))
+            if (AnimeClickMetadataText.HasValue(translated))
             {
                 return Finish(
                     AnimeClickFallbackResult.Translated(
@@ -422,7 +443,7 @@ public sealed class AnimeClickMetadataFallbackService
                     .ConfigureAwait(false);
                 stage.Stop();
                 translationMs += stage.ElapsedMilliseconds;
-                return string.IsNullOrWhiteSpace(translated)
+                return !AnimeClickMetadataText.HasValue(translated)
                     ? Finish(null, "ai-synchronous-miss")
                     : Finish(
                         AnimeClickFallbackResult.Translated(
@@ -461,7 +482,7 @@ public sealed class AnimeClickMetadataFallbackService
                         configuration,
                         cancellationToken)
                     .ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(translated))
+                if (AnimeClickMetadataText.HasValue(translated))
                 {
                     return Finish(
                         AnimeClickFallbackResult.Translated(
@@ -473,7 +494,8 @@ public sealed class AnimeClickMetadataFallbackService
                 }
             }
 
-            return Finish(null, "ai-deferred", queueState);
+            return Finish(null, queueState is AnimeClickTranslationQueueState.Queued or AnimeClickTranslationQueueState.AlreadyQueued
+                or AnimeClickTranslationQueueState.Backoff or AnimeClickTranslationQueueState.Invalidating ? "ai-deferred" : "error", queueState);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -514,7 +536,7 @@ public sealed class AnimeClickMetadataFallbackService
         var cached = await _cache
             .GetAsync<string>(cacheKey, configuration.CacheHours, cancellationToken)
             .ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(cached))
+        if (AnimeClickMetadataText.HasValue(cached))
         {
             return cached;
         }
@@ -537,7 +559,7 @@ public sealed class AnimeClickMetadataFallbackService
             return null;
         }
 
-        if (string.IsNullOrWhiteSpace(overview))
+        if (!AnimeClickMetadataText.HasValue(overview))
         {
             // Cache only a recognized empty/placeholder response. Network failures,
             // interstitials and changed markup remain immediately retryable.

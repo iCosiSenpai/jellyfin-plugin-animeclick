@@ -139,6 +139,6 @@ internal sealed record AnimeClickMetadataRefreshIntent(
 internal static class AnimeClickOverviewRepairPolicy
 {
     internal static bool CanReplace(string? overview)
-        => string.IsNullOrWhiteSpace(overview)
+        => AnimeClickMetadataText.Clean(overview) is null
             || AnimeClickMetadataLanguageDetector.Detect(overview).Language == AnimeClickTextLanguage.English;
 }

@@ -106,6 +106,13 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             || !AnimeClickClient.TryNormalizeAnimeClickId(mainAnimeClickId, out var normalizedMainId))
         {
             await ApplyTitleFallbackAsync(info, result, configuration, cancellationToken).ConfigureAwait(false);
+            if (info.ParentIndexNumber is >= 0 && info.IndexNumber is >= 0 && info.IndexNumberEnd.GetValueOrDefault(info.IndexNumber.Value) == info.IndexNumber)
+            {
+                var overview = await _fallbackService.ResolveEpisodeOverviewDetailedAsync(string.Empty,
+                    info.ParentIndexNumber.Value, info.IndexNumber.Value, existingEpisodeId, configuration, cancellationToken,
+                    false, info.Path, info.SeriesProviderIds, info.ProviderIds).ConfigureAwait(false);
+                if (overview.Result is { } found) { result.Item.Overview = found.Value; result.HasMetadata = true; }
+            }
             if (result.HasMetadata) { AnimeClickNumberingGuard.Preserve(result.Item, info); authorityLease.Capture(result.Item); }
             return result;
         }
@@ -188,13 +195,15 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
         await ApplyTitleFallbackAsync(info, result, configuration, cancellationToken).ConfigureAwait(false);
 
-        if (configuration.EnableEpisodeSynopsisTranslation && seasonNumber.HasValue)
+        if (configuration.EnableEpisodeSynopsisTranslation && seasonNumber.HasValue
+            && info.IndexNumberEnd.GetValueOrDefault(episodeNumber.Value) == episodeNumber.Value)
         {
             try
             {
                 // Season 1 only when the season card is the only identity we have: then the
                 // external IDs were resolved from that card and its own numbering applies.
-                var fallbackSeasonNumber = identity.ExternalNumbersRestartAtOne ? 1 : seasonNumber.Value;
+                var hasKnownIds = info.SeriesProviderIds is not null && (info.SeriesProviderIds.ContainsKey("Tmdb") || info.SeriesProviderIds.ContainsKey("Tvdb"));
+                var fallbackSeasonNumber = !hasKnownIds && identity.ExternalNumbersRestartAtOne ? 1 : seasonNumber.Value;
                 var fallbackAnimeClickId = identity.ExternalSourceId ?? mainAnimeClickId;
                 var episodeAnimeClickId = matchedEpisode?.ProviderId;
                 if (!episodeMatchCompleted && string.IsNullOrWhiteSpace(episodeAnimeClickId))
@@ -211,7 +220,9 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                         episodeAnimeClickId,
                         configuration,
                         cancellationToken,
-                        info.Path)
+                        info.Path,
+                        info.SeriesProviderIds,
+                        info.ProviderIds)
                     .ConfigureAwait(false);
                 if (fallback is not null && !string.IsNullOrWhiteSpace(fallback.Value))
                 {
@@ -527,7 +538,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             {
                 // Shared with the overview check in the parser: a title that only restates the
                 // number is worse than leaving Jellyfin's own, because it looks deliberate.
-                if (!AnimeClickHtmlParser.IsPlaceholderEpisodeText(match.Title))
+                if (AnimeClickMetadataText.Title(match.Title) is not null)
                 {
                     result.Item.Name = match.Title;
                     wroteMetadata = true;

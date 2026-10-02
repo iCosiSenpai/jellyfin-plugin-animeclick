@@ -39,6 +39,9 @@ public class AnimeClickAiTranslator
         + "Restituisci soltanto il titolo tradotto, su una sola riga, senza spiegazioni o testo aggiunto. "
         + "Conserva i nomi propri. Non scrivere una sinossi e non inventare dettagli.";
 
+    internal const string AnimeTitlePrompt = "Traduci dall'inglese all'italiano il titolo di un'opera anime. Restituisci soltanto il titolo su una sola riga. Conserva i nomi propri, non aggiungere o inventare informazioni.";
+    internal const string LabelsPrompt = "Traduci in italiano le etichette descrittive inglesi dell'array JSON. Conserva i nomi propri. Restituisci soltanto un array JSON di stringhe, con lo stesso numero di elementi e nello stesso ordine. Non aggiungere etichette o spiegazioni.";
+
     /// <summary>Upper bound on the source text sent to the model, in characters.</summary>
     internal const int MaximumSourceCharacters = 8000;
 
@@ -173,7 +176,8 @@ public class AnimeClickAiTranslator
             }
 
             var body = AnimeClickAiProviders.BuildRequestBody(dialect, model,
-                fieldName == "episode-title" ? TitleSystemPrompt : SystemPrompt, plain);
+                fieldName == "episode-title" ? TitleSystemPrompt : fieldName.EndsWith(".name", StringComparison.Ordinal) ? AnimeTitlePrompt
+                : fieldName is "metadata.tags" or "metadata.genres" ? LabelsPrompt : SystemPrompt, plain);
             using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
             client.Timeout = TimeSpan.FromSeconds(
                 Math.Clamp(configuration.EpisodeTranslationTimeoutSec, 5, 120));
@@ -219,6 +223,14 @@ public class AnimeClickAiTranslator
             }
 
             if (fieldName == "episode-title" && AnimeClickEpisodeTitleFallback.CleanTitle(translated) is null) return null;
+            if (fieldName.EndsWith(".name", StringComparison.Ordinal) && AnimeClickMetadataText.Title(translated) is null) return null;
+            if (fieldName.EndsWith(".overview", StringComparison.Ordinal) && AnimeClickMetadataText.Clean(translated) is null) return null;
+            if (fieldName is "metadata.tags" or "metadata.genres")
+            {
+                using var source = JsonDocument.Parse(plain);
+                if (source.RootElement.ValueKind != JsonValueKind.Array
+                    || AnimeClickAnimeTextFallback.ParseLabels(translated, source.RootElement.GetArrayLength()).Length == 0) return null;
+            }
 
             if (publishToCache)
             {
@@ -382,7 +394,7 @@ public class AnimeClickAiTranslator
         string plainText)
         => $"translation:v4::{cacheScope}::{fieldName}::{sourceLanguage}-{targetLanguage}"
             + $"::{ShortHash(sourceIdentity)}::{ShortHash(model)}::{ShortHash(endpoint)}"
-            + $"::{ShortHash(apiKey)}::{(fieldName == "episode-title" ? TitlePromptVersion : PromptVersion)}::{ShortHash(plainText)}";
+            + $"::{ShortHash(apiKey)}::{(fieldName == "episode-title" ? TitlePromptVersion : fieldName.EndsWith(".name", StringComparison.Ordinal) ? "anime-title-it-v1" : fieldName is "metadata.tags" or "metadata.genres" ? "metadata-labels-it-v1" : PromptVersion)}::{ShortHash(plainText)}";
 
     internal static string NormalizeSourceText(string sourceText)
     {

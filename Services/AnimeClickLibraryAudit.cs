@@ -112,8 +112,7 @@ public static class AnimeClickLibraryAudit
             .Where(episode => !episode.IsForeignWork)
             .ToList();
         var withTitle = relevantRows.Count(episode =>
-            !string.IsNullOrWhiteSpace(episode.Title)
-            && !AnimeClickHtmlParser.IsPlaceholderEpisodeText(episode.Title));
+            AnimeClickMetadataText.Title(episode.Title) is not null);
         if (withTitle == 0)
         {
             return AnimeClickAuditReason.CardHasNoTitles;
@@ -171,8 +170,7 @@ public static class AnimeClickLibraryAudit
         }
 
         var rowTitle = rows[0].Title;
-        if (string.IsNullOrWhiteSpace(rowTitle)
-            || AnimeClickHtmlParser.IsPlaceholderEpisodeText(rowTitle))
+        if (AnimeClickMetadataText.Title(rowTitle) is null)
         {
             return titleNeedsRepair
                 ? AnimeClickAuditReason.TitleNotPublished

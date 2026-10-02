@@ -49,7 +49,7 @@ async function main() {
     const plugins = await call('/Plugins');
     const plugin = plugins.find(p => p.Id?.replaceAll('-', '').toLowerCase() === pluginId.replaceAll('-', ''));
     assert.ok(plugin, 'Plugin is absent: ' + JSON.stringify(plugins));
-    assert.equal(plugin?.Version, '1.1.1.0');
+    assert.equal(plugin?.Version, '1.1.2.0');
     assert.equal(plugin.Status, 'Active');
     const config = await call('/Plugins/' + pluginId + '/Configuration');
     assert.equal(config.EnableEpisodeSynopsisTranslation, true);

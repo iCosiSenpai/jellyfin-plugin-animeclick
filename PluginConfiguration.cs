@@ -178,7 +178,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.1.1.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.1.2.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Schema of the persisted settings. One-time upgrades are gated on this rather than on whether
