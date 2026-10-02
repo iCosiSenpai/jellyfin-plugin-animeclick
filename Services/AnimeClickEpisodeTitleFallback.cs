@@ -77,9 +77,6 @@ public sealed class AnimeClickEpisodeTitleFallback(AnimeClickTmdbClient tmdb, An
 
     internal static string? CleanTitle(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value) || value.Length > 300 || value.Contains('\n') || value.Contains('\r')) return null;
-        var title = AnimeClickAiTranslator.NormalizeSourceText(value).Trim();
-        return title.Length == 0 || AnimeClickHtmlParser.IsPlaceholderEpisodeText(title)
-            || title.StartsWith("```", StringComparison.Ordinal) || title.StartsWith('{') || title.StartsWith('[') ? null : title;
+        return AnimeClickMetadataText.Title(value);
     }
 }

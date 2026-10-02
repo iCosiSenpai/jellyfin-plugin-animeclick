@@ -27,6 +27,7 @@ public sealed class AnimeClickTranslationQueue : IDisposable
     private readonly AnimeClickCacheService _cache;
     private readonly AnimeClickMetadataRefreshScheduler _refreshScheduler;
     private readonly ILogger<AnimeClickTranslationQueue> _logger;
+    private readonly Func<PluginConfiguration?> _configuration;
     private readonly Channel<TranslationWorkItem> _channel;
     private readonly ConcurrentDictionary<string, AnimeClickPendingTranslation> _pending =
         new(StringComparer.Ordinal);
@@ -40,12 +41,14 @@ public sealed class AnimeClickTranslationQueue : IDisposable
         AnimeClickAiTranslator translator,
         AnimeClickCacheService cache,
         AnimeClickMetadataRefreshScheduler refreshScheduler,
-        ILogger<AnimeClickTranslationQueue> logger)
+        ILogger<AnimeClickTranslationQueue> logger,
+        Func<PluginConfiguration?>? configuration = null)
     {
         _translator = translator;
         _cache = cache;
         _refreshScheduler = refreshScheduler;
         _logger = logger;
+        _configuration = configuration ?? (() => global::AnimeClick.Plugin.Plugin.Instance?.Configuration);
         _channel = Channel.CreateBounded<TranslationWorkItem>(new BoundedChannelOptions(QueueCapacity)
         {
             SingleReader = true,
@@ -514,11 +517,11 @@ public sealed class AnimeClickTranslationQueue : IDisposable
         => ((ICollection<KeyValuePair<string, AnimeClickPendingTranslation>>)_pending)
             .Remove(new KeyValuePair<string, AnimeClickPendingTranslation>(workKey, pending));
 
-    private static bool TryGetCurrentConfiguration(
+    private bool TryGetCurrentConfiguration(
         TranslationWorkItem item,
         out PluginConfiguration configuration)
     {
-        var current = global::AnimeClick.Plugin.Plugin.Instance?.Configuration;
+        var current = _configuration();
         if (current is null)
         {
             configuration = null!;
@@ -526,7 +529,13 @@ public sealed class AnimeClickTranslationQueue : IDisposable
         }
 
         configuration = Snapshot(current);
-        return configuration.EnableEpisodeSynopsisTranslation
+        var enabled = item.FieldName switch
+        {
+            "episode.overview" => configuration.EnableEpisodeSynopsisTranslation,
+            "series.overview" or "movie.overview" => configuration.EnablePlot,
+            _ => false
+        };
+        return enabled
             && TryBuildWorkKey(
                 item.SourceText,
                 item.CacheScope,
@@ -545,6 +554,7 @@ public sealed class AnimeClickTranslationQueue : IDisposable
         => new()
         {
             EnableEpisodeSynopsisTranslation = source.EnableEpisodeSynopsisTranslation,
+            EnablePlot = source.EnablePlot,
             EnableAiTranslation = source.EnableAiTranslation,
             AiProvider = source.AiProvider,
             AiApiKey = source.AiApiKey,

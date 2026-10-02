@@ -25,10 +25,10 @@ Il tag genera una **draft** dopo il successo dei test backend e web. Il pacchett
 
 Se il catalogo non può essere aggiornato, dichiarare esplicitamente che la release GitHub esiste ma la distribuzione tramite catalogo non è completata. Non aggirare un asset non pubblico inserendolo ugualmente nel manifest.
 
-### Release 1.1.0.0 e 1.1.1.0: installazione sul NAS, catalogo invariato
+### Release 1.1.0.0, 1.1.1.0 e 1.1.2.0: installazione sul NAS, catalogo invariato
 
 Per esplicita richiesta del proprietario, pubblicare e verificare il pacchetto GitHub seguendo i passaggi 1–5; **non eseguire i passaggi 6–7** e non modificare il repository `iCosiSenpai-Plugins`. Installare soltanto il plugin AnimeClick sul NAS autorizzato, seguendo il registro operativo `/volume1/docker/AGENT.md`; il proprietario ha autorizzato questo riferimento in sostituzione del file `START_HERE` mancante.
 
-Salvare un riferimento in sola lettura della libreria, fermare soltanto Jellyfin, conservare copie di lavoro di plugin/configurazione/database, spostare le vecchie DLL fuori dalla directory caricata dal server, installare il pacchetto verificato e riavviare lo stesso container. Verificare caricamento, API amministrative, configurazione conservata e uguaglianza dei campi della libreria. Non avviare riparazioni massive sulla libreria di produzione come prova dell’installazione. Registrare l’esito nel documento operativo del NAS e rimuovere le copie di lavoro solo dopo verifica positiva.
+Salvare un riferimento in sola lettura della libreria, fermare soltanto Jellyfin, conservare copie di lavoro di plugin/configurazione/database, spostare le vecchie DLL fuori dalla directory caricata dal server, installare il pacchetto verificato e riavviare lo stesso container. Verificare caricamento, API amministrative, configurazione conservata (salvo le preferenze esplicitamente richieste dal proprietario) e uguaglianza dei campi della libreria. Non avviare riparazioni massive sulla libreria di produzione come prova dell’installazione. Registrare l’esito nel documento operativo del NAS e rimuovere le copie di lavoro solo dopo verifica positiva.
 
 L’installazione o l’aggiornamento di un server in produzione è un’attività separata: non fa parte della pubblicazione e richiede le istruzioni operative di quell’ambiente.

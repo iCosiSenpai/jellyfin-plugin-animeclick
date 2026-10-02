@@ -171,54 +171,19 @@ public class AnimeClickTmdbClient
     /// no source had the episode, for hundreds of episodes that are simply filed elsewhere.
     /// </summary>
     public async Task<string?> GetEpisodeOverviewAsync(
-        int tmdbId,
-        int season,
-        int episode,
-        string language,
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken)
+        int tmdbId, int season, int episode, string language,
+        PluginConfiguration configuration, CancellationToken cancellationToken,
+        string? expectedEpisodeId = null)
     {
-        var direct = await GetEpisodeOverviewDirectAsync(
-                tmdbId,
-                season,
-                episode,
-                language,
-                configuration,
-                cancellationToken)
-            .ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(direct))
-        {
-            return direct;
-        }
-
-        var mapped = await ResolveAbsoluteEpisodeAsync(
-                tmdbId,
-                season,
-                episode,
-                configuration,
-                cancellationToken)
-            .ConfigureAwait(false);
-        if (mapped is null)
-        {
-            return direct;
-        }
-
-        _logger.LogDebug(
-            "TmdbClient: tmdb={Tmdb} S{Season}E{Episode} letto come episodio assoluto {Absolute} -> S{MappedSeason}E{MappedEpisode}",
-            tmdbId,
-            season,
-            episode,
-            episode,
-            mapped.Value.Season,
-            mapped.Value.Episode);
-        return await GetEpisodeOverviewDirectAsync(
-                tmdbId,
-                mapped.Value.Season,
-                mapped.Value.Episode,
-                language,
-                configuration,
-                cancellationToken)
-            .ConfigureAwait(false);
+        if (tmdbId <= 0 || season < 0 || episode < 0) return null;
+        var coordinateMissing = false;
+        var direct = await GetEpisodeOverviewDirectAsync(tmdbId, season, episode, language, configuration,
+            cancellationToken, expectedEpisodeId: expectedEpisodeId, coordinateNotFound: () => coordinateMissing = true).ConfigureAwait(false);
+        if (AnimeClickMetadataText.Clean(direct) is not null) return direct;
+        if (!coordinateMissing) return null;
+        var mapped = await ResolveAbsoluteEpisodeAsync(tmdbId, season, episode, configuration, cancellationToken).ConfigureAwait(false);
+        return mapped is null ? null : await GetEpisodeOverviewDirectAsync(tmdbId, mapped.Value.Season,
+            mapped.Value.Episode, language, configuration, cancellationToken, expectedEpisodeId: expectedEpisodeId).ConfigureAwait(false);
     }
 
     private async Task<string?> GetEpisodeOverviewDirectAsync(
@@ -804,6 +769,87 @@ public class AnimeClickTmdbClient
     }
 
     private const string ItalianLanguage = "it-IT";
+
+    /// <summary>Reads only explicitly labelled translations of a known movie or series.</summary>
+    public async Task<string?> GetAnimeTextAsync(int id, bool isMovie, string language, string field,
+        PluginConfiguration configuration, CancellationToken token)
+    {
+        if (id <= 0 || string.IsNullOrWhiteSpace(configuration.TmdbApiKey)
+            || field is not ("name" or "overview")) return null;
+        var kind = isMovie ? "movie" : "tv";
+        var key = $"tmdbAnimeTranslations:v1::{kind}::{id}";
+        var json = await GetKnownMetadataJsonAsync(key, $"{BaseUrl}/{kind}/{id}/translations"
+            + $"?api_key={Uri.EscapeDataString(configuration.TmdbApiKey)}", configuration, token).ConfigureAwait(false);
+        if (json is null) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("id", out var identity) || identity.ToString() != id.ToString(CultureInfo.InvariantCulture)) return null;
+            return ParseEpisodeTranslation(json, language, field == "name" && isMovie ? "title" : field);
+        }
+        catch (JsonException) { return null; }
+    }
+
+    public async Task<string[]> GetAnimeGenresAsync(int id, bool isMovie, PluginConfiguration configuration, CancellationToken token)
+    {
+        if (id <= 0 || string.IsNullOrWhiteSpace(configuration.TmdbApiKey)) return [];
+        var kind = isMovie ? "movie" : "tv";
+        var json = await GetKnownMetadataJsonAsync($"tmdbAnimeGenres:v1::{kind}::{id}",
+            isMovie ? BuildMovieDetailsUrl(configuration.TmdbApiKey, id, "it-IT") : BuildTvDetailsUrl(configuration.TmdbApiKey, id, "it-IT"),
+            configuration, token).ConfigureAwait(false);
+        return ParseKnownLabels(json, id, "genres");
+    }
+
+    public async Task<string[]> GetAnimeKeywordsAsync(int id, bool isMovie, PluginConfiguration configuration, CancellationToken token)
+    {
+        if (id <= 0 || string.IsNullOrWhiteSpace(configuration.TmdbApiKey)) return [];
+        var kind = isMovie ? "movie" : "tv";
+        var json = await GetKnownMetadataJsonAsync($"tmdbAnimeKeywords:v1::{kind}::{id}",
+            $"{BaseUrl}/{kind}/{id}/keywords?api_key={Uri.EscapeDataString(configuration.TmdbApiKey)}", configuration, token).ConfigureAwait(false);
+        return ParseKnownLabels(json, id, isMovie ? "keywords" : "results").Take(20).ToArray();
+    }
+
+    private async Task<string?> GetKnownMetadataJsonAsync(string key, string url, PluginConfiguration configuration, CancellationToken token)
+    {
+        var cached = await _cache.GetAsync<string>(key, configuration.CacheHours, token).ConfigureAwait(false);
+        if (cached is not null) return cached;
+        if (await _cache.GetAsync<string>(key + "::empty", configuration.NegativeCacheHours, token).ConfigureAwait(false) == "empty") return null;
+        try
+        {
+            using var client = BuildClient(configuration);
+            await Throttle.WaitAsync(token).ConfigureAwait(false);
+            using var response = await client.GetAsync(url, token).ConfigureAwait(false);
+            if (RequestThrottle.IsRateLimited(response.StatusCode)) { Throttle.NoticeRateLimit(response); return null; }
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                await _cache.SetAsync(key + "::empty", "empty", token).ConfigureAwait(false);
+                return null;
+            }
+            if (!response.IsSuccessStatusCode) return null;
+            var json = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            await _cache.SetAsync(key, json, token).ConfigureAwait(false);
+            return json;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch { _logger.LogWarning("TMDB configured metadata source unavailable; field left for other providers"); return null; }
+    }
+
+    internal static string[] ParseKnownLabels(string? json, int id, string field)
+    {
+        if (json is null) return [];
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("id", out var identity) || identity.ToString() != id.ToString(CultureInfo.InvariantCulture)
+                || !root.TryGetProperty(field, out var array) || array.ValueKind != JsonValueKind.Array) return [];
+            return AnimeClickMetadataText.Labels(array.EnumerateArray().Where(v => v.ValueKind == JsonValueKind.Object)
+                .Select(v => v.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String ? name.GetString() ?? "" : ""));
+        }
+        catch (JsonException) { return []; }
+    }
 
     /// <summary>Builds the TMDB movie details URL (testable, no network).</summary>
     internal static string BuildMovieDetailsUrl(string apiKey, int tmdbId, string language)

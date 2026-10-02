@@ -92,9 +92,9 @@ Un titolo numerico come “86” viene cercato come titolo, non interpretato aut
 
 ## Cosa importa
 
-Titolo italiano, trama, generi, tag, cast e staff, immagini delle persone, trailer/PV, sigle e locandina di riserva. Studi, valutazioni, date e altri campi non localizzati dipendono dall’opzione avanzata di sovrascrittura, disattivata per impostazione predefinita.
+Titolo italiano, trama, generi, tag, cast e staff, immagini delle persone, trailer/PV, sigle e locandina italiana. Studi, valutazioni, date e altri campi non localizzati dipendono dall’opzione avanzata di sovrascrittura, disattivata per impostazione predefinita.
 
-Il plugin non usa i commenti degli utenti come sinossi, non rimpiazza la durata rilevata dai file e rispetta i blocchi dei metadati. La locandina AnimeClick è una riserva: quella di un provider immagini precedente può avere la precedenza. La soglia predefinita è 400 pixel di larghezza, modificabile nelle preferenze aggiuntive.
+Il plugin non usa i commenti degli utenti come sinossi, non rimpiazza la durata rilevata dai file e rispetta i blocchi dei metadati. La locandina AnimeClick è una riserva: i provider immagini ad alta risoluzione mantengono la precedenza. Le immagini già presenti rimangono fino a un aggiornamento immagini richiesto esplicitamente. La soglia predefinita è 400 pixel di larghezza, modificabile nelle preferenze aggiuntive.
 
 ### Episodi e stagioni
 
@@ -110,6 +110,10 @@ L’analisi locale non interroga queste API: **Da verificare** e **Assenti su An
 
 ### Trame e fonti facoltative
 
+Per ogni testo descrittivo la precedenza è AnimeClick, una fonte già italiana e infine una fonte inglese tradotta. I valori generici, come «N/D», «Trama non disponibile» o «Episode 12», non bloccano il recupero. Titolo e trama vengono risolti separatamente: un titolo valido AnimeClick resta prioritario anche se la trama arriva da un’altra fonte.
+
+Serie e film usano gli ID esterni già presenti: titoli e trame da TheTVDB/TMDB, generi italiani da TMDB o generi TheTVDB tradotti, tag TMDB tradotti. Se manca un’identità certa o un testo utile, il campo resta disponibile agli altri provider Jellyfin. Studi, nomi propri, date, numeri e ID non vengono tradotti; per dare precedenza ad AnimeClick anche sui campi neutri attiva la relativa preferenza avanzata. I singoli interruttori dei campi restano rispettati.
+
 Per le sinossi episodio la precedenza è:
 
 1. AnimeClick in italiano.
@@ -119,7 +123,7 @@ Per le sinossi episodio la precedenza è:
 
 La traduzione elabora una sinossi esistente; non è un generatore di trame. Rimane comunque un risultato automatico e può contenere errori. Nessun modello viene scelto automaticamente: seleziona il servizio, richiedi il suo elenco dei modelli e scegli quello che vuoi utilizzare.
 
-Le traduzioni lavorano in background. Quando un risultato è disponibile viene richiesto un aggiornamento mirato, che ricontrolla il testo e i blocchi prima di applicarlo. Gli esiti “in traduzione” e “nessuna fonte” evitano richieste ripetute; un cambio delle fonti configurate consente un nuovo tentativo.
+Le traduzioni delle trame lavorano in background; titoli, generi e tag vengono tradotti durante il recupero richiesto. Quando un risultato è disponibile viene richiesto un aggiornamento mirato, che ricontrolla il testo e i blocchi prima di applicarlo. Gli esiti “in traduzione” e “nessuna fonte” evitano richieste ripetute; un cambio delle fonti configurate consente un nuovo tentativo.
 
 Le traduzioni sono conservate in cache in base a testo, fonte, modello, endpoint, credenziale e versione del prompt. Modifiche a questi valori, pulizie della cache o scadenze possono causare nuove chiamate, anche a pagamento. La disponibilità e i prezzi dipendono dal fornitore: il plugin non garantisce quote gratuite.
 
@@ -127,7 +131,7 @@ Le traduzioni sono conservate in cache in base a testo, fonte, modello, endpoint
 
 - AnimeClick riceve le ricerche e le richieste alle sue pagine. Il plugin applica cache, ritardo fra richieste e gestione dei limiti del sito.
 - GitHub riceve le richieste al dataset soltanto se abiliti la lettura; riceve proposte pubbliche e la credenziale del contribuente soltanto se abiliti l’invio automatico. Il token è inviato esclusivamente a `api.github.com`, senza redirect.
-- Le integrazioni facoltative ricevono i dati necessari alla loro funzione. L’AI riceve il solo titolo o testo della sinossi da tradurre, senza file video, percorsi, ID o informazioni sugli utenti.
+- Le integrazioni facoltative ricevono i dati necessari alla loro funzione. L’AI riceve soltanto il testo da tradurre (titolo, trama, generi o tag), senza file video, percorsi, ID o informazioni sugli utenti.
 - Le chiavi sono conservate nella configurazione Jellyfin: proteggi l’accesso amministrativo, i file e i backup. Non condividere configurazioni o log senza rimuovere i segreti.
 - La pagina del plugin non carica immagini promozionali esterne. Le funzioni amministrative richiedono un account amministratore.
 - Le immagini accettano destinazioni AnimeClick consentite; i redirect vengono verificati prima della richiesta successiva. Le API esterne non seguono automaticamente redirect con credenziali.

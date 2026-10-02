@@ -33,6 +33,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickTmdbClient _tmdbClient;
     private readonly AnimeClickCommunityService? _community;
+    private readonly AnimeClickAnimeTextFallback? _textFallback;
 
     public AnimeClickSeriesProvider(
         AnimeClickClient client,
@@ -43,7 +44,8 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         ILogger<AnimeClickSeriesProvider> logger,
         AnimeClickTmdbClient tmdbClient,
         IHttpClientFactory httpClientFactory,
-        AnimeClickCommunityService? community = null)
+        AnimeClickCommunityService? community = null,
+        AnimeClickAnimeTextFallback? textFallback = null)
     {
         _client = client;
         _cache = cache;
@@ -54,6 +56,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         _httpClientFactory = httpClientFactory;
         _tmdbClient = tmdbClient;
         _community = community;
+        _textFallback = textFallback;
     }
 
     public string Name => "AnimeClick";
@@ -94,18 +97,26 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
 
         if (url is null && !string.IsNullOrWhiteSpace(info.Name))
         {
-            var search = await _searchProvider.SearchAsync(info.Name, configuration, cancellationToken, info.Year, seriesRequest: true);
-            var first = AnimeClickAutomaticIdentification.Select(search, info.Name, info.Year);
-            if (first is not null
-                && first.ProviderIds.TryGetValue("AnimeClick", out var searchId)
-                && AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, searchId, out var searchUrl))
+            try
             {
-                url = searchUrl;
+                var search = await _searchProvider.SearchAsync(info.Name, configuration, cancellationToken, info.Year, seriesRequest: true);
+                var first = AnimeClickAutomaticIdentification.Select(search, info.Name, info.Year);
+                if (first is not null
+                    && first.ProviderIds.TryGetValue("AnimeClick", out var searchId)
+                    && AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, searchId, out var searchUrl))
+                {
+                    url = searchUrl;
+                }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch { _logger.LogWarning("AnimeClick search unavailable; trying configured fallback sources"); }
         }
 
         if (string.IsNullOrWhiteSpace(url))
         {
+            await FillItalianOverviewAsync(result.Item, info, configuration, cancellationToken).ConfigureAwait(false);
+            result.HasMetadata = !string.IsNullOrWhiteSpace(result.Item.Name) || !string.IsNullOrWhiteSpace(result.Item.Overview) || result.Item.Genres.Length > 0 || result.Item.Tags.Length > 0;
+            if (result.HasMetadata) authorityLease.Capture(result.Item);
             return result;
         }
 
@@ -114,6 +125,9 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         var anime = cached ?? await FetchAnimeAsync(url, configuration, cacheKey, cancellationToken);
         if (anime is null)
         {
+            await FillItalianOverviewAsync(result.Item, info, configuration, cancellationToken).ConfigureAwait(false);
+            result.HasMetadata = !string.IsNullOrWhiteSpace(result.Item.Name) || !string.IsNullOrWhiteSpace(result.Item.Overview) || result.Item.Genres.Length > 0 || result.Item.Tags.Length > 0;
+            if (result.HasMetadata) authorityLease.Capture(result.Item);
             return result;
         }
 
@@ -366,6 +380,11 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         PluginConfiguration configuration,
         CancellationToken cancellationToken)
     {
+        if (_textFallback is not null)
+        {
+            await _textFallback.FillMissingAsync(target, info.Name, info.Path, info.ProviderIds, isMovie: false, configuration, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         if (!configuration.EnablePlot || !string.IsNullOrWhiteSpace(target.Overview))
         {
             return;
@@ -397,19 +416,19 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         //    ha un valore reale. Empty-guard per non svuotare campi già riempiti da
         //    altri provider con un valore nullo/vuoto. ──
         var italianName = configuration.PreferItalianTitle ? source.Title : source.OriginalTitle ?? source.Title;
-        if (!string.IsNullOrWhiteSpace(italianName))
+        if (AnimeClickMetadataText.Title(italianName) is { } validName)
         {
-            target.Name = italianName;
+            target.Name = validName;
         }
 
-        if (configuration.EnablePlot && !string.IsNullOrWhiteSpace(source.Overview))
+        if (configuration.EnablePlot && AnimeClickMetadataText.ItalianOverview(source.Overview) is { } validOverview)
         {
-            target.Overview = source.Overview;
+            target.Overview = validOverview;
         }
 
         if (configuration.EnableGenres && source.Genres.Count > 0)
         {
-            target.Genres = source.Genres.ToArray();
+            target.Genres = AnimeClickMetadataText.Labels(source.Genres);
         }
 
         if (configuration.EnableTags && source.Tags.Count > 0)
@@ -425,7 +444,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
                 }
             }
 
-            target.Tags = allTags.ToArray();
+            target.Tags = AnimeClickMetadataText.Labels(allTags);
         }
         else if (configuration.EnableThemeSongs && source.ThemeSongs.Count > 0)
         {
@@ -435,7 +454,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
 
         if (configuration.EnableProductionLocations && source.ProductionLocations.Count > 0)
         {
-            target.ProductionLocations = source.ProductionLocations.ToArray();
+            target.ProductionLocations = AnimeClickMetadataText.Labels(source.ProductionLocations);
         }
 
         if (configuration.EnableTrailers && source.Trailers.Count > 0)
@@ -450,9 +469,9 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         //    (fill-gaps). Empty-guard comunque, per non cancellare valori esistenti. ──
         if (configuration.OverwriteNonItalianFields)
         {
-            if (!string.IsNullOrWhiteSpace(source.OriginalTitle))
+            if (AnimeClickMetadataText.Title(source.OriginalTitle) is { } originalTitle)
             {
-                target.OriginalTitle = source.OriginalTitle;
+                target.OriginalTitle = originalTitle;
             }
 
             if (source.ProductionYear.HasValue)
@@ -472,12 +491,12 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
 
             if (configuration.EnableStudios && source.Studios.Count > 0)
             {
-                target.Studios = source.Studios.ToArray();
+                target.Studios = AnimeClickMetadataText.Labels(source.Studios);
             }
 
-            if (!string.IsNullOrWhiteSpace(source.OfficialRating))
+            if (AnimeClickMetadataText.Clean(source.OfficialRating) is { } validRating)
             {
-                target.OfficialRating = source.OfficialRating;
+                target.OfficialRating = validRating;
             }
 
             if (!string.IsNullOrWhiteSpace(source.Status))

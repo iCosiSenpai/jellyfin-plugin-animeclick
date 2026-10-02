@@ -43,7 +43,7 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
         var episodeTmdb = episode.GetProviderId("Tmdb");
         var episodeTvdb = episode.GetProviderId("Tvdb");
         var title = await resolver.ResolveTitleAsync(episode, refreshedCatalogs, cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(title) || AnimeClickHtmlParser.IsPlaceholderEpisodeText(title))
+        if (AnimeClickMetadataText.Title(title) is null)
             return false;
         var configuration = Plugin.Instance?.Configuration;
         if (configuration is not null &&

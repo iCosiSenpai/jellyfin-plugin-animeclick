@@ -318,7 +318,7 @@ public sealed class AnimeClickLibraryQualityService
         var overview = item.Overview?.Trim() ?? string.Empty;
         AnimeClickOverviewAuditStatus status;
         AnimeClickLanguageDetection detection;
-        if (overview.Length == 0)
+        if (AnimeClickMetadataText.Clean(overview) is null)
         {
             status = AnimeClickOverviewAuditStatus.Missing;
             detection = new AnimeClickLanguageDetection(AnimeClickTextLanguage.Unknown, 1, 0, 0, 0);

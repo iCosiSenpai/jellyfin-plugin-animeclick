@@ -278,8 +278,12 @@ public class AnimeClickTvdbClient
         int episode,
         string language,
         PluginConfiguration configuration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? expectedEpisodeId = null, bool requireExplicitTranslation = false)
     {
+        if (requireExplicitTranslation || expectedEpisodeId is not null)
+            return await GetEpisodeTextAsync(tvdbId, season, episode, language, expectedEpisodeId,
+                configuration, cancellationToken, "overview").ConfigureAwait(false);
         var episodes = await GetEpisodeRecordsAsync(tvdbId, language, configuration, cancellationToken).ConfigureAwait(false);
         return episodes is null ? null : SelectOverview(episodes, season, episode);
     }
@@ -370,8 +374,12 @@ public class AnimeClickTvdbClient
         return episodes;
     }
 
-    public async Task<string?> GetEpisodeTitleAsync(int seriesId, int season, int episode, string language,
+    public Task<string?> GetEpisodeTitleAsync(int seriesId, int season, int episode, string language,
         string? expectedEpisodeId, PluginConfiguration configuration, CancellationToken token)
+        => GetEpisodeTextAsync(seriesId, season, episode, language, expectedEpisodeId, configuration, token, "name");
+
+    private async Task<string?> GetEpisodeTextAsync(int seriesId, int season, int episode, string language,
+        string? expectedEpisodeId, PluginConfiguration configuration, CancellationToken token, string field)
     {
         if (seriesId <= 0 || season < 0 || episode < 0 || string.IsNullOrWhiteSpace(configuration.TvdbApiKey)) return null;
         var records = await GetEpisodeRecordsAsync(seriesId, "eng", configuration, token).ConfigureAwait(false);
@@ -379,7 +387,7 @@ public class AnimeClickTvdbClient
         var record = SelectTitleEpisode(records, season, episode, expectedEpisodeId);
         if (record is null || record.Id <= 0) return null;
         var lang = SanitizeTvdbLanguage(language);
-        var key = $"tvdbEpisodeTitle:v1::{record.Id}::{lang}";
+        var key = $"tvdbEpisodeText:v1::{record.Id}::{lang}::{field}";
         var cached = await _cache.GetAsync<string>(key, configuration.CacheHours, token).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(cached)) return cached;
         if (await _cache.GetAsync<string>(key + "::empty", configuration.NegativeCacheHours, token).ConfigureAwait(false) == "empty") return null;
@@ -398,12 +406,12 @@ public class AnimeClickTvdbClient
                 return null;
             }
             if (!response.IsSuccessStatusCode) return null;
-            var title = ParseTitleTranslation(await response.Content.ReadAsStringAsync(token).ConfigureAwait(false), lang);
+            var title = ParseTextTranslation(await response.Content.ReadAsStringAsync(token).ConfigureAwait(false), lang, field);
             if (!string.IsNullOrWhiteSpace(title)) await _cache.SetAsync(key, title, token).ConfigureAwait(false);
             return title;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-        catch { _logger.LogWarning("TheTVDB episode title unavailable for episode={Id} language={Language}", record.Id, lang); return null; }
+        catch { _logger.LogWarning("TheTVDB episode text unavailable for episode={Id} language={Language}", record.Id, lang); return null; }
     }
 
     internal static TvdbEpisodeRecord? SelectTitleEpisode(List<TvdbEpisodeRecord> records, int season, int episode, string? expectedId)
@@ -419,15 +427,83 @@ public class AnimeClickTvdbClient
     }
 
     internal static string? ParseTitleTranslation(string json, string language)
+        => ParseTextTranslation(json, language, "name");
+
+    internal static string? ParseTextTranslation(string json, string language, string field)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
             var data = document.RootElement.GetProperty("data");
             if (data.TryGetProperty("language", out var lang) && lang.GetString() != language) return null;
-            return data.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String ? name.GetString() : null;
+            return data.TryGetProperty(field, out var name) && name.ValueKind == JsonValueKind.String ? name.GetString() : null;
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException) { return null; }
+    }
+
+    public async Task<string?> GetAnimeTextAsync(int id, bool isMovie, string language, string field,
+        PluginConfiguration configuration, CancellationToken token)
+    {
+        if (id <= 0 || !configuration.EnableTvdbSynopsis || string.IsNullOrWhiteSpace(configuration.TvdbApiKey)
+            || field is not ("name" or "overview")) return null;
+        var kind = isMovie ? "movies" : "series";
+        var lang = SanitizeTvdbLanguage(language);
+        var key = $"tvdbAnimeTranslation:v1::{kind}::{id}::{lang}";
+        var json = await _cache.GetAsync<string>(key, configuration.CacheHours, token).ConfigureAwait(false);
+        if (json is null)
+        {
+            if (await _cache.GetAsync<string>(key + "::empty", configuration.NegativeCacheHours, token).ConfigureAwait(false) == "empty") return null;
+            try
+            {
+                var bearer = await LoginAsync(configuration, token).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(bearer)) return null;
+                using var client = BuildClient(configuration);
+                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+                await Throttle.WaitAsync(token).ConfigureAwait(false);
+                using var response = await client.GetAsync($"{BaseUrl}/{kind}/{id}/translations/{lang}", token).ConfigureAwait(false);
+                if (RequestThrottle.IsRateLimited(response.StatusCode)) { Throttle.NoticeRateLimit(response); return null; }
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    await _cache.SetAsync(key + "::empty", "empty", token).ConfigureAwait(false);
+                    return null;
+                }
+                if (!response.IsSuccessStatusCode) return null;
+                json = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+                await _cache.SetAsync(key, json, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+            catch { _logger.LogWarning("TheTVDB configured metadata source unavailable; field left for other providers"); return null; }
+        }
+        return ParseTextTranslation(json, lang, field);
+    }
+
+    public async Task<string[]> GetAnimeGenresAsync(int id, bool isMovie, PluginConfiguration configuration, CancellationToken token)
+    {
+        if (id <= 0 || !configuration.EnableTvdbSynopsis || string.IsNullOrWhiteSpace(configuration.TvdbApiKey)) return [];
+        var kind = isMovie ? "movies" : "series";
+        var key = $"tvdbAnimeGenres:v1::{kind}::{id}";
+        var cached = await _cache.GetAsync<string[]>(key, configuration.CacheHours, token).ConfigureAwait(false);
+        if (cached is not null) return cached;
+        try
+        {
+            var bearer = await LoginAsync(configuration, token).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(bearer)) return [];
+            using var client = BuildClient(configuration);
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+            await Throttle.WaitAsync(token).ConfigureAwait(false);
+            using var response = await client.GetAsync($"{BaseUrl}/{kind}/{id}/extended", token).ConfigureAwait(false);
+            if (RequestThrottle.IsRateLimited(response.StatusCode)) { Throttle.NoticeRateLimit(response); return []; }
+            if (!response.IsSuccessStatusCode) return [];
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token).ConfigureAwait(false));
+            var data = document.RootElement.GetProperty("data");
+            var labels = AnimeClickTmdbClient.ParseKnownLabels(data.GetRawText(), id, "genres");
+            if (labels.Length > 0) await _cache.SetAsync(key, labels, token).ConfigureAwait(false);
+            return labels;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch { _logger.LogWarning("TheTVDB genres unavailable; field left for other providers"); return []; }
     }
 
     /// <summary>

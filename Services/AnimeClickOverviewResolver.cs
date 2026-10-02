@@ -43,19 +43,22 @@ public sealed class AnimeClickOverviewResolver : IAnimeClickOverviewResolver
     private readonly AnimeClickHtmlParser _parser;
     private readonly AnimeClickMetadataFallbackService _fallbackService;
     private readonly ILogger<AnimeClickOverviewResolver> _logger;
+    private readonly AnimeClickAnimeTextFallback? _textFallback;
 
     public AnimeClickOverviewResolver(
         AnimeClickClient client,
         AnimeClickCacheService cache,
         AnimeClickHtmlParser parser,
         AnimeClickMetadataFallbackService fallbackService,
-        ILogger<AnimeClickOverviewResolver> logger)
+        ILogger<AnimeClickOverviewResolver> logger,
+        AnimeClickAnimeTextFallback? textFallback = null)
     {
         _client = client;
         _cache = cache;
         _parser = parser;
         _fallbackService = fallbackService;
         _logger = logger;
+        _textFallback = textFallback;
     }
 
     public async Task<AnimeClickOverviewResolution> ResolveAsync(
@@ -121,30 +124,31 @@ public sealed class AnimeClickOverviewResolver : IAnimeClickOverviewResolver
                 "plot-disabled");
         }
 
-        if (!AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, animeClickId, out var animeUrl))
+        AnimeClickAnime? anime = null;
+        if (AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, animeClickId, out var animeUrl))
         {
-            return AnimeClickOverviewResolution.None(
-                AnimeClickRepairOutcome.NoSource,
-                "invalid-animeclick-id");
+            try
+            {
+                var cacheKey = $"anime::{animeUrl}";
+                anime = await _cache.GetAsync<AnimeClickAnime>(cacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
+                if (anime is null)
+                {
+                    var html = await _client.GetStringAsync(animeUrl, configuration, cancellationToken).ConfigureAwait(false);
+                    anime = _parser.ParseAnimePage(animeUrl, html);
+                    await _cache.SetAsync(cacheKey, anime, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch { _logger.LogWarning("AnimeClick card unavailable during Overview repair; trying configured sources"); }
         }
-
-        var cacheKey = $"anime::{animeUrl}";
-        var anime = await _cache
-            .GetAsync<AnimeClickAnime>(cacheKey, configuration.CacheHours, cancellationToken)
-            .ConfigureAwait(false);
-        if (anime is null)
-        {
-            var html = await _client.GetStringAsync(animeUrl, configuration, cancellationToken)
-                .ConfigureAwait(false);
-            anime = _parser.ParseAnimePage(animeUrl, html);
-            await _cache.SetAsync(cacheKey, anime, cancellationToken).ConfigureAwait(false);
-        }
-
-        return string.IsNullOrWhiteSpace(anime.Overview)
+        if (_textFallback is not null)
+            return await _textFallback.ResolveOverviewAsync(anime?.Overview, item.ProviderIds, item is Movie,
+                item.Path, configuration, cancellationToken).ConfigureAwait(false);
+        return AnimeClickMetadataText.ItalianOverview(anime?.Overview) is not { } overview
             ? AnimeClickOverviewResolution.None(
                 AnimeClickRepairOutcome.NoSource,
                 "animeclick-card-has-no-plot")
-            : AnimeClickOverviewResolution.Found(anime.Overview.Trim(), "native-animeclick");
+            : AnimeClickOverviewResolution.Found(overview, "native-animeclick");
     }
 
     private async Task<AnimeClickOverviewResolution> ResolveEpisodeAsync(
@@ -170,25 +174,22 @@ public sealed class AnimeClickOverviewResolver : IAnimeClickOverviewResolver
             episode.Series?.GetProviderId("AnimeClick"),
             episode.Season?.GetProviderId("AnimeClick"));
         var animeClickId = identity.ExternalSourceId ?? identity.MatchingId;
-        if (string.IsNullOrWhiteSpace(animeClickId))
-        {
-            return AnimeClickOverviewResolution.None(
-                AnimeClickRepairOutcome.NoSource,
-                "series-not-identified");
-        }
-
-        var seasonNumber = identity.ExternalNumbersRestartAtOne
+        var knownIds = episode.Series?.ProviderIds;
+        var hasKnownIds = knownIds is not null && (knownIds.ContainsKey("Tmdb") || knownIds.ContainsKey("Tvdb"));
+        var seasonNumber = !hasKnownIds && identity.ExternalNumbersRestartAtOne
             ? 1
             : episode.ParentIndexNumber.Value;
         var resolution = await _fallbackService.ResolveEpisodeOverviewDetailedAsync(
-                animeClickId,
+                animeClickId ?? string.Empty,
                 seasonNumber,
                 episode.IndexNumber.Value,
                 episode.GetProviderId("AnimeClick"),
                 configuration,
                 cancellationToken,
                 allowSynchronousTranslation: false,
-                episode.Path)
+                episode.Path,
+                knownIds,
+                episode.ProviderIds)
             .ConfigureAwait(false);
 
         var value = resolution.Result?.Value;

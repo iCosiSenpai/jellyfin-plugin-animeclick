@@ -41,6 +41,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<AnimeClickTvdbClient>();
         services.AddSingleton<AnimeClickMetadataFallbackService>();
         services.AddSingleton<AnimeClickEpisodeTitleFallback>();
+        services.AddSingleton<AnimeClickAnimeTextFallback>();
         services.AddSingleton<AnimeClickRepairLedger>();
         services.AddSingleton<IAnimeClickOverviewResolver, AnimeClickOverviewResolver>();
         services.AddSingleton<AnimeClickLibraryQualityService>();
