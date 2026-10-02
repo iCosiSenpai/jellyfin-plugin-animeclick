@@ -4,6 +4,14 @@ namespace AnimeClick.Plugin.Configuration;
 
 public class PluginConfiguration : BasePluginConfiguration
 {
+    /// <summary>Read maintainer-reviewed public ID mappings; opt-in on every installation.</summary>
+    public bool EnableCommunityMappings { get; set; } = false;
+
+    /// <summary>Automatically submit only corrected public ID pairs. Never shares the library.</summary>
+    public bool EnableCommunitySharing { get; set; } = false;
+
+    public string CommunityGitHubToken { get; set; } = string.Empty;
+
     // ── Metadati ──
     /// <summary>Usa il titolo italiano come nome della serie.</summary>
     public bool PreferItalianTitle { get; set; } = true;
@@ -168,7 +176,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.0.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.1.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Schema of the persisted settings. One-time upgrades are gated on this rather than on whether

@@ -277,6 +277,7 @@ public sealed class AnimeClickLibraryQualityService
             if (_refreshScheduler.TryQueue(item, MetadataField.Overview, "library-quality-repair"))
             {
                 result.QueuedCount++;
+                result.QueuedItemIds.Add(item.Id.ToString("N", CultureInfo.InvariantCulture));
             }
             else
             {
@@ -503,6 +504,7 @@ public sealed class AnimeClickLibraryQualityItem
 
 public sealed class AnimeClickLibraryQualityRepairResult
 {
+    public List<string> QueuedItemIds { get; set; } = [];
     public int RequestedCount { get; set; }
     public int ConsideredCount { get; set; }
     public int QueuedCount { get; set; }

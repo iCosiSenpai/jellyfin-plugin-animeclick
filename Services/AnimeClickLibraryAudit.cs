@@ -6,10 +6,8 @@ using AnimeClick.Plugin.Models;
 namespace AnimeClick.Plugin.Services;
 
 /// <summary>
-/// Why an episode in the library still has no authoritative Italian title.
-/// A valid-looking downstream title can still be stale: the AnimeClick row is the
-/// source of truth when episode titles are enabled, so the audit compares both the
-/// durable row identity and the current title.
+/// Why an episode in the library still needs a title. Meaningful existing titles
+/// are preserved; only empty, placeholder and filename-derived names need repair.
 /// </summary>
 public enum AnimeClickAuditReason
 {
@@ -74,7 +72,7 @@ public static class AnimeClickLibraryAudit
     /// <summary>Italian one-liners, shown as-is in the configuration page.</summary>
     public static string Describe(AnimeClickAuditReason reason) => reason switch
     {
-        AnimeClickAuditReason.Ok => "Tutti gli episodi hanno il titolo AnimeClick aggiornato.",
+        AnimeClickAuditReason.Ok => "I titoli sono già compilati: nessun recupero necessario.",
         AnimeClickAuditReason.NotIdentified =>
             "La serie non è identificata su AnimeClick: identificala per abilitare i titoli.",
         AnimeClickAuditReason.CatalogNotCached =>
@@ -139,9 +137,8 @@ public static class AnimeClickLibraryAudit
         => ClassifyEpisode(episodeAnimeClickId, currentTitle: null, titleNeedsRepair: true, catalog);
 
     /// <summary>
-    /// Compares one library episode with its cached AnimeClick row. A complete downstream title is
-    /// still repairable when it differs from the now-published Italian title. A complete item with
-    /// no usable catalog is left alone rather than being reported as a speculative problem.
+    /// Compares a placeholder with its cached AnimeClick row. A meaningful current
+    /// title is left alone, including manual corrections that differ from the source.
     /// </summary>
     public static AnimeClickAuditReason ClassifyEpisode(
         string? episodeAnimeClickId,
@@ -149,6 +146,8 @@ public static class AnimeClickLibraryAudit
         bool titleNeedsRepair,
         AnimeClickEpisodeCatalog? catalog)
     {
+        // Library repairs preserve meaningful titles, including administrator corrections.
+        if (!titleNeedsRepair) return AnimeClickAuditReason.Ok;
         var catalogVerdict = ClassifyCatalog(catalog);
         if (catalogVerdict is not null)
         {

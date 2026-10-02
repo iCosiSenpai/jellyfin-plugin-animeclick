@@ -5,64 +5,37 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AnimeClick.Plugin.Configuration;
-using AnimeClick.Plugin.Models;
-using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
-using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace AnimeClick.Plugin.Tasks;
 
 /// <summary>
-/// Re-reads the AnimeClick episode list for the episodes whose identity is known but whose title
-/// is still a placeholder.
-/// <para>
-/// AnimeClick publishes an episode row as soon as it airs and fills the Italian title later, so a
-/// weekly show is matched — the row exists, the identity is written — while its title is still
-/// "Episodio 17". The provider correctly refuses to copy that placeholder, but nothing ever goes
-/// back to look: Jellyfin only refreshes an episode when its file changes, so the real title
-/// published days later never arrives. This task closes that loop, and only for episodes where
-/// the work is already done: an AnimeClick episode ID is present and the title is still a
-/// placeholder or the bare file name.
-/// </para>
+/// Re-reads resolved AnimeClick catalogs and repairs placeholder titles sequentially.
+/// Progress describes completed inspections and saves, rather than queued full refreshes.
 /// </summary>
 public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
 {
-    private const string CandidateCursorCacheKey = "taskState::missingEpisodeTitlesCursor:v1";
-
     private readonly ILibraryManager _libraryManager;
-    private readonly IProviderManager _providerManager;
-    private readonly IFileSystem _fileSystem;
-    private readonly AnimeClickCacheService _cache;
-    private readonly AnimeClickSeasonResolver _seasonResolver;
-    private readonly AnimeClickEpisodeLayoutResolver _layoutResolver;
+    private readonly AnimeClickTitleRepairService _repair;
+    private readonly AnimeClickActivityService _activities;
     private readonly ILogger<AnimeClickRefreshMissingTitlesTask> _logger;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="AnimeClickRefreshMissingTitlesTask"/> class.
-    /// </summary>
     public AnimeClickRefreshMissingTitlesTask(
         ILibraryManager libraryManager,
-        IProviderManager providerManager,
-        IFileSystem fileSystem,
-        AnimeClickCacheService cache,
-        AnimeClickSeasonResolver seasonResolver,
-        AnimeClickEpisodeLayoutResolver layoutResolver,
+        AnimeClickTitleRepairService repair,
+        AnimeClickActivityService activities,
         ILogger<AnimeClickRefreshMissingTitlesTask> logger)
     {
         _libraryManager = libraryManager;
-        _providerManager = providerManager;
-        _fileSystem = fileSystem;
-        _cache = cache;
-        _seasonResolver = seasonResolver;
-        _layoutResolver = layoutResolver;
+        _repair = repair;
+        _activities = activities;
         _logger = logger;
     }
 
@@ -74,13 +47,9 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
 
     /// <inheritdoc />
     public string Description =>
-        "Rilegge la lista episodi di AnimeClick per i titoli segnaposto, derivati dal nome file "
-        + "o rimasti in una lingua diversa dopo che AnimeClick ha pubblicato il titolo italiano. "
-        + "Confronta l'identità numerica stabile della riga, rispetta i campi bloccati e salta "
-        + "le schede che non possono migliorare. "
-        + "Lavora l'intero arretrato in una sola esecuzione: le richieste ad AnimeClick sono "
-        + "distanziate dal ritardo configurato nella pagina del plugin (un secondo per default), "
-        + "quindi il tempo dipende da quanti episodi restano, non da un tetto arbitrario.";
+        "Completa soltanto i titoli vuoti, segnaposto o derivati dal nome file. Rilegge le schede "
+        + "AnimeClick una volta per esecuzione e mostra gli esiti reali. Conserva titoli già compilati, "
+        + "identificativi, numerazione, trame e immagini; rispetta i blocchi e le modifiche manuali.";
 
     /// <inheritdoc />
     public string Category => "AnimeClick";
@@ -99,203 +68,67 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(progress);
-
-        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        if (!configuration.EnableEpisodeTitles)
+        const string key = AnimeClickActivityService.Titles;
+        if (!_activities.Begin(key)) return;
+        var processed = 0;
+        var applied = 0;
+        var errors = 0;
+        try
         {
-            _logger.LogInformation(
-                "AnimeClick: i titoli episodio sono disabilitati, il ricontrollo non ha nulla da fare");
-            progress.Report(100);
-            return;
-        }
-
-        var candidates = await FindCandidatesAsync(configuration, cancellationToken).ConfigureAwait(false);
-        progress.Report(5);
-        if (candidates.Count == 0)
-        {
-            _logger.LogInformation("AnimeClick: nessun episodio recuperabile con un ricontrollo");
-            progress.Report(100);
-            return;
-        }
-
-        var queued = 0;
-        foreach (var episode in candidates)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
+            if (Plugin.Instance?.Configuration.EnableEpisodeTitles == false)
             {
-                MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-                ImageRefreshMode = MetadataRefreshMode.None,
-
-                // Never ReplaceAllMetadata: that path sets RemoveOldMetadata, which is how a
-                // refresh erases the episode numbering parsed from the file name. The Italian
-                // title still lands, because the post-merge authority provider reapplies it.
-                ReplaceAllMetadata = false,
-                ReplaceAllImages = false,
-                IsAutomated = true
-            };
-            _providerManager.QueueRefresh(episode.Id, options, RefreshPriority.Low);
-            queued++;
-            progress.Report(5 + (95d * queued / candidates.Count));
-        }
-
-        _logger.LogInformation(
-            "AnimeClick: accodato il ricontrollo del titolo per {Queued} episodi, ritmo {DelayMs} ms per richiesta",
-            queued,
-            configuration.RequestDelayMilliseconds);
-        progress.Report(100);
-    }
-
-    /// <summary>
-    /// Picks the episodes worth a request, in the order most likely to gain a title.
-    /// <para>
-    /// The first version queued the first two hundred episodes it found that carried an AnimeClick
-    /// ID and a placeholder title. Both halves of that rule were wrong on a real library. Requiring
-    /// an ID meant an episode that was never matched — because it was added while the card was still
-    /// bare — could never be retried, since Jellyfin only refreshes an episode when its file
-    /// changes. And taking them in library order spent the whole budget on the cards that publish no
-    /// titles at all: a hundred and eighteen episodes here, week after week, none of which can ever
-    /// gain one. So the audit's own classification decides, and its verdict orders the queue.
-    /// </para>
-    /// <para>
-    /// The two-hundred cap that followed is gone as well. What protects AnimeClick is the configured
-    /// delay between requests, applied to every call the plugin makes; the cap only guaranteed that
-    /// work was left undone, and made the reported backlog stop shrinking for no reason the user
-    /// could see. The whole candidate list is queued, still highest-yield first.
-    /// </para>
-    /// </summary>
-    private async Task<List<BaseItem>> FindCandidatesAsync(
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken)
-    {
-        var episodes = _libraryManager.GetItemList(new InternalItemsQuery
-        {
-            IncludeItemTypes = [BaseItemKind.Episode],
-            Recursive = true,
-            IsVirtualItem = false
-        });
-
-        // Ranked by expected yield. A cached catalog that already holds the title costs no request
-        // at all; a mismatch, whose data has not changed since it failed, comes last.
-        var priority = new Dictionary<AnimeClickAuditReason, int>
-        {
-            [AnimeClickAuditReason.PendingRefresh] = 0,
-            [AnimeClickAuditReason.RowVanished] = 1,
-            [AnimeClickAuditReason.TitleNotPublished] = 2,
-            [AnimeClickAuditReason.CatalogNotCached] = 3,
-            [AnimeClickAuditReason.NotMatched] = 4
-        };
-
-        var catalogs = new Dictionary<string, AnimeClickEpisodeCatalog?>(StringComparer.OrdinalIgnoreCase);
-        var seasonMaps = new Dictionary<(string SeriesId, int SeasonNumber, int? AirYear), string?>();
-        var ranked = new List<(int Priority, Episode Episode)>();
-        foreach (var item in episodes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (item is not Episode episode || IsNameLocked(episode))
-            {
-                continue;
+                _activities.Finish(key, "Completed", "I titoli episodio sono disabilitati nelle preferenze.");
+                progress.Report(100);
+                return;
             }
-
-            var seriesId = episode.Series?.GetProviderId("AnimeClick");
-            if (string.IsNullOrWhiteSpace(seriesId))
+            var candidates = _libraryManager.GetItemList(new InternalItemsQuery
             {
-                continue;
-            }
-
-            var seasonId = episode.Season?.GetProviderId("AnimeClick");
-            string? traversedCard = null;
-            if (episode.ParentIndexNumber is > 1)
+                IncludeItemTypes = [BaseItemKind.Episode], Recursive = true, IsVirtualItem = false
+            }).OfType<Episode>()
+                .Where(episode => !IsNameLocked(episode) && NeedsTitle(episode))
+                .Where(episode => !string.IsNullOrWhiteSpace(episode.Series?.GetProviderId("AnimeClick"))
+                    || !string.IsNullOrWhiteSpace(episode.Season?.GetProviderId("AnimeClick")))
+                .OrderBy(episode => episode.SeriesName, StringComparer.Ordinal)
+                .ThenBy(episode => episode.ParentIndexNumber).ThenBy(episode => episode.IndexNumber)
+                .ToList();
+            var refreshedCatalogs = new AnimeClickTitleRepairSession();
+            _activities.Update(key, candidates.Count, 0, 0, 0, 0, "Ricontrollo dei titoli mancanti…");
+            foreach (var episode in candidates)
             {
-                var layout = _layoutResolver.Resolve(episode.Path);
-                var airYears = layout?.GetSeasonAirYears();
-                var airYear = airYears?.GetValueOrDefault(episode.ParentIndexNumber.Value);
-                var seasonMapKey = (seriesId, episode.ParentIndexNumber.Value, airYear);
-                if (!seasonMaps.TryGetValue(seasonMapKey, out traversedCard))
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_activities.Get(key).State == "Cancelling") throw new OperationCanceledException();
+                _activities.Update(key, candidates.Count, processed, applied, processed - applied - errors, errors,
+                    $"{episode.SeriesName} · S{episode.ParentIndexNumber} E{episode.IndexNumber}: lettura del titolo…");
+                try
                 {
-                    traversedCard = await _seasonResolver
-                        .ResolveCachedAsync(
-                            seriesId,
-                            episode.ParentIndexNumber,
-                            configuration,
-                            cancellationToken,
-                            airYears)
-                        .ConfigureAwait(false);
-                    seasonMaps[seasonMapKey] = traversedCard;
+                    if (await _repair.RepairAsync(episode, refreshedCatalogs, cancellationToken).ConfigureAwait(false)) applied++;
                 }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception ex)
+                {
+                    errors++;
+                    _logger.LogWarning(ex, "AnimeClick title-only repair failed for item={ItemId}", episode.Id);
+                }
+                processed++;
+                progress.Report(processed * 100d / Math.Max(1, candidates.Count));
+                _activities.Update(key, candidates.Count, processed, applied, processed - applied - errors, errors,
+                    $"{processed}/{candidates.Count} episodi verificati · {applied} titoli aggiornati");
             }
-
-            // Match the provider's card priority while staying cache-only: a traversal already
-            // proved during a real refresh wins, then an explicit season ID, then the series card.
-            var cardId = traversedCard
-                ?? (string.IsNullOrWhiteSpace(seasonId) ? seriesId : seasonId);
-            var catalog = await GetCachedCatalogAsync(cardId, configuration, catalogs, cancellationToken)
-                .ConfigureAwait(false);
-
-            var reason = AnimeClickLibraryAudit.ClassifyEpisode(
-                episode.GetProviderId("AnimeClick"),
-                episode.Name,
-                NeedsTitle(episode),
-                catalog);
-            if (!priority.TryGetValue(reason, out var rank))
-            {
-                // CardHasNoTitles and NotIdentified: nothing a request could change.
-                continue;
-            }
-
-            ranked.Add((rank, episode));
+            _activities.Finish(key, errors > 0 ? "Partial" : "Completed",
+                candidates.Count == 0 ? "Nessun titolo mancante da completare. I titoli già compilati sono conservati."
+                : $"{applied} titoli aggiornati · {processed - applied - errors} senza titolo disponibile o saltati · {errors} errori.");
+            progress.Report(100);
         }
-
-        var ordered = ranked
-            .OrderBy(entry => entry.Priority)
-
-            // A stable total order keeps the log readable across runs instead of depending on the
-            // database's incidental row order.
-            .ThenBy(entry => entry.Episode.SeriesName ?? string.Empty, StringComparer.Ordinal)
-            .ThenBy(entry => entry.Episode.ParentIndexNumber ?? int.MaxValue)
-            .ThenBy(entry => entry.Episode.IndexNumber ?? int.MaxValue)
-            .ThenBy(entry => entry.Episode.Id)
-            .Select(entry => entry.Episode)
-            .ToList();
-
-        // The rotation cursor existed only to share a capped budget between runs. With the cap gone
-        // there is nothing to rotate, and the stale key is dropped so it cannot resurface later.
-        _cache.ClearKey(CandidateCursorCacheKey);
-        return [.. ordered.Select(episode => (BaseItem)episode)];
-    }
-
-    /// <summary>The cached catalog for one card, memoized, never fetched.</summary>
-    private async Task<AnimeClickEpisodeCatalog?> GetCachedCatalogAsync(
-        string animeClickId,
-        PluginConfiguration configuration,
-        Dictionary<string, AnimeClickEpisodeCatalog?> memo,
-        CancellationToken cancellationToken)
-    {
-        if (memo.TryGetValue(animeClickId, out var cached))
+        catch (OperationCanceledException)
         {
-            return cached;
+            _activities.Finish(key, "Cancelled", $"Interrotto: {processed} episodi verificati, {applied} titoli aggiornati.");
+            if (cancellationToken.IsCancellationRequested) throw;
         }
-
-        AnimeClickEpisodeCatalog? catalog = null;
-        if (AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, animeClickId, out var animeUrl))
+        catch (Exception)
         {
-            var summary = await _cache
-                .GetAsync<AnimeClickAnime>($"anime::{animeUrl}", configuration.CacheHours, cancellationToken)
-                .ConfigureAwait(false);
-            catalog = await _cache
-                .GetAsync<AnimeClickEpisodeCatalog>(
-                    AnimeClickEpisodeProvider.BuildCatalogCacheKey(
-                        animeClickId,
-                        summary?.EpisodeCount,
-                        summary?.SeasonsCount ?? 0),
-                    configuration.CacheHours,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            _activities.Finish(key, "Failed", "Ricontrollo non riuscito. Consulta la diagnostica e riprova.");
+            throw;
         }
-
-        memo[animeClickId] = catalog;
-        return catalog;
     }
 
     /// <summary>True when Jellyfin must not let an automated refresh alter the title.</summary>

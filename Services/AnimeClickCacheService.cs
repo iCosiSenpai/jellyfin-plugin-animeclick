@@ -32,9 +32,10 @@ public class AnimeClickCacheService
 
     public AnimeClickCacheService(
         IApplicationPaths applicationPaths,
-        ILogger<AnimeClickCacheService> logger)
+        ILogger<AnimeClickCacheService> logger,
+        string? storageDirectory = null)
     {
-        _cacheDirectory = Path.Combine(applicationPaths.CachePath, "AnimeClickMetadata");
+        _cacheDirectory = storageDirectory ?? Path.Combine(applicationPaths.CachePath, "AnimeClickMetadata");
         _logger = logger;
         Directory.CreateDirectory(_cacheDirectory);
     }

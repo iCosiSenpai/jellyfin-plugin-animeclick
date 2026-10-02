@@ -39,6 +39,8 @@ jobs:
           exit "${status}"
       - name: Build and test server compatibility
         run: dotnet test AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release -p:JellyfinVersion=${{ matrix.jellyfin }} -warnaserror
+      - name: Validate reviewed community mappings
+        run: python3 tools/community_mappings.py
       - name: Build diagnostic harness
         run: dotnet build tools/AnimeClick.Harness/AnimeClick.Harness.csproj -c Release -p:JellyfinVersion=${{ matrix.jellyfin }} -warnaserror
 

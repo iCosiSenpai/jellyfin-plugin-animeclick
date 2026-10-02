@@ -34,6 +34,7 @@ public class AnimeClickIdentifyController : ControllerBase
     private readonly AnimeClickHtmlParser _parser;
     private readonly MediaBrowser.Model.IO.IFileSystem _fileSystem;
     private readonly ILogger<AnimeClickIdentifyController> _logger;
+    private readonly AnimeClickCommunityService? _community;
 
     public const string ProviderKey = "AnimeClick";
 
@@ -43,7 +44,8 @@ public class AnimeClickIdentifyController : ControllerBase
         AnimeClickClient client,
         AnimeClickHtmlParser parser,
         MediaBrowser.Model.IO.IFileSystem fileSystem,
-        ILogger<AnimeClickIdentifyController> logger)
+        ILogger<AnimeClickIdentifyController> logger,
+        AnimeClickCommunityService? community = null)
     {
         _libraryManager = libraryManager;
         _providerManager = providerManager;
@@ -51,6 +53,7 @@ public class AnimeClickIdentifyController : ControllerBase
         _parser = parser;
         _fileSystem = fileSystem;
         _logger = logger;
+        _community = community;
     }
 
     /// <summary>Validates the selected work, saves its ID, then lets Jellyfin refresh in the background.</summary>
@@ -94,6 +97,12 @@ public class AnimeClickIdentifyController : ControllerBase
             return Conflict(new { error = "L’abbinamento è cambiato durante la verifica. Ricarica la scheda e riprova." });
         item.SetProviderId(ProviderKey, animeClickId);
         await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+        string? communityMessage = null;
+        if (_community is not null)
+        {
+            try { communityMessage = await _community.EnqueueCorrectionAsync(item, cancellationToken).ConfigureAwait(false); }
+            catch { communityMessage = "La correzione locale è salvata; l’invio alla comunità non è stato accodato."; }
+        }
         var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
         {
             MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
@@ -112,13 +121,15 @@ public class AnimeClickIdentifyController : ControllerBase
             return Ok(new IdentifyAndRefreshResponse
             {
                 ItemId = item.Id.ToString(), AnimeClickId = animeClickId, PreviousAnimeClickId = previousId,
+                CommunityMessage = communityMessage,
                 Error = "L’abbinamento è salvato, ma l’aggiornamento non è partito. Usa «Aggiorna metadati» nella scheda Jellyfin."
             });
         }
         return Ok(new IdentifyAndRefreshResponse
         {
             Success = true, ItemId = item.Id.ToString(), Name = item.Name, AnimeClickId = animeClickId,
-            PreviousAnimeClickId = previousId, RefreshTriggered = true, ReplaceAllImages = request.ReplaceAllImages
+            PreviousAnimeClickId = previousId, RefreshTriggered = true, ReplaceAllImages = request.ReplaceAllImages,
+            CommunityMessage = communityMessage
         });
     }
 
@@ -226,6 +237,7 @@ public sealed class IdentifyAndRefreshRequest
 
 public sealed class IdentifyAndRefreshResponse
 {
+    public string? CommunityMessage { get; set; }
     public bool Success { get; set; }
     public string ItemId { get; set; } = string.Empty;
     public string? Name { get; set; }

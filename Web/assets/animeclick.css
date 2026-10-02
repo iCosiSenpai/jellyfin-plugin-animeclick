@@ -1103,6 +1103,31 @@
 }
 
 /* The configuration is a small workspace, with one task per page. */
+.ac-library-header { display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
+.ac-library-header .ac-title { font-size: 1.9rem; letter-spacing: -.035em; }
+.ac-library-scan { display: grid; gap: 8px; }
+.ac-library-modes { display: flex; gap: 6px; padding: 5px; background: var(--ac-surface-2); border-radius: 12px; }
+.ac-page .ac-library-mode { flex: 1; border-color: transparent; background: transparent; }
+.ac-page .ac-library-mode[aria-pressed="true"] { background: var(--ac-accent-bg); color: var(--ac-accent); }
+.ac-activity { display: grid; gap: 10px; min-width: 0; padding-block: 8px; }
+.ac-activity + .ac-activity { border-top: 1px solid var(--ac-border); padding-top: 20px; }
+.ac-progress { display: block; width: 100%; height: 8px; border: 0; border-radius: 8px; accent-color: var(--ac-accent); overflow: hidden; }
+.ac-progress::-webkit-progress-bar { background: var(--ac-surface-3); border-radius: 8px; }
+.ac-progress::-webkit-progress-value { background: var(--ac-accent); border-radius: 8px; transition: width .2s; }
+.ac-progress::-moz-progress-bar { background: var(--ac-accent); border-radius: 8px; }
+.ac-community-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85rem; margin: 0; padding: 16px; border-radius: 10px; background: var(--ac-surface-2); }
+.ac-page .ac-activities .ac-card-body { gap: 4px; }
+.ac-page .ac-activity .ac-state { min-height: 0; margin: 0; padding: 0; }
+.ac-activity .ac-note:empty, #acActivityConnection:empty { display: none; }
+.ac-page #acLibraryTitles .ac-audit-selector { display: none; }
+.ac-page #acLibraryTitles .ac-audit-entry.is-selectable { grid-template-columns: minmax(0, 1fr); }
+.ac-page #acLibraryTitles.ac-title-selection .ac-audit-selector { display: flex; }
+.ac-page #acLibraryTitles.ac-title-selection .ac-audit-entry.is-selectable { grid-template-columns: 30px minmax(0, 1fr); }
+@media (max-width: 560px) {
+    .ac-library-header .ac-grow { flex-basis: 100%; }
+    .ac-library-header .ac-title { font-size: 1.7rem; }
+    .ac-library-header { gap: 14px; }
+}
 .ac-page { --ac-r-m: 14px; --ac-text-muted: #b7bbc6; --ac-text-faint: #a4a9b5; }
 .lightTheme .ac-page { --ac-text-muted: #525866; --ac-text-faint: #636977; }
 .ac-page [hidden] { display: none !important; }

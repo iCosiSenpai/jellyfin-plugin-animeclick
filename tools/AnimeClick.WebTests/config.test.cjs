@@ -24,6 +24,7 @@ before(async () => {
         const assets = {
             AnimeClickCss: ['Web/assets/animeclick.css', 'text/css'],
             AnimeClickConfigJs: ['Web/assets/animeclick-config.js', 'text/javascript'],
+            AnimeClickLibraryJs: ['Web/assets/animeclick-library.js', 'text/javascript'],
             AnimeClickLogo: ['assets/logo.png', 'image/png']
         };
         const [file, type] = assets[name] || ['Configuration/configPage.html', 'text/html'];
@@ -43,7 +44,8 @@ after(async () => {
 
 async function mount(options = {}) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
-    const state = { config: { ...defaults, ...options.config }, writes: [], errors: [], reads: 0, identifications: [] };
+    const state = { config: { ...defaults, ...options.config }, writes: [], errors: [], reads: 0, identifications: [],
+        requests: [], activities: options.activities || [], titleRuns: 0, synopsisRuns: 0 };
     page.on('pageerror', error => state.errors.push(error.message));
     await page.addInitScript(() => {
         window.ApiClient = {
@@ -56,6 +58,33 @@ async function mount(options = {}) {
     await page.route('**/base/**', async route => {
         const request = route.request();
         const target = new URL(request.url()).pathname;
+        state.requests.push({ target, method: request.method() });
+        if (target.endsWith('/Activities')) {
+            if (options.failActivities) return route.fulfill({ status: 503, body: 'Stato non disponibile' });
+            return route.fulfill({ json: state.activities });
+        }
+        if (target.endsWith('/LibraryAudit')) {
+            if (options.failTitleAudit) return route.fulfill({ status: 503, body: 'Analisi titoli non disponibile' });
+            if (options.auditDelay) await new Promise(resolve => setTimeout(resolve, options.auditDelay));
+            return route.fulfill({ json: options.titleReport || { episodeTitlesEnabled: true, seriesCount: 1, episodeCount: 12,
+                missingTitleCount: 3, recoverableTitleCount: 2, waitingTitleCount: 1, unavailableTitleCount: 0,
+                series: [{ id: 'series-1', name: 'Una serie', animeClickId: '72', episodeCount: 12, missingTitleCount: 3,
+                    recoverableTitleCount: 2, waitingTitleCount: 1, reason: 'PendingRefresh', reasonLabel: 'Titoli da completare', seasons: [] }] } });
+        }
+        if (target.endsWith('/LibraryQualityAudit')) return route.fulfill({ json: options.qualityReport || {
+            itemCount: 13, italianCount: 10, repairableCount: 1, missingCount: 1, englishCount: 0, unknownCount: 2,
+            maximumRepairItems: 100, series: [] } });
+        if (target.endsWith('/RunMissingTitlesTask') || target.endsWith('/RunSynopsisRepairTask')) {
+            const titles = target.endsWith('/RunMissingTitlesTask');
+            if (titles) state.titleRuns++; else state.synopsisRuns++;
+            state.activities = [{ key: titles ? 'titles' : 'synopses', state: 'Running', isActive: true, total: 12,
+                processed: 4, applied: 3, skipped: 1, errors: 0, progress: 33, message: 'Una serie · S1 E5: lettura del titolo…' }];
+            return route.fulfill({ json: { queued: true, message: 'Attività avviata' } });
+        }
+        if (target.endsWith('/CancelActivity')) {
+            state.activities = state.activities.map(job => ({ ...job, state: 'Cancelled', isActive: false, message: 'Attività interrotta.' }));
+            return route.fulfill({ json: state.activities[0] });
+        }
         if (target === '/base/config') {
             if (request.method() === 'POST') {
                 if (options.failSave) return route.fulfill({ status: 500, body: 'error' });
@@ -238,7 +267,7 @@ test('all pages fit narrow screens and have no duplicate IDs', async () => {
     try {
         for (const width of [320, 390, 1280]) {
             await page.setViewportSize({ width, height: 900 });
-            for (const tab of ['Inizio', 'La tua libreria', 'Preferenze', 'Fonti aggiuntive', 'Avanzate']) {
+            for (const tab of ['Inizio', 'La tua libreria', 'Preferenze', 'Fonti aggiuntive', 'Comunità', 'Avanzate']) {
                 await select(page, tab);
                 const fits = await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
                 assert.ok(fits, `${tab} overflows at ${width}px`);
@@ -255,5 +284,116 @@ test('all pages fit narrow screens and have no duplicate IDs', async () => {
         await page.screenshot({ path: path.join(__dirname, 'test-results/home-desktop.png'), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
         await page.screenshot({ path: path.join(__dirname, 'test-results/home-mobile.png'), fullPage: true });
+    } finally { await page.close(); }
+});
+
+test('library opens with a local scan and shows one metadata category at a time', async () => {
+    const { page, state } = await mount({ auditDelay: 400 });
+    try {
+        await select(page, 'La tua libreria');
+        await page.locator('#acLibraryScanProgress:not([hidden])').waitFor();
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        assert.equal(await page.locator('#acLibraryTitles').isVisible(), true);
+        assert.equal(await page.locator('#acLibrarySynopses').isVisible(), false);
+        await page.locator('#acLibraryMode_synopses').click();
+        assert.equal(await page.locator('#acLibraryTitles').isVisible(), false);
+        assert.equal(await page.locator('#acLibrarySynopses').isVisible(), true);
+        assert.equal(state.titleRuns, 0); assert.equal(state.synopsisRuns, 0);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('title repair sends one start, shows real progress, and can be stopped', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'La tua libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acBtnRunTitles').click();
+        await page.getByRole('dialog').getByRole('button', { name: 'Conferma', exact: true }).click();
+        await page.locator('#acActivityBadge_titles').filter({ hasText: 'In corso' }).waitFor();
+        assert.equal(state.titleRuns, 1);
+        assert.equal(await page.locator('#acActivityProgress_titles').getAttribute('value'), '33');
+        assert.equal(await page.locator('#acBtnRunTitles').isDisabled(), true);
+        await page.getByRole('button', { name: 'Interrompi titoli episodio', exact: true }).click();
+        await page.locator('#acActivityBadge_titles').filter({ hasText: 'Interrotta' }).waitFor();
+        assert.equal(state.titleRuns, 1);
+        assert.deepEqual(state.errors, []);
+        fs.mkdirSync(path.join(__dirname, 'test-results'), { recursive: true });
+        await page.screenshot({ path: path.join(__dirname, 'test-results/library-desktop.png'), fullPage: true });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.screenshot({ path: path.join(__dirname, 'test-results/library-mobile.png'), fullPage: true });
+    } finally { await page.close(); }
+});
+
+test('a running activity is visible after reopening and polling stops outside library', async () => {
+    const { page, state } = await mount({ activities: [{ key: 'titles', state: 'Running', isActive: true, total: 10,
+        processed: 5, applied: 3, skipped: 2, progress: 50, message: 'Lettura in corso…' }] });
+    try {
+        await select(page, 'La tua libreria');
+        await page.locator('#acActivityBadge_titles').filter({ hasText: 'In corso' }).waitFor();
+        await select(page, 'Preferenze');
+        const count = state.requests.filter(r => r.target.endsWith('/Activities')).length;
+        await page.waitForTimeout(2200);
+        assert.equal(state.requests.filter(r => r.target.endsWith('/Activities')).length, count);
+        await select(page, 'La tua libreria');
+        await page.locator('#acActivityProgress_titles[value="50"]').waitFor();
+        assert.equal(state.titleRuns, 0);
+    } finally { await page.close(); }
+});
+
+test('partial audit and polling errors are visible and retry remains available', async () => {
+    const { page } = await mount({ failTitleAudit: true, failActivities: true });
+    try {
+        await select(page, 'La tua libreria');
+        await page.getByText(/Analisi incompleta/).waitFor();
+        await page.locator('#acActivityConnection').filter({ hasText: 'Stato non disponibile' }).waitFor();
+        assert.equal(await page.locator('#acLibraryScan').isEnabled(), true);
+        assert.equal(await page.locator('#acBtnRunTitles').isDisabled(), true);
+    } finally { await page.close(); }
+});
+
+test('community sharing is opt-in, requires a token, and allows revoking it', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'Comunità');
+        assert.equal(await page.locator('#acEnableCommunitySharing').isChecked(), false);
+        assert.equal(await page.locator('#acEnableCommunityMappings').isChecked(), false);
+        await page.locator('#acEnableCommunitySharing').check();
+        await page.locator('#acBtnSave').click();
+        await page.getByText(/Per l’invio automatico serve/).waitFor();
+        assert.equal(state.writes.length, 0);
+        await page.locator('#acCommunityGitHubToken').fill('fake-browser-test-token');
+        await page.locator('#acBtnSave').click();
+        await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
+        assert.equal(state.config.EnableCommunitySharing, true);
+        assert.equal(state.config.CommunityGitHubToken, 'fake-browser-test-token');
+        assert.equal(await page.locator('#acCommunityGitHubToken').inputValue(), '');
+        await page.locator('#acEnableCommunitySharing').uncheck();
+        await page.locator('#acClearCommunityToken').check();
+        await page.locator('#acBtnSave').click();
+        await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
+        assert.equal(state.config.CommunityGitHubToken, '');
+        assert.equal(state.config.EnableCommunitySharing, false);
+    } finally { await page.close(); }
+});
+
+test('every metadata switch and numeric preference survives save and reload', async () => {
+    const { page, state } = await mount();
+    try {
+        const controls = await page.locator('#acPanelMetadati input[type="checkbox"], #acPanelSinossi input[type="checkbox"]')
+            .evaluateAll(nodes => nodes.filter(n => !n.id.startsWith('acClear')).map(n => ({ id: n.id, checked: n.checked })));
+        await page.evaluate(controls => controls.forEach(({ id, checked }) => {
+            const node = document.getElementById(id); node.checked = !checked; node.dispatchEvent(new Event('change'));
+        }), controls);
+        const numbers = { acMinPosterWidth: '640', acMaxSearchResults: '12', acCacheHours: '72',
+            acNegativeCacheHours: '0', acRequestDelay: '1500', acTranslationCacheHours: '0', acEpisodeTranslationTimeoutSec: '120' };
+        await page.evaluate(numbers => Object.entries(numbers).forEach(([id, value]) => {
+            const node = document.getElementById(id); node.value = value; node.dispatchEvent(new Event('input'));
+        }), numbers);
+        await page.locator('#acBtnSave').click();
+        await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
+        for (const { id, checked } of controls) assert.equal(state.config[id.slice(2)], !checked, id);
+        for (const [id, value] of Object.entries(numbers)) assert.equal(await page.locator('#' + id).inputValue(), value, id);
+        assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });
