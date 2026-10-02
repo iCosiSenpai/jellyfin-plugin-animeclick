@@ -14,7 +14,7 @@ public enum AnimeClickAuditReason
     /// <summary>The current title already matches the AnimeClick row.</summary>
     Ok,
 
-    /// <summary>The series has no AnimeClick ID: nothing can be matched until it is identified.</summary>
+    /// <summary>The series has no AnimeClick ID; configured alternatives need their own stored identities.</summary>
     NotIdentified,
 
     /// <summary>No catalog in cache, so the reason cannot be established without a request.</summary>
@@ -74,17 +74,17 @@ public static class AnimeClickLibraryAudit
     {
         AnimeClickAuditReason.Ok => "I titoli sono già compilati: nessun recupero necessario.",
         AnimeClickAuditReason.NotIdentified =>
-            "La serie non è identificata su AnimeClick: identificala per abilitare i titoli.",
+            "Manca l'ID AnimeClick. Identifica la serie oppure usa una fonte configurata con ID esterni già presenti.",
         AnimeClickAuditReason.CatalogNotCached =>
             "Nessuna scheda in cache: usa «Analizza» per leggerla e conoscere il motivo.",
         AnimeClickAuditReason.CardHasNoTitles =>
-            "La scheda AnimeClick elenca gli episodi senza titolo: non c'è nulla da recuperare.",
+            "AnimeClick elenca gli episodi senza titolo. Le altre fonti configurate possono ancora averlo.",
         AnimeClickAuditReason.NumberingCollision =>
             "La scheda ripete gli stessi numeri (di solito uno spin-off nella stessa tabella).",
         AnimeClickAuditReason.TitleNotPublished =>
             "Episodio abbinato, ma su AnimeClick il titolo non è ancora stato pubblicato.",
         AnimeClickAuditReason.PendingRefresh =>
-            "AnimeClick pubblica un titolo diverso: basta un ricontrollo per applicarlo.",
+            "Un titolo è disponibile su AnimeClick: il recupero verifica l'abbinamento prima di applicarlo.",
         AnimeClickAuditReason.RowVanished =>
             "L'identità numerica salvata non compare più nella scheda corrente: analizza la serie.",
         AnimeClickAuditReason.NotMatched =>

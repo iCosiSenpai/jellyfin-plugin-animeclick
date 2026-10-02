@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, '../..');
 let browser, server, origin;
 const defaults = {
     ConfigurationVersion: 1, PreferItalianTitle: true, EnablePlot: true,
-    EnableEpisodeTitles: true, EnableEpisodeSynopsisTranslation: true,
+    EnableEpisodeTitles: true, EnableEpisodeTitleFallback: true, EnableEpisodeSynopsisTranslation: true,
     EnableAiTranslation: true, MinPosterWidth: 400, MaxSearchResults: 10,
     CacheHours: 48, NegativeCacheHours: 12, RequestDelayMilliseconds: 1000,
     TranslationCacheHours: 87600, EpisodeTranslationTimeoutSec: 90,
@@ -138,7 +138,7 @@ test('zero cache values survive saving and a failed provider list preserves the 
         await openDetails(page, 'Ricerca, rete e compatibilità');
         await page.locator('#acNegativeCacheHours').fill('0');
         await select(page, 'Fonti aggiuntive');
-        await openDetails(page, 'Traduci le trame mancanti');
+        await openDetails(page, 'Traduci trame e titoli mancanti');
         await openDetails(page, 'Indirizzo del servizio e tempi di attesa');
         await page.locator('#acTranslationCacheHours').fill('0');
         await page.locator('#acBtnSave').click();
@@ -224,7 +224,7 @@ test('removing a saved AI key also clears its legacy copy', async () => {
     const { page, state } = await mount({ config: { OllamaCloudApiKey: 'old-test-key' } });
     try {
         await select(page, 'Fonti aggiuntive');
-        await openDetails(page, 'Traduci le trame mancanti');
+        await openDetails(page, 'Traduci trame e titoli mancanti');
         await page.locator('#acClearAiKey').check();
         await page.locator('#acBtnSave').click();
         await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
@@ -252,7 +252,7 @@ test('a saved AI credential cannot silently move to another destination', async 
     const { page, state } = await mount();
     try {
         await select(page, 'Fonti aggiuntive');
-        await openDetails(page, 'Traduci le trame mancanti');
+        await openDetails(page, 'Traduci trame e titoli mancanti');
         await openDetails(page, 'Indirizzo del servizio e tempi di attesa');
         await page.locator('#acAiEndpoint').fill('https://different.example/v1/chat/completions');
         await page.locator('#acBtnSave').click();
@@ -322,6 +322,27 @@ test('title repair sends one start, shows real progress, and can be stopped', as
         await page.screenshot({ path: path.join(__dirname, 'test-results/library-desktop.png'), fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
         await page.screenshot({ path: path.join(__dirname, 'test-results/library-mobile.png'), fullPage: true });
+    } finally { await page.close(); }
+});
+
+test('titles absent on AnimeClick can be checked in configured alternatives without promising recovery', async () => {
+    const { page, state } = await mount({ titleReport: { episodeTitlesEnabled: true, alternativeTitleLookupEnabled: true,
+        seriesCount: 1, episodeCount: 12, missingTitleCount: 12, recoverableTitleCount: 0,
+        waitingTitleCount: 0, unavailableTitleCount: 12, series: [] } });
+    try {
+        await select(page, 'La tua libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        assert.equal(await page.getByText('Assenti su AnimeClick', { exact: true }).count(), 1);
+        assert.equal(await page.locator('#acAuditSummary').getByText('Da verificare', { exact: true }).count(), 1);
+        assert.equal(await page.locator('#acBtnRunTitles').isEnabled(), true);
+        await page.locator('#acBtnRunTitles').click();
+        const dialog = page.getByRole('dialog');
+        await dialog.waitFor();
+        assert.match(await dialog.innerText(), /12 episodi con titolo mancante/);
+        assert.match(await dialog.innerText(), /servizio AI può avere un costo/);
+        await dialog.getByRole('button', { name: 'Annulla', exact: true }).click();
+        assert.equal(state.titleRuns, 0);
+        assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });
 

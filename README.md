@@ -70,7 +70,7 @@ Le impostazioni tecniche sono raccolte in sezioni espandibili. Le modifiche rest
 
 La pagina analizza automaticamente i dati locali senza modificarli. **Titoli episodio** e **Trame e sinossi** hanno viste separate; apri una serie per i dettagli e usa **Aggiorna analisi** per rileggere lo stato. Gli errori parziali sono visibili e puoi riprovare.
 
-**Sistema tutti i titoli** rilegge le liste AnimeClick e completa soltanto nomi vuoti, segnaposto o derivati dal file. Conserva i titoli già compilati, anche quando differiscono da AnimeClick, e scrive solo il nome: numerazione, ID, trame e immagini restano invariati. Rispetta i blocchi, le modifiche manuali intervenute durante la ricerca e la disabilitazione del provider per gli episodi.
+**Sistema tutti i titoli** rilegge le liste AnimeClick e, se il titolo manca, controlla le fonti aggiuntive configurate. Completa soltanto nomi vuoti, segnaposto o derivati dal file. Conserva i titoli già compilati, anche quando differiscono da AnimeClick, e scrive solo il nome: numerazione, ID, trame e immagini restano invariati. Rispetta i blocchi, le modifiche manuali intervenute durante la ricerca e la disabilitazione del provider per gli episodi.
 
 Il riquadro **Attività** mostra fase, avanzamento, elementi verificati, aggiornati, saltati e in errore. Tornando alla pagina ritrovi il lavoro in corso. **Interrompi** ferma il recupero; per le sinossi, i refresh già consegnati a Jellyfin possono comunque terminare. Lo stato dettagliato delle attività riguarda la sessione corrente del server e si azzera dopo un riavvio.
 
@@ -102,6 +102,12 @@ Titolo e trama sono trattati separatamente. Un titolo generico come “Episodio 
 
 Le relazioni fra schede possono risolvere stagioni successive. Se non forniscono una catena sufficientemente chiara, serve l’ID della stagione. Gli override di layout restano disponibili in **Avanzate**, ma non sono necessari nell’uso ordinario.
 
+Per un titolo assente o generico, la precedenza è AnimeClick, poi un titolo italiano su TheTVDB o TMDB, infine un titolo inglese tradotto con il servizio AI già abilitato e configurato. La traduzione usa un prompt specifico per il solo titolo, senza generare una trama o inventare un nome dall’episodio. Se manca una fonte valida, il campo resta invariato.
+
+**Preferenze → Cerca i titoli anche nelle altre fonti** è attiva di default, ma usa soltanto i servizi configurati: TheTVDB richiede anche **Usa TheTVDB**. Servono gli ID esterni già presenti sulla serie; l’ID episodio, quando presente, deve corrispondere. Non cerca la serie per somiglianza del nome e non usa questo recupero per file contenenti più episodi. Un abbinamento esterno errato va corretto prima del recupero.
+
+L’analisi locale non interroga queste API: **Da verificare** e **Assenti su AnimeClick** indicano cosa il recupero può controllare, senza garantire che le altre fonti abbiano un titolo. La conferma dichiara la possibile traduzione e il suo costo; l’attività mostra fonte e fase, e conta i titoli recuperati e tradotti.
+
 ### Trame e fonti facoltative
 
 Per le sinossi episodio la precedenza è:
@@ -121,7 +127,7 @@ Le traduzioni sono conservate in cache in base a testo, fonte, modello, endpoint
 
 - AnimeClick riceve le ricerche e le richieste alle sue pagine. Il plugin applica cache, ritardo fra richieste e gestione dei limiti del sito.
 - GitHub riceve le richieste al dataset soltanto se abiliti la lettura; riceve proposte pubbliche e la credenziale del contribuente soltanto se abiliti l’invio automatico. Il token è inviato esclusivamente a `api.github.com`, senza redirect.
-- Le integrazioni facoltative ricevono i dati necessari alla loro funzione. L’AI riceve il testo della sinossi da tradurre, non il file video.
+- Le integrazioni facoltative ricevono i dati necessari alla loro funzione. L’AI riceve il solo titolo o testo della sinossi da tradurre, senza file video, percorsi, ID o informazioni sugli utenti.
 - Le chiavi sono conservate nella configurazione Jellyfin: proteggi l’accesso amministrativo, i file e i backup. Non condividere configurazioni o log senza rimuovere i segreti.
 - La pagina del plugin non carica immagini promozionali esterne. Le funzioni amministrative richiedono un account amministratore.
 - Le immagini accettano destinazioni AnimeClick consentite; i redirect vengono verificati prima della richiesta successiva. Le API esterne non seguono automaticamente redirect con credenziali.

@@ -73,9 +73,12 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
         var processed = 0;
         var applied = 0;
         var errors = 0;
+        var alternativeTitles = 0;
+        var translatedTitles = 0;
         try
         {
-            if (Plugin.Instance?.Configuration.EnableEpisodeTitles == false)
+            var configuration = Plugin.Instance?.Configuration ?? new AnimeClick.Plugin.Configuration.PluginConfiguration();
+            if (!configuration.EnableEpisodeTitles)
             {
                 _activities.Finish(key, "Completed", "I titoli episodio sono disabilitati nelle preferenze.");
                 progress.Report(100);
@@ -87,7 +90,15 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
             }).OfType<Episode>()
                 .Where(episode => !IsNameLocked(episode) && NeedsTitle(episode))
                 .Where(episode => !string.IsNullOrWhiteSpace(episode.Series?.GetProviderId("AnimeClick"))
-                    || !string.IsNullOrWhiteSpace(episode.Season?.GetProviderId("AnimeClick")))
+                    || !string.IsNullOrWhiteSpace(episode.Season?.GetProviderId("AnimeClick"))
+                    || configuration.EnableEpisodeTitleFallback
+                        && _libraryManager.GetLibraryOptions(episode)?.TypeOptions?
+                            .FirstOrDefault(option => string.Equals(option.Type, "Episode", StringComparison.OrdinalIgnoreCase))?
+                            .MetadataFetchers?.Contains("AnimeClick", StringComparer.OrdinalIgnoreCase) == true &&
+                        (!string.IsNullOrWhiteSpace(configuration.TmdbApiKey)
+                            && !string.IsNullOrWhiteSpace(episode.Series?.GetProviderId("Tmdb"))
+                        || configuration.EnableTvdbSynopsis && !string.IsNullOrWhiteSpace(configuration.TvdbApiKey)
+                            && !string.IsNullOrWhiteSpace(episode.Series?.GetProviderId("Tvdb"))))
                 .OrderBy(episode => episode.SeriesName, StringComparer.Ordinal)
                 .ThenBy(episode => episode.ParentIndexNumber).ThenBy(episode => episode.IndexNumber)
                 .ToList();
@@ -99,9 +110,19 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
                 if (_activities.Get(key).State == "Cancelling") throw new OperationCanceledException();
                 _activities.Update(key, candidates.Count, processed, applied, processed - applied - errors, errors,
                     $"{episode.SeriesName} · S{episode.ParentIndexNumber} E{episode.IndexNumber}: lettura del titolo…");
+                refreshedCatalogs.LastSource = null;
+                refreshedCatalogs.LastUsedAi = false;
+                refreshedCatalogs.ReportPhase = phase => _activities.Update(key, candidates.Count, processed,
+                    applied, processed - applied - errors, errors,
+                    $"{episode.SeriesName} · S{episode.ParentIndexNumber} E{episode.IndexNumber}: {phase}");
                 try
                 {
-                    if (await _repair.RepairAsync(episode, refreshedCatalogs, cancellationToken).ConfigureAwait(false)) applied++;
+                    if (await _repair.RepairAsync(episode, refreshedCatalogs, cancellationToken).ConfigureAwait(false))
+                    {
+                        applied++;
+                        if (refreshedCatalogs.LastSource is not (null or "AnimeClick")) alternativeTitles++;
+                        if (refreshedCatalogs.LastUsedAi) translatedTitles++;
+                    }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception ex)
@@ -116,7 +137,8 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
             }
             _activities.Finish(key, errors > 0 ? "Partial" : "Completed",
                 candidates.Count == 0 ? "Nessun titolo mancante da completare. I titoli già compilati sono conservati."
-                : $"{applied} titoli aggiornati · {processed - applied - errors} senza titolo disponibile o saltati · {errors} errori.");
+                : $"{applied} titoli aggiornati ({alternativeTitles} da altre fonti, {translatedTitles} tradotti) · "
+                    + $"{processed - applied - errors} senza titolo disponibile o saltati · {errors} errori.");
             progress.Report(100);
         }
         catch (OperationCanceledException)

@@ -63,8 +63,11 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Importa trailer, teaser e PV YouTube esplicitamente etichettati.</summary>
     public bool EnableTrailers { get; set; } = true;
 
-    /// <summary>Importa titoli italiani degli episodi dalla pagina /episodi.</summary>
+    /// <summary>Importa titoli italiani degli episodi da AnimeClick e dalle fonti alternative abilitate.</summary>
     public bool EnableEpisodeTitles { get; set; } = true;
+
+    /// <summary>Complete missing episode titles using configured external sources and optional AI.</summary>
+    public bool EnableEpisodeTitleFallback { get; set; } = true;
 
     /// <summary>
     /// Override avanzati del layout, uno per riga: anime-id=flat,
@@ -140,13 +143,12 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public int EpisodeTranslationTimeoutSec { get; set; } = 90;
 
-    // ── TVDB (sinossi episodi IT dirette, senza traduzione) ──
+    // ── TheTVDB: fonte facoltativa per titoli e sinossi episodi ──
     /// <summary>
-    /// Abilita TheTVDB come fonte di sinossi episodi in italiano diretto. TVDB espone
-    /// overview per-episodio tradotte in diverse lingue; quando la traduzione IT esiste
-    /// viene usata direttamente (nessuna chiamata AI, nessun costo). Quando TVDB
-    /// non ha la traduzione per un episodio, si ricade sul flusso TMDB EN + traduzione AI
-    /// (se abilitato). Opt-in, richiede TvdbApiKey.
+    /// Abilita TheTVDB come fonte di titoli e sinossi episodi. Le traduzioni italiane
+    /// vengono usate direttamente; un testo inglese richiede la traduzione AI già
+    /// abilitata e configurata. Opt-in, richiede TvdbApiKey. Il nome della proprietà
+    /// resta invariato per conservare le preferenze delle installazioni esistenti.
     /// </summary>
     public bool EnableTvdbSynopsis { get; set; } = false;
 
@@ -176,7 +178,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.1.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.1.1.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Schema of the persisted settings. One-time upgrades are gated on this rather than on whether

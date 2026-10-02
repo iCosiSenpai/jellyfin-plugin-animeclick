@@ -227,7 +227,10 @@ public class AnimeClickTmdbClient
         int episode,
         string language,
         PluginConfiguration configuration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string field = "overview",
+        string? expectedEpisodeId = null,
+        Action? coordinateNotFound = null)
     {
         if (string.IsNullOrWhiteSpace(configuration.TmdbApiKey))
         {
@@ -235,7 +238,7 @@ public class AnimeClickTmdbClient
         }
 
         var normalizedLanguage = NormalizeLanguage(language);
-        var cacheKey = $"tmdbEpisodeTranslations:v2::{tmdbId}::{season}::{episode}";
+        var cacheKey = BuildEpisodeTranslationsCacheKey(tmdbId, season, episode);
         var emptyCacheKey = cacheKey + "::empty";
         var translationsJson = await _cache
             .GetAsync<string?>(cacheKey, configuration.CacheHours, cancellationToken)
@@ -245,8 +248,9 @@ public class AnimeClickTmdbClient
             var emptyCached = await _cache
                 .GetAsync<string>(emptyCacheKey, configuration.NegativeCacheHours, cancellationToken)
                 .ConfigureAwait(false);
-            if (string.Equals(emptyCached, "empty", StringComparison.Ordinal))
+            if (emptyCached is "empty" or "missing")
             {
+                if (emptyCached == "missing") coordinateNotFound?.Invoke();
                 return null;
             }
         }
@@ -270,8 +274,9 @@ public class AnimeClickTmdbClient
                                 configuration.NegativeCacheHours,
                                 cancellationToken)
                             .ConfigureAwait(false);
-                        if (string.Equals(emptyCached, "empty", StringComparison.Ordinal))
+                        if (emptyCached is "empty" or "missing")
                         {
+                            if (emptyCached == "missing") coordinateNotFound?.Invoke();
                             return null;
                         }
 
@@ -289,7 +294,8 @@ public class AnimeClickTmdbClient
 
                         if (!fetched.HasTranslations || string.IsNullOrWhiteSpace(fetched.Json))
                         {
-                            await _cache.SetAsync(emptyCacheKey, "empty", cancellationToken).ConfigureAwait(false);
+                            if (fetched.CoordinateNotFound) coordinateNotFound?.Invoke();
+                            await _cache.SetAsync(emptyCacheKey, fetched.CoordinateNotFound ? "missing" : "empty", cancellationToken).ConfigureAwait(false);
                             return null;
                         }
 
@@ -305,7 +311,13 @@ public class AnimeClickTmdbClient
 
             // The translations endpoint proves the language of each overview. The
             // localized episode endpoint may silently fall back to original text.
-            return ParseEpisodeTranslation(translationsJson, normalizedLanguage);
+            if (expectedEpisodeId is not null)
+            {
+                using var identity = JsonDocument.Parse(translationsJson);
+                if (!identity.RootElement.TryGetProperty("id", out var id)
+                    || id.ToString() != expectedEpisodeId) return null;
+            }
+            return ParseEpisodeTranslation(translationsJson, normalizedLanguage, field);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -323,6 +335,25 @@ public class AnimeClickTmdbClient
             return null;
         }
     }
+
+    public async Task<string?> GetEpisodeTitleAsync(int seriesId, int season, int episode, string language,
+        string? expectedEpisodeId, PluginConfiguration configuration, CancellationToken token)
+    {
+        if (seriesId <= 0 || season < 0 || episode < 0) return null;
+        var coordinateMissing = false;
+        var direct = await GetEpisodeOverviewDirectAsync(seriesId, season, episode, language, configuration,
+            token, "name", expectedEpisodeId, () => coordinateMissing = true).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(direct)) return direct;
+        // Only a proven 404 allows absolute-number mapping. Missing translations,
+        // contradictory IDs and failed requests never do, even with the cache disabled.
+        if (!coordinateMissing) return null;
+        var mapped = await ResolveAbsoluteEpisodeAsync(seriesId, season, episode, configuration, token).ConfigureAwait(false);
+        return mapped is null ? null : await GetEpisodeOverviewDirectAsync(seriesId, mapped.Value.Season,
+            mapped.Value.Episode, language, configuration, token, "name", expectedEpisodeId).ConfigureAwait(false);
+    }
+
+    private static string BuildEpisodeTranslationsCacheKey(int series, int season, int episode)
+        => $"tmdbEpisodeTranslations:v3::{series}::{season}::{episode}";
 
     private async Task<ExternalIdLookupResult> SearchTvAsync(
         string title,
@@ -400,7 +431,7 @@ public class AnimeClickTmdbClient
                 .ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                return EpisodeTranslationsFetchResult.ConfirmedEmpty;
+                return new EpisodeTranslationsFetchResult(null, false, true, true);
             }
 
             if (RequestThrottle.IsRateLimited(response.StatusCode))
@@ -695,7 +726,9 @@ public class AnimeClickTmdbClient
                 sawStructurallyValidRecord = true;
                 if (data.TryGetProperty("overview", out var overview)
                     && overview.ValueKind == JsonValueKind.String
-                    && !string.IsNullOrWhiteSpace(overview.GetString()))
+                    && !string.IsNullOrWhiteSpace(overview.GetString())
+                    || data.TryGetProperty("name", out var name)
+                    && name.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(name.GetString()))
                 {
                     hasTranslations = true;
                 }
@@ -986,7 +1019,7 @@ public class AnimeClickTmdbClient
     /// matches the request. This prevents TMDB's localized endpoint fallback from
     /// being mislabeled as native Italian metadata.
     /// </summary>
-    internal static string? ParseEpisodeTranslation(string json, string language)
+    internal static string? ParseEpisodeTranslation(string json, string language, string field = "overview")
     {
         try
         {
@@ -1012,7 +1045,7 @@ public class AnimeClickTmdbClient
                         requestedLanguage,
                         StringComparison.OrdinalIgnoreCase)
                     || !translation.TryGetProperty("data", out var data)
-                    || !data.TryGetProperty("overview", out var overviewElement)
+                    || !data.TryGetProperty(field, out var overviewElement)
                     || overviewElement.ValueKind != JsonValueKind.String
                     || string.IsNullOrWhiteSpace(overviewElement.GetString()))
                 {
@@ -1044,7 +1077,8 @@ public class AnimeClickTmdbClient
     private sealed record EpisodeTranslationsFetchResult(
         string? Json,
         bool HasTranslations,
-        bool Completed)
+        bool Completed,
+        bool CoordinateNotFound = false)
     {
         public static EpisodeTranslationsFetchResult ConfirmedEmpty { get; } =
             new(null, false, true);

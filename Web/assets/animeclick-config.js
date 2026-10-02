@@ -2,7 +2,7 @@
 (function () {
     'use strict';
 
-    var V = '1.1.0.0';
+    var V = '1.1.1.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -655,7 +655,9 @@
         grid.appendChild(makeCheck('acEnableProductionLocations', 'Nazionalità', 'Mappata come località di produzione.'));
         grid.appendChild(makeCheck('acEnableTrailers', 'Trailer e PV', 'Solo video YouTube esplicitamente etichettati.'));
         grid.appendChild(makeCheck('acEnableCast', 'Cast e staff', 'Doppiatori e ruoli staff granulari.'));
-        grid.appendChild(makeCheck('acEnableEpisodeTitles', 'Titoli episodi', 'Titoli italiani dalla lista episodi.'));
+        grid.appendChild(makeCheck('acEnableEpisodeTitles', 'Titoli episodi', 'Completa i titoli mancanti; conserva quelli già compilati durante il recupero.'));
+        grid.appendChild(makeCheck('acEnableEpisodeTitleFallback', 'Cerca i titoli anche nelle altre fonti',
+            'Dopo AnimeClick cerca titoli italiani su TheTVDB e TMDB configurati. Se manca l’italiano, può tradurre un titolo inglese con il servizio AI abilitato.'));
         grid.appendChild(makeCheck('acEnableThemeSongs', 'Sigle', 'Nomi di opening ed ending nei tag.'));
         enrichment.body.appendChild(grid);
         panel.appendChild(enrichment.details);
@@ -721,7 +723,7 @@
         clear(panel);
         panel.appendChild(makeCallout('Vuoi trovare più trame?', 'AnimeClick funziona da solo. Puoi aggiungere una fonte italiana oppure un servizio di traduzione per le descrizioni disponibili soltanto in inglese.', 'good'));
 
-        var sources = makeDetails('Aggiungi TMDB', 'Cerca altre trame italiane e, se attivi la traduzione, quelle inglesi.');
+        var sources = makeDetails('Aggiungi TMDB', 'Cerca titoli e trame italiani mancanti; può fornire testi inglesi da tradurre.');
         sources.body.appendChild(makeSecretField('acTmdbApiKey', 'Chiave API TMDB', 'Disponibile nelle <a href="https://developer.themoviedb.org/docs/getting-started" target="_blank" rel="noopener noreferrer">impostazioni API TMDB</a>.'));
         var tmdbTest = el('button', 'ac-btn', 'Verifica TMDB');
         tmdbTest.type = 'button';
@@ -731,7 +733,7 @@
         sources.body.appendChild(tmdbResult);
         panel.appendChild(sources.details);
 
-        var tvdb = makeDetails('Aggiungi TheTVDB', 'Un’altra fonte di trame italiane per gli episodi. Viene consultata prima di TMDB.');
+        var tvdb = makeDetails('Aggiungi TheTVDB', 'Un’altra fonte di titoli e trame per gli episodi. Viene consultata prima di TMDB.');
         tvdb.body.appendChild(makeCheck('acEnableTvdbSynopsis', 'Usa TheTVDB', 'Richiede una chiave API del servizio.'));
         tvdb.body.appendChild(makeSecretField('acTvdbApiKey', 'Chiave API TheTVDB', 'Disponibile dal <a href="https://thetvdb.com/dashboard" target="_blank" rel="noopener noreferrer">tuo account TheTVDB</a>.'));
         var tvdbTest = el('button', 'ac-btn', 'Verifica TheTVDB');
@@ -742,7 +744,7 @@
         tvdb.body.appendChild(el('p', 'ac-field-desc', 'Metadata provided by TheTVDB.'));
         panel.appendChild(tvdb.details);
 
-        var ai = makeDetails('Traduci le trame mancanti', 'Facoltativo. Serve TMDB o TheTVDB come fonte. I servizi cloud possono avere un costo; vengono inviate solo le descrizioni da tradurre.');
+        var ai = makeDetails('Traduci trame e titoli mancanti', 'Facoltativo. Serve TMDB o TheTVDB come fonte. I servizi cloud possono avere un costo; vengono inviati soltanto i testi da tradurre.');
         ai.body.appendChild(makeCheck('acEnableAiTranslation', 'Consenti la traduzione dall’inglese', 'Puoi disattivarla in qualsiasi momento mantenendo il servizio e la chiave salvati. Funziona solo dopo aver scelto un modello.'));
         ai.body.appendChild(makeSelect('acAiProvider', 'Servizio di traduzione', 'Scegli il servizio che vuoi usare.', [{ value: '', label: 'Scegli un servizio…' }]));
         var providerNote = el('div', 'ac-field-desc');
@@ -1298,12 +1300,14 @@
         event.preventDefault();
         event.stopImmediatePropagation();
         var recoverable = valueOf(titleAuditView.report, 'recoverableTitleCount');
+        if (valueOf(titleAuditView.report, 'alternativeTitleLookupEnabled')) recoverable = valueOf(titleAuditView.report, 'missingTitleCount');
         confirmModal(
             'Sistema tutti i titoli',
             'Ricontrollare'
-            + (recoverable ? ' i ' + recoverable + ' episodi recuperabili' : ' gli episodi recuperabili')
+            + (recoverable ? ' i ' + recoverable + ' episodi con titolo mancante' : ' gli episodi con titolo mancante')
             + '? Verranno completati solo i nomi vuoti, generici o derivati dal file. '
             + 'Titoli già compilati, numerazione, abbinamenti, immagini e trame sono conservati. '
+            + 'Le fonti alternative e la traduzione AI seguono le preferenze salvate; il servizio AI può avere un costo. '
             + 'L’avanzamento apparirà qui e il lavoro continua a pagina chiusa.'
         ).then(function (confirmed) {
             if (!confirmed) return;
@@ -1952,6 +1956,7 @@
         var recoverable = valueOf(report, 'recoverableTitleCount') || 0;
         var waiting = valueOf(report, 'waitingTitleCount') || 0;
         var unavailable = valueOf(report, 'unavailableTitleCount') || 0;
+        var alternatives = valueOf(report, 'alternativeTitleLookupEnabled');
 
         summary.style.display = '';
         summary.setAttribute('aria-label', 'Riepilogo analisi titoli');
@@ -1960,10 +1965,10 @@
         // a "Max 10" box that was a technical note pretending to be a measurement.
         addPriorityTile(
             summary,
-            'Da recuperare',
-            String(recoverable),
-            'episodi da verificare',
-            recoverable ? 'warn' : 'good'
+            'Da verificare',
+            String(alternatives ? missing : recoverable),
+            alternatives ? 'AnimeClick e fonti configurate' : 'recupero da AnimeClick',
+            (alternatives ? missing : recoverable) ? 'warn' : 'good'
         );
         addPriorityTile(
             summary,
@@ -1974,9 +1979,9 @@
         );
         addPriorityTile(
             summary,
-            'Non recuperabili',
+            alternatives ? 'Assenti su AnimeClick' : 'Senza titolo disponibile',
             String(unavailable),
-            'senza fonte o da identificare',
+            alternatives ? 'le altre fonti verranno controllate' : 'senza fonte o da identificare',
             'neutral'
         );
         addPriorityTile(
@@ -2567,6 +2572,7 @@
         setChecked('acEnableProductionLocations', config.EnableProductionLocations, true);
         setChecked('acEnableTrailers', config.EnableTrailers, true);
         setChecked('acEnableEpisodeTitles', config.EnableEpisodeTitles, true);
+        setChecked('acEnableEpisodeTitleFallback', config.EnableEpisodeTitleFallback, true);
         setValue('acEpisodeLayoutOverrides', config.EpisodeLayoutOverrides, '');
         setChecked('acEnableThemeSongs', config.EnableThemeSongs, true);
         setChecked('acEnableCollections', config.EnableCollections, false);
@@ -2621,6 +2627,7 @@
         config.EnableProductionLocations = val('acEnableProductionLocations').checked;
         config.EnableTrailers = val('acEnableTrailers').checked;
         config.EnableEpisodeTitles = val('acEnableEpisodeTitles').checked;
+        config.EnableEpisodeTitleFallback = val('acEnableEpisodeTitleFallback').checked;
         config.EpisodeLayoutOverrides = val('acEpisodeLayoutOverrides').value.trim();
         config.EnableThemeSongs = val('acEnableThemeSongs').checked;
         config.EnableCollections = val('acEnableCollections').checked;
