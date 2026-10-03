@@ -4,7 +4,6 @@
 
 <p align="center">
   <img src="assets/logo.png" alt="Logo di AnimeClick Metadata Plugin, sviluppato da iCosiSenpai" width="140" />
-  <img src="assets/mascot.png" alt="Mascotte del plugin: un gatto robot bibliotecario con felpa rossa e schede degli anime" width="160" />
 </p>
 
 **Un solo plugin per gli anime in italiano:** titoli, trame, episodi e immagini nella tua libreria Jellyfin, con AnimeClick come prima fonte dei metadati.
@@ -102,7 +101,7 @@ Le chiavi vengono salvate nella configurazione amministrativa Jellyfin. La tradu
 
 **Copyright (C) 2026 Alessio Cosi (iCosiSenpai).** Il codice è distribuito sotto **[GNU GPL v3](LICENSE)**. Il plugin usa le librerie Jellyfin GPL-3.0-only; chi modifica e distribuisce il codice deve rispettare la stessa licenza e renderne disponibili i sorgenti.
 
-La GPL riguarda il software e non concede diritti sui marchi. Il nome del plugin, il logo, i banner, la mascotte e l'identità **iCosiSenpai** identificano questo progetto: non possono essere usati per presentare un fork come il progetto originale o come una versione approvata dall'autore. I file dell'identità visiva del progetto restano ridistribuibili con il programma secondo la GPL; un fork deve usare un proprio nome e una propria identità visiva. La riserva sui marchi è descritta in **[NOTICE](NOTICE)**, ai sensi della sezione 7(e) della GPLv3.
+La GPL riguarda il software e non concede diritti sui marchi. Il nome del plugin, il logo, i banner e l'identità **iCosiSenpai** identificano questo progetto: non possono essere usati per presentare un fork come il progetto originale o come una versione approvata dall'autore. I file dell'identità visiva del progetto restano ridistribuibili con il programma secondo la GPL; un fork deve usare un proprio nome e una propria identità visiva. La riserva sui marchi è descritta in **[NOTICE](NOTICE)**, ai sensi della sezione 7(e) della GPLv3.
 
 ### AnimeClick e autorizzazione allo scraping
 
@@ -127,6 +126,6 @@ I loghi ufficiali sono riportati per identificare le fonti. Marchi, dati e immag
 
 La traduzione AI, se attivata, usa il servizio scelto dall'utente ed è soggetta ai suoi termini. **HtmlAgilityPack** è di **ZZZ Projects Inc.**, sotto licenza MIT; **Microsoft.Extensions.*** usa licenze MIT. Le attribuzioni e il testo MIT della DLL inclusa sono conservati in **[NOTICE](NOTICE)**, distribuito anche nello ZIP del plugin.
 
-Origine dei loghi, condizioni d'uso e prompt della mascotte: **[assets/README.md](assets/README.md)**.
+Origine dei loghi e condizioni d'uso: **[assets/README.md](assets/README.md)**.
 
 [Buy Me a Coffee](https://buymeacoffee.com/iCosiSenpai) · [PayPal](https://www.paypal.com/donate/?hosted_button_id=5A4E26XC45GLQ)
