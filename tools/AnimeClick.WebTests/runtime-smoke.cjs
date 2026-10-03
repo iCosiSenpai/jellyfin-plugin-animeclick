@@ -36,7 +36,16 @@ async function main() {
         assert.ok(process.argv.includes('--resume'), 'Refusing to modify an already configured server without --resume');
         assert.equal(info.ServerName, 'AnimeClick isolated audit', 'Refusing a non-test server');
     }
-    await call('/Plugins/AnimeClick/AiProviders', undefined, 401, false);
+    // Public server information is available before Jellyfin finishes migrations.
+    for (let attempt = 0; attempt < 60; attempt++) {
+        const response = await fetch(new URL('/Plugins/AnimeClick/AiProviders', origin));
+        if (response.status !== 503) {
+            assert.equal(response.status, 401, 'Anonymous plugin API access denied');
+            break;
+        }
+        if (attempt === 59) assert.fail('Jellyfin did not finish startup');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
     if (!info.StartupWizardCompleted) {
         await call('/Startup/User');
         await call('/Startup/User', { Name: 'animeclick-smoke', Password: password }, 204);
@@ -49,8 +58,13 @@ async function main() {
     const plugins = await call('/Plugins');
     const plugin = plugins.find(p => p.Id?.replaceAll('-', '').toLowerCase() === pluginId.replaceAll('-', ''));
     assert.ok(plugin, 'Plugin is absent: ' + JSON.stringify(plugins));
-    assert.equal(plugin?.Version, '1.2.0.0');
+    assert.equal(plugin?.Version, '1.2.1.0');
     assert.equal(plugin.Status, 'Active');
+    const configPage = (await call('/web/ConfigurationPages')).find(page => page.Name === 'AnimeClick Plugin');
+    assert.equal(configPage?.EnableInMainMenu, true);
+    assert.equal(configPage?.MenuIcon, 'movie');
+    const openapi = await call('/api-docs/openapi.json');
+    assert.ok(openapi.paths['/Items/{itemId}/RemoteImages'], 'Plugin DTOs must not break Jellyfin OpenAPI');
     const config = await call('/Plugins/' + pluginId + '/Configuration');
     assert.equal(config.EnableEpisodeSynopsisTranslation, true);
     assert.equal(config.EnableEpisodeTitleFallback, true);

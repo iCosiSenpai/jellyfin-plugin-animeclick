@@ -198,7 +198,7 @@ public class AnimeClickIdentifyController : ControllerBase
         {
             ItemId = item.Id.ToString(),
             Count = images.Count(),
-            Images = images.Select(i => new RemoteImageInfo
+            Images = images.Select(i => new AnimeClickRemoteImageInfo
             {
                 ProviderName = i.ProviderName,
                 Type = i.Type.ToString(),
@@ -263,10 +263,10 @@ public sealed class RemoteImagesResponse
 {
     public string ItemId { get; set; } = string.Empty;
     public int Count { get; set; }
-    public List<RemoteImageInfo> Images { get; set; } = [];
+    public List<AnimeClickRemoteImageInfo> Images { get; set; } = [];
 }
 
-public sealed class RemoteImageInfo
+public sealed class AnimeClickRemoteImageInfo
 {
     public string ProviderName { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.1.0
+
+«Sistema tutti i titoli» include i nomi inglesi con AnimeClick prioritario, fonti italiane e traduzione AI se necessaria. Protezione dei nomi italiani/incerti e dei blocchi; risultati ancora inglesi rifiutati. Icona cinema nella sidebar Jellyfin 12, collisione OpenAPI risolta e installazione da manifest ripristinata come metodo consigliato nel README.
+
+- [Note complete](docs/releases/1.2.1.0.md)
+- [Audit e verifiche](docs/AUDIT-1.2.1.md)
+
 ## 1.2.0.0
 
 AnimeClick come unico provider remoto per le librerie anime: identificazione TMDB verificata, completamento dei metadati senza altri plugin e immagini integrate Fanart → TMDB → AnimeClick. Chiavi Fanart personale e di progetto nelle impostazioni, con link e verifica. Numerazione, campi bloccati e immagini esistenti conservati.

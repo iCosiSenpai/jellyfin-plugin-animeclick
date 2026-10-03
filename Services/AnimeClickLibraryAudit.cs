@@ -6,8 +6,8 @@ using AnimeClick.Plugin.Models;
 namespace AnimeClick.Plugin.Services;
 
 /// <summary>
-/// Why an episode in the library still needs a title. Meaningful existing titles
-/// are preserved; only empty, placeholder and filename-derived names need repair.
+/// Why an episode in the library still needs a title. Italian and uncertain titles are preserved; missing, generic, file-derived
+/// and confidently English names need repair.
 /// </summary>
 public enum AnimeClickAuditReason
 {

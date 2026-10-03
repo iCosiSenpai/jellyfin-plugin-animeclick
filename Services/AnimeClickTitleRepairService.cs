@@ -22,7 +22,7 @@ public interface IAnimeClickTitleResolver
     Task<string?> ResolveTitleAsync(Episode episode, AnimeClickTitleRepairSession refreshedCatalogs, CancellationToken cancellationToken);
 }
 
-/// <summary>Repairs one placeholder; never runs a broad metadata or image refresh.</summary>
+/// <summary>Repairs one missing or English name without a metadata or image refresh.</summary>
 public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager, IAnimeClickTitleResolver resolver)
 {
     public async Task<bool> RepairAsync(Episode episode, AnimeClickTitleRepairSession refreshedCatalogs, CancellationToken cancellationToken)
@@ -43,7 +43,9 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
         var episodeTmdb = episode.GetProviderId("Tmdb");
         var episodeTvdb = episode.GetProviderId("Tvdb");
         var title = await resolver.ResolveTitleAsync(episode, refreshedCatalogs, cancellationToken).ConfigureAwait(false);
-        if (AnimeClickMetadataText.Title(title) is null)
+        title = AnimeClickMetadataText.Title(title);
+        if (title is null || AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(title)
+            || string.Equals(title, expected, StringComparison.Ordinal))
             return false;
         var configuration = Plugin.Instance?.Configuration;
         if (configuration is not null &&

@@ -342,7 +342,10 @@ test('titles absent on AnimeClick can be checked in configured alternatives with
         await page.locator('#acBtnRunTitles').click();
         const dialog = page.getByRole('dialog');
         await dialog.waitFor();
-        assert.match(await dialog.innerText(), /12 episodi con titolo mancante/);
+        const confirmation = await dialog.innerText();
+        assert.match(confirmation, /12 episodi con titolo da sistemare/);
+        assert.match(confirmation, /riconoscibilmente inglesi/);
+        assert.match(confirmation, /Titoli italiani o incerti, campi bloccati/);
         assert.match(await dialog.innerText(), /servizio AI può avere un costo/);
         await dialog.getByRole('button', { name: 'Annulla', exact: true }).click();
         assert.equal(state.titleRuns, 0);

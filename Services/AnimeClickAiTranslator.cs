@@ -33,7 +33,7 @@ public class AnimeClickAiTranslator
         + "Mantieni i nomi propri dei personaggi e dei luoghi. Non aggiungere informazioni non presenti nel testo.";
 
     internal const string PromptVersion = "metadata-it-v2";
-    internal const string TitlePromptVersion = "episode-title-it-v1";
+    internal const string TitlePromptVersion = "episode-title-it-v2";
     internal const string TitleSystemPrompt =
         "Traduci dall'inglese all'italiano il titolo di un episodio anime. "
         + "Restituisci soltanto il titolo tradotto, su una sola riga, senza spiegazioni o testo aggiunto. "
@@ -222,7 +222,9 @@ public class AnimeClickAiTranslator
                 return null;
             }
 
-            if (fieldName == "episode-title" && AnimeClickEpisodeTitleFallback.CleanTitle(translated) is null) return null;
+            if (fieldName == "episode-title" && (AnimeClickEpisodeTitleFallback.CleanTitle(translated) is null
+                || AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(translated)
+                || string.Equals(translated, plain, StringComparison.OrdinalIgnoreCase))) return null;
             if (fieldName.EndsWith(".name", StringComparison.Ordinal) && AnimeClickMetadataText.Title(translated) is null) return null;
             if (fieldName.EndsWith(".overview", StringComparison.Ordinal) && AnimeClickMetadataText.Clean(translated) is null) return null;
             if (fieldName is "metadata.tags" or "metadata.genres")

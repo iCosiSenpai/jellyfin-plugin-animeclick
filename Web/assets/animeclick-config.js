@@ -2,7 +2,7 @@
 (function () {
     'use strict';
 
-    var V = '1.2.0.0';
+    var V = '1.2.1.0';
     var GUID = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
     var page;
     var savedConfig;
@@ -656,7 +656,7 @@
         grid.appendChild(makeCheck('acEnableProductionLocations', 'Nazionalità', 'Mappata come località di produzione.'));
         grid.appendChild(makeCheck('acEnableTrailers', 'Trailer e PV', 'Solo video YouTube esplicitamente etichettati.'));
         grid.appendChild(makeCheck('acEnableCast', 'Cast e staff', 'Doppiatori e ruoli staff granulari.'));
-        grid.appendChild(makeCheck('acEnableEpisodeTitles', 'Titoli episodi', 'Completa i titoli mancanti; conserva quelli già compilati durante il recupero.'));
+        grid.appendChild(makeCheck('acEnableEpisodeTitles', 'Titoli episodi', 'Completa i nomi mancanti o generici e converte quelli riconoscibilmente inglesi. Conserva titoli italiani, incerti e bloccati.'));
         grid.appendChild(makeCheck('acEnableEpisodeTitleFallback', 'Cerca i titoli anche nelle altre fonti',
             'Dopo AnimeClick cerca titoli italiani su TheTVDB e TMDB configurati. Se manca l’italiano, può tradurre un titolo inglese con il servizio AI abilitato.'));
         grid.appendChild(makeCheck('acEnableThemeSongs', 'Sigle', 'Nomi di opening ed ending nei tag.'));
@@ -1318,9 +1318,9 @@
         confirmModal(
             'Sistema tutti i titoli',
             'Ricontrollare'
-            + (recoverable ? ' i ' + recoverable + ' episodi con titolo mancante' : ' gli episodi con titolo mancante')
-            + '? Verranno completati solo i nomi vuoti, generici o derivati dal file. '
-            + 'Titoli già compilati, numerazione, abbinamenti, immagini e trame sono conservati. '
+            + (recoverable ? ' i ' + recoverable + ' episodi con titolo da sistemare' : ' gli episodi con titolo da sistemare')
+            + '? Verranno completati i nomi vuoti, generici o derivati dal file e convertiti quelli riconoscibilmente inglesi. '
+            + 'Titoli italiani o incerti, campi bloccati, numerazione, abbinamenti, immagini e trame sono conservati. '
             + 'Le fonti alternative e la traduzione AI seguono le preferenze salvate; il servizio AI può avere un costo. '
             + 'L’avanzamento apparirà qui e il lavoro continua a pagina chiusa.'
         ).then(function (confirmed) {
@@ -1569,8 +1569,8 @@
 
         var audit = makeCard(
             'Titoli episodio',
-            'Completa i titoli mancanti',
-            'Il ricontrollo completa i nomi vuoti o generici. I titoli già compilati e le tue correzioni sono conservati.'
+            'Sistema i titoli mancanti e inglesi',
+            'Completa i nomi mancanti o generici e cerca il titolo italiano per quelli inglesi. Conserva i titoli italiani, i nomi dalla lingua incerta e i campi bloccati.'
         );
         var auditActions = el('div', 'ac-row ac-audit-primary-actions');
         var auditButton = el('button', 'ac-btn ac-btn-ghost', 'Analizza la libreria');
@@ -1585,7 +1585,7 @@
         automaticTitles.type = 'button';
         automaticTitles.id = 'acBtnRunTitles';
         automaticTitles.title = 'Ricontrolla ogni episodio recuperabile, senza tetti. Le richieste ad AnimeClick '
-            + 'sono distanziate dal ritardo configurato nella scheda Strumenti.';
+            + 'sono distanziate dal ritardo configurato nella scheda Avanzate.';
         auditAutomation.appendChild(automaticTitles);
         auditAutomation.appendChild(makeLiveState('acRunTitlesState'));
         audit.body.appendChild(auditAutomation);
@@ -2229,7 +2229,7 @@
         var locked = items.filter(function (item) { return !!valueOf(item, 'locked'); }).length;
         var repairable = items.filter(function (item) { return !!valueOf(item, 'canRepair'); }).length;
         if (english) badges.appendChild(el('span', 'ac-badge warn', english + ' EN'));
-        if (missing) badges.appendChild(el('span', 'ac-badge danger', missing + ' mancanti'));
+        if (missing) badges.appendChild(el('span', 'ac-badge danger', missing + ' da sistemare'));
         if (unknown) badges.appendChild(el('span', 'ac-badge neutral', unknown + ' incerti'));
         if (locked) badges.appendChild(el('span', 'ac-badge warn', locked + ' bloccati'));
         if (repairable) badges.appendChild(el('span', 'ac-badge success', repairable + ' riparabili'));

@@ -72,7 +72,8 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 EmbeddedResourcePath = ns + ".Configuration.configPage.html",
 
                 // Keep the plugin directly reachable from the administration menu.
-                EnableInMainMenu = true
+                EnableInMainMenu = true,
+                MenuIcon = "movie"
             },
             // Shared assets (served via /web/configurationpage?name=...)
             new PluginPageInfo { Name = "AnimeClickCss", EmbeddedResourcePath = ns + ".Web.assets.animeclick.css" },

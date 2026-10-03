@@ -40,16 +40,17 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
     }
 
     /// <inheritdoc />
-    public string Name => "AnimeClick: ricontrolla i titoli episodio mancanti";
+    public string Name => "AnimeClick: sistema i titoli episodio";
 
     /// <inheritdoc />
     public string Key => "AnimeClickRefreshMissingEpisodeTitles";
 
     /// <inheritdoc />
     public string Description =>
-        "Completa soltanto i titoli vuoti, segnaposto o derivati dal nome file. Rilegge le schede "
-        + "AnimeClick una volta per esecuzione e mostra gli esiti reali. Conserva titoli già compilati, "
-        + "identificativi, numerazione, trame e immagini; rispetta i blocchi e le modifiche manuali.";
+        "Completa i titoli vuoti, generici o derivati dal file e converte quelli riconoscibilmente inglesi. "
+        + "Cerca prima su AnimeClick, poi nelle fonti configurate e traduce solo se necessario. "
+        + "Conserva titoli italiani o incerti, identificativi, numerazione, trame e immagini; "
+        + "rispetta i blocchi e le modifiche intervenute durante la ricerca.";
 
     /// <inheritdoc />
     public string Category => "AnimeClick";
@@ -103,7 +104,7 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
                 .ThenBy(episode => episode.ParentIndexNumber).ThenBy(episode => episode.IndexNumber)
                 .ToList();
             var refreshedCatalogs = new AnimeClickTitleRepairSession();
-            _activities.Update(key, candidates.Count, 0, 0, 0, 0, "Ricontrollo dei titoli mancanti…");
+            _activities.Update(key, candidates.Count, 0, 0, 0, 0, "Ricontrollo dei titoli mancanti e inglesi…");
             foreach (var episode in candidates)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -136,7 +137,7 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
                     $"{processed}/{candidates.Count} episodi verificati · {applied} titoli aggiornati");
             }
             _activities.Finish(key, errors > 0 ? "Partial" : "Completed",
-                candidates.Count == 0 ? "Nessun titolo mancante da completare. I titoli già compilati sono conservati."
+                candidates.Count == 0 ? "Nessun titolo mancante o inglese da sistemare. I titoli italiani e incerti sono conservati."
                 : $"{applied} titoli aggiornati ({alternativeTitles} da altre fonti, {translatedTitles} tradotti) · "
                     + $"{processed - applied - errors} senza titolo disponibile o saltati · {errors} errori.");
             progress.Report(100);
@@ -159,8 +160,8 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
             || (episode.LockedFields?.Contains(MetadataField.Name) ?? false);
 
     /// <summary>
-    /// True when the stored name carries no information: a number restated as a title, or the
-    /// bare file name Jellyfin falls back to. A locked name is never touched.
+    /// Selects missing, generic, file-derived or confidently English names.
+    /// Lock checks are separate so audits can still report locked candidates.
     /// </summary>
     internal static bool NeedsTitle(Episode episode)
     {
@@ -174,6 +175,8 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
         {
             return true;
         }
+
+        if (AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(name)) return true;
 
         var path = episode.Path;
         return !string.IsNullOrWhiteSpace(path)

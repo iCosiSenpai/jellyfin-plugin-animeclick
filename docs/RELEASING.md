@@ -25,7 +25,7 @@ Il tag genera una **draft** dopo il successo dei test backend e web. Il pacchett
 
 Se il catalogo non può essere aggiornato, dichiarare esplicitamente che la release GitHub esiste ma la distribuzione tramite catalogo non è completata. Non aggirare un asset non pubblico inserendolo ugualmente nel manifest.
 
-### Release 1.1.0.0, 1.1.1.0, 1.1.2.0 e 1.2.0.0: installazione sul NAS, catalogo invariato
+### Release 1.1.0.0, 1.1.1.0, 1.1.2.0, 1.2.0.0 e 1.2.1.0: installazione sul NAS, catalogo invariato
 
 Per esplicita richiesta del proprietario, pubblicare e verificare il pacchetto GitHub seguendo i passaggi 1–5; **non eseguire i passaggi 6–7** e non modificare il repository `iCosiSenpai-Plugins`. Installare soltanto il plugin AnimeClick sul NAS autorizzato, seguendo il registro operativo `/volume1/docker/AGENT.md`; il proprietario ha autorizzato questo riferimento in sostituzione del file `START_HERE` mancante.
 
