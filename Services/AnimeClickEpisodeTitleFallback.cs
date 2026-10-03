@@ -4,7 +4,8 @@ using Microsoft.Extensions.Logging;
 namespace AnimeClick.Plugin.Services;
 
 public sealed record AnimeClickEpisodeTitleRequest(IReadOnlyDictionary<string, string> SeriesIds,
-    IReadOnlyDictionary<string, string> EpisodeIds, int Season, int Episode, int? EpisodeEnd = null);
+    IReadOnlyDictionary<string, string> EpisodeIds, int Season, int Episode, int? EpisodeEnd = null,
+    string? AnimeClickEnglishTitle = null, string? AnimeClickIdentity = null);
 
 public sealed record AnimeClickEpisodeTitleResult(string Title, string Source, bool UsedAi);
 
@@ -27,21 +28,36 @@ public sealed class AnimeClickEpisodeTitleFallback(AnimeClickTmdbClient tmdb, An
         {
             phase?.Invoke($"Cerco un titolo italiano su {source.Name}…");
             var title = await Fetch(source, true).ConfigureAwait(false);
-            if (CleanTitle(title) is { } native) return new(native, source.Name, false);
+            if (CleanTitle(title) is { } native
+                && !AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(native)) return new(native, source.Name, false);
         }
         if (!AnimeClickAiTranslator.IsConfigured(configuration, out _)) return null;
+        if (CleanTitle(request.AnimeClickEnglishTitle) is { } animeClickEnglish
+            && AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(animeClickEnglish))
+        {
+            var translated = await Translate(animeClickEnglish, "AnimeClick", request.AnimeClickIdentity ?? "").ConfigureAwait(false);
+            if (translated is not null) return new(translated, "AnimeClick", true);
+        }
         foreach (var source in sources)
         {
             phase?.Invoke($"Cerco un titolo inglese su {source.Name}…");
             var english = CleanTitle(await Fetch(source, false).ConfigureAwait(false));
             if (english is null) continue;
-            phase?.Invoke($"Traduco il titolo da {source.Name} in italiano…");
-            var translated = await translator.TranslateMetadataFieldAsync(english, "episode-title",
-                $"{source.Name}:{source.Id}:{source.EpisodeId}:S{request.Season}E{request.Episode}",
-                "episode-title", "en", "it", configuration, token).ConfigureAwait(false);
-            if (CleanTitle(translated) is { } italian) return new(italian, source.Name, true);
+            var translated = await Translate(english, source.Name, $"{source.Id}:{source.EpisodeId}").ConfigureAwait(false);
+            if (translated is not null) return new(translated, source.Name, true);
         }
         return null;
+
+        async Task<string?> Translate(string english, string source, string identity)
+        {
+            phase?.Invoke($"Traduco il titolo da {source} in italiano…");
+            var translated = await translator.TranslateMetadataFieldAsync(english, "episode-title",
+                $"{source}:{identity}:S{request.Season}E{request.Episode}",
+                "episode-title", "en", "it", configuration, token).ConfigureAwait(false);
+            return CleanTitle(translated) is { } italian
+                && !AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(italian)
+                && !string.Equals(italian, english, StringComparison.OrdinalIgnoreCase) ? italian : null;
+        }
 
         void Add(string name, string provider, bool enabled)
         {

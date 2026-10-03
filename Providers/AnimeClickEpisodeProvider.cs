@@ -200,7 +200,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             }
         }
 
-        await ApplyTitleFallbackAsync(info, result, configuration, cancellationToken).ConfigureAwait(false);
+        await ApplyTitleFallbackAsync(info, result, configuration, cancellationToken, matchedEpisode?.Title, mainAnimeClickId).ConfigureAwait(false);
 
         if (configuration.EnableEpisodeSynopsisTranslation && seasonNumber.HasValue
             && info.IndexNumberEnd.GetValueOrDefault(episodeNumber.Value) == episodeNumber.Value)
@@ -295,6 +295,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         if (!configuration.EnableEpisodeTitles || episode.IndexNumber is null or < 0) return null;
         var root = episode.Series?.GetProviderId("AnimeClick");
         var identity = AnimeClickEpisodeIdentity.Resolve(root, episode.Season?.GetProviderId("AnimeClick"));
+        string? animeClickEnglish = null;
         if (AnimeClickClient.TryNormalizeAnimeClickId(identity.MatchingId, out var card))
         {
             refreshedCatalogs.ReportPhase?.Invoke("Cerco il titolo su AnimeClick…");
@@ -306,8 +307,12 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                     false, configuration, cancellationToken, refreshedCatalogs).ConfigureAwait(false);
                 if (AnimeClickEpisodeTitleFallback.CleanTitle(match?.Title) is { } native)
                 {
-                    refreshedCatalogs.LastSource = "AnimeClick";
-                    return native;
+                    if (!AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(native))
+                    {
+                        refreshedCatalogs.LastSource = "AnimeClick";
+                        return native;
+                    }
+                    animeClickEnglish = native;
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -315,7 +320,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         }
         if (_titleFallback is null || episode.ParentIndexNumber is null) return null;
         var request = new AnimeClickEpisodeTitleRequest(episode.Series?.ProviderIds ?? [], episode.ProviderIds,
-            episode.ParentIndexNumber.Value, episode.IndexNumber.Value, episode.IndexNumberEnd);
+            episode.ParentIndexNumber.Value, episode.IndexNumber.Value, episode.IndexNumberEnd,
+            animeClickEnglish, identity.MatchingId);
         var fallback = await _titleFallback.ResolveAsync(request, configuration, cancellationToken,
             refreshedCatalogs.ReportPhase).ConfigureAwait(false);
         if (fallback is null) return null;
@@ -325,14 +331,18 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
     }
 
     private async Task ApplyTitleFallbackAsync(EpisodeInfo info, MetadataResult<Episode> result,
-        PluginConfiguration configuration, CancellationToken token)
+        PluginConfiguration configuration, CancellationToken token,
+        string? animeClickTitle = null, string? animeClickIdentity = null)
     {
         if (_titleFallback is null || !configuration.EnableEpisodeTitles || !configuration.EnableEpisodeTitleFallback
-            || AnimeClickEpisodeTitleFallback.CleanTitle(result.Item.Name) is not null
+            || AnimeClickEpisodeTitleFallback.CleanTitle(result.Item.Name) is { } currentTitle
+                && !AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(currentTitle)
             || info.IndexNumber is null || info.ParentIndexNumber is null
             || !AnimeClickRefreshMissingTitlesTask.NeedsTitle(new Episode { Name = info.Name, Path = info.Path })) return;
         var request = new AnimeClickEpisodeTitleRequest(info.SeriesProviderIds ?? [], info.ProviderIds ?? [],
-            info.ParentIndexNumber.Value, info.IndexNumber.Value, info.IndexNumberEnd);
+            info.ParentIndexNumber.Value, info.IndexNumber.Value, info.IndexNumberEnd,
+            AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(animeClickTitle) ? animeClickTitle : null,
+            animeClickIdentity);
         var fallback = await _titleFallback.ResolveAsync(request, configuration, token).ConfigureAwait(false);
         if (fallback is null) return;
         result.Item.Name = fallback.Title;
@@ -546,7 +556,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             {
                 // Shared with the overview check in the parser: a title that only restates the
                 // number is worse than leaving Jellyfin's own, because it looks deliberate.
-                if (AnimeClickMetadataText.Title(match.Title) is not null)
+                if (AnimeClickMetadataText.Title(match.Title) is not null
+                    && !AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(match.Title))
                 {
                     result.Item.Name = match.Title;
                     wroteMetadata = true;

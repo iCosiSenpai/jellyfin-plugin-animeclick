@@ -49,6 +49,40 @@ public static partial class AnimeClickMetadataLanguageDetector
     [GeneratedRegex(@"[\p{L}]+(?:['’][\p{L}]+)?", RegexOptions.CultureInvariant)]
     private static partial Regex WordRegex();
 
+    // Episode names are usually too short for the synopsis classifier. Require
+    // multiple English clues and no Italian clue; single names stay uncertain.
+    private static readonly HashSet<string> ItalianTitleWords = new(ItalianWords, StringComparer.Ordinal)
+    {
+        "il", "lo", "la", "le", "un", "di", "del", "dei", "e", "è", "al", "nel",
+        "io", "tu", "mio", "mia", "noi", "voi", "sei"
+    };
+
+    private static readonly HashSet<string> EnglishTitleWords = new(EnglishWords, StringComparer.Ordinal)
+    {
+        "the", "my", "we", "is", "am", "to", "beginning", "end", "new", "day", "girl",
+        "boy", "friend", "friends", "love", "world", "life", "heart", "school", "first",
+        "last", "return", "want", "like", "meet", "see", "time", "dream", "dreams",
+        "battle", "brother", "sister", "night", "welcome", "me", "it", "an", "of",
+        "for", "on", "off", "out", "up", "down", "never", "always", "nothing", "everything",
+        "dead", "alive", "happy", "birthday", "date", "secret", "truth", "promise", "wish",
+        "summer", "winter", "spring", "autumn", "family", "home", "attack", "betrayal",
+        "reunion", "good", "bad", "best", "worst", "small", "big", "little", "lost", "found",
+        "gone", "alone", "together", "today", "tomorrow", "yesterday", "morning", "evening",
+        "i'm", "i'll", "i've", "you're", "we're", "they're", "don't", "doesn't", "can't", "won't"
+    };
+
+    public static bool IsEnglishEpisodeTitle(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (text.IndexOfAny(['à', 'è', 'ì', 'ò', 'ù', 'À', 'È', 'Ì', 'Ò', 'Ù']) >= 0) return false;
+        var tokens = WordRegex().Matches(text.ToLowerInvariant())
+            .Select(match => match.Value.Replace('’', '\''))
+            .Distinct(StringComparer.Ordinal).ToList();
+        if (tokens.Any(ItalianTitleWords.Contains)) return false;
+        // "I" alone is also an Italian article before a proper name ("I Little Busters").
+        return tokens.Count(EnglishTitleWords.Contains) >= 2 || tokens.Contains("i") && tokens.Contains("am");
+    }
+
     /// <summary>
     /// Se il testo e' riconoscibilmente italiano.
     /// </summary>

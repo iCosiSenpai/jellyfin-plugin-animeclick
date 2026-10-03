@@ -8,7 +8,7 @@
 
 **Un solo plugin per gli anime in italiano:** titoli, trame, episodi e immagini nella tua libreria Jellyfin, con AnimeClick come prima fonte dei metadati.
 
-[Scarica il plugin](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest) · [Configuralo](#configurazione) · [Segnala un problema](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues)
+[Installa dal catalogo](#dal-catalogo-jellyfin-consigliata) · [Configuralo](#configurazione) · [Segnala un problema](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues)
 
 ## Il plugin e le fonti integrate
 
@@ -30,14 +30,30 @@ I nomi propri, gli ID e i dati numerici non vengono tradotti. Se manca un dato o
 
 **Richiede almeno Jellyfin 12.0 (.NET 10); verificato su Jellyfin 12.0 e 12.1.** Non è compatibile con Jellyfin 10.11. La compatibilità con nuove versioni major va verificata.
 
+### Dal catalogo Jellyfin (consigliata)
+
+1. Apri **Dashboard → Plugin → Repository** e premi **Aggiungi**.
+2. Come nome inserisci **iCosiSenpai Plugins** e come URL copia il manifest ufficiale:
+
+   ```text
+   https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json
+   ```
+
+3. Salva, apri **Catalogo** e seleziona **AnimeClick Metadata**.
+4. Installa la versione compatibile con il tuo Jellyfin, riavvia il server e apri le impostazioni del plugin.
+
+Questo è il metodo ufficiale e consigliato: Jellyfin gestisce l'installazione e gli aggiornamenti disponibili nel catalogo. Il manifest contiene attualmente la versione 1.0 per Jellyfin 12; le release 1.1 e 1.2 sono disponibili su GitHub ma non sono ancora pubblicate nel catalogo. Le funzionalità descritte qui si riferiscono alla serie 1.2.
+
+### Installazione manuale (alternativa)
+
+Per provare una release non ancora nel catalogo o installare una versione specifica:
+
 1. Scarica `AnimeClick.Plugin.zip` dall'[ultima release](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest).
 2. Ferma Jellyfin e conserva una copia della configurazione e del plugin precedente.
 3. Sposta le vecchie copie di AnimeClick **fuori dalla directory `plugins`**. Estrai lo ZIP in una sola sottocartella di quella directory.
 4. Riavvia Jellyfin e apri le impostazioni del plugin dalla dashboard.
 
 Usa il pacchetto ZIP: contiene il plugin, HtmlAgilityPack, LICENSE e NOTICE. Non copiare le DLL del server dalla cartella di compilazione.
-
-La versione 1.2 è distribuita su GitHub; il catalogo pubblico Jellyfin contiene ancora le versioni precedenti. Per questa versione usa l'installazione manuale.
 
 ## Configurazione
 
@@ -55,7 +71,7 @@ L'installazione non avvia una riparazione della libreria. I blocchi dei metadati
 
 La pagina analizza i metadati locali **senza modificarli**. Le viste **Titoli episodio** e **Trame e sinossi** mostrano cosa manca; apri una serie per i dettagli e usa **Aggiorna analisi** per rileggere la situazione.
 
-**Sistema tutti i titoli** cerca su AnimeClick e poi nelle fonti configurate. Completa soltanto nomi vuoti, generici come “Episodio 12” o derivati dal file; conserva i titoli già compilati. Scrive **solo il nome**, rispettando blocchi e correzioni manuali: numerazione, ID, trame e immagini restano invariati.
+**Sistema tutti i titoli** cerca su AnimeClick e poi nelle fonti configurate. Completa nomi vuoti, generici come “Episodio 12” o derivati dal file e converte i titoli riconoscibilmente inglesi: prima cerca un titolo italiano, poi traduce quello inglese della fonte se l’AI è configurata. Conserva i titoli italiani e quelli dalla lingua incerta. Scrive **solo il nome**, rispettando i campi bloccati e le modifiche manuali intervenute durante la ricerca: numerazione, ID, trame e immagini restano invariati.
 
 Il riquadro **Attività** mostra fase, avanzamento e contatori degli elementi verificati, aggiornati, saltati o in errore. Puoi lasciare la pagina e ritrovare il lavoro in corso, oppure premere **Interrompi**. I refresh delle sinossi già consegnati a Jellyfin possono comunque terminare; lo stato delle attività si azzera al riavvio del server.
 
@@ -84,7 +100,7 @@ Il plugin usa soltanto gli abbinamenti revisionati e approvati: migliora il rico
 |---|---|
 | Titolo non riconosciuto | Attivazione nella libreria; poi **Avanzate → Correggi un abbinamento** |
 | Titoli o trame mancanti | **La tua libreria**, chiavi delle fonti e configurazione della traduzione |
-| Un campo non cambia | Blocchi Jellyfin e preferenze del plugin; la riparazione titoli conserva i nomi già validi |
+| Un campo non cambia | Blocchi Jellyfin e preferenze del plugin; la riparazione titoli conserva i nomi italiani o dalla lingua incerta |
 | Pagina vuota dopo un aggiornamento | Riavvio di Jellyfin, ricaricamento senza cache e assenza di copie duplicate del plugin |
 
 Per [segnalare un problema](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues), indica versione di Jellyfin e del plugin, link AnimeClick, numerazione degli episodi e risultato atteso. Rimuovi chiavi, token e percorsi privati dai log.
@@ -93,7 +109,7 @@ Le chiavi vengono salvate nella configurazione amministrativa Jellyfin. La tradu
 
 ## Documentazione
 
-[Novità delle versioni](CHANGELOG.md) · [Audit e verifiche 1.2](docs/AUDIT-1.2.md) · [Procedura di rilascio](docs/RELEASING.md) · [Pipeline di test](.github/workflows/build.yml)
+[Novità delle versioni](CHANGELOG.md) · [Audit e verifiche 1.2.1](docs/AUDIT-1.2.1.md) · [Procedura di rilascio](docs/RELEASING.md) · [Pipeline di test](.github/workflows/build.yml)
 
 ## Copyright, fonti e licenze
 

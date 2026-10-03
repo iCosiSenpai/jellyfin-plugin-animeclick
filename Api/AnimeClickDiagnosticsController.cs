@@ -633,13 +633,67 @@ public class AnimeClickDiagnosticsController : ControllerBase
         return Ok(new RunTaskResponse
         {
             Queued = true,
-            Message = "Ricontrollo avviato: verranno completati soltanto i titoli mancanti."
+            Message = "Ricontrollo avviato: verranno sistemati i titoli mancanti e riconoscibilmente inglesi."
         });
     }
 
     [HttpGet("Activities")]
     public ActionResult<IEnumerable<AnimeClickActivity>> Activities()
         => Ok(new[] { _activities.Get(AnimeClickActivityService.Titles), _activities.Get(AnimeClickActivityService.Synopses) });
+
+    /// <summary>Tests the actual title pipeline on one library episode; saving is explicitly opt-in.</summary>
+    [HttpPost("TestEpisodeTitle")]
+    public async Task<ActionResult<AnimeClickEpisodeTitleDiagnosticResponse>> TestEpisodeTitle(
+        [FromBody] AnimeClickEpisodeTitleDiagnosticRequest request,
+        [FromServices] IAnimeClickTitleResolver resolver,
+        [FromServices] AnimeClickTitleRepairService repair,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(request.ItemId, out var id)) return BadRequest(new { error = "Episodio non valido." });
+        if (_libraryManager.GetItemById(id) is not Episode episode) return NotFound();
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var currentTitle = episode.Name;
+        var session = new AnimeClickTitleRepairSession();
+        var applied = false;
+        string? suggested;
+        if (request.Apply)
+        {
+            applied = await repair.RepairAsync(episode, session, cancellationToken).ConfigureAwait(false);
+            suggested = applied ? episode.Name : null;
+        }
+        else suggested = await resolver.ResolveTitleAsync(episode, session, cancellationToken).ConfigureAwait(false);
+        suggested = AnimeClickMetadataText.Title(suggested);
+        if (AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(suggested)) suggested = null;
+        var providers = _libraryManager.GetLibraryOptions(episode)?.TypeOptions?
+            .FirstOrDefault(option => string.Equals(option.Type, "Episode", StringComparison.OrdinalIgnoreCase))?.MetadataFetchers;
+        return Ok(new AnimeClickEpisodeTitleDiagnosticResponse
+        {
+            CurrentTitle = currentTitle, SuggestedTitle = suggested,
+            Source = session.LastSource, UsedAi = session.LastUsedAi, Applied = applied,
+            NameLocked = AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode),
+            WouldChange = suggested is not null && !string.Equals(suggested, currentTitle, StringComparison.Ordinal)
+                && configuration.EnableEpisodeTitles && AnimeClickRefreshMissingTitlesTask.NeedsTitle(new Episode { Name = currentTitle, Path = episode.Path })
+                && !AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode)
+                && (providers is null || providers.Contains("AnimeClick", StringComparer.OrdinalIgnoreCase))
+        });
+    }
+
+    public sealed class AnimeClickEpisodeTitleDiagnosticRequest
+    {
+        public string ItemId { get; set; } = string.Empty;
+        public bool Apply { get; set; }
+    }
+
+    public sealed class AnimeClickEpisodeTitleDiagnosticResponse
+    {
+        public string? CurrentTitle { get; set; }
+        public string? SuggestedTitle { get; set; }
+        public string? Source { get; set; }
+        public bool UsedAi { get; set; }
+        public bool NameLocked { get; set; }
+        public bool WouldChange { get; set; }
+        public bool Applied { get; set; }
+    }
 
     [HttpPost("CancelActivity")]
     public IActionResult CancelActivity([FromBody] CancelActivityRequest request)

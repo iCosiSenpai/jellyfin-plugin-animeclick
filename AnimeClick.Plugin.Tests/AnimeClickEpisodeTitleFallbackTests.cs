@@ -64,6 +64,60 @@ public sealed class AnimeClickEpisodeTitleFallbackTests
         Assert.Equal(1, rig.Calls);
     }
 
+    [Theory]
+    [InlineData("A new day")]
+    [InlineData("The End")]
+    public async Task ASourceLabellingEnglishAsItalianDoesNotBypassTranslation(string name)
+    {
+        using var rig = new Rig(_ => Json(Translations("it", name)));
+        Assert.Null(await rig.Service.ResolveAsync(Request(), Configuration(), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("A new day")]
+    [InlineData("The beginning of the end")]
+    public async Task AnUntranslatedAiReplyIsRejectedAndNotCached(string reply)
+    {
+        var aiCalls = 0;
+        using var rig = new Rig(request =>
+        {
+            if (request.RequestUri!.Host == "api.themoviedb.org") return Json(Translations("en", "A new day"));
+            aiCalls++;
+            return Json(JsonSerializer.Serialize(new { choices = new[] { new { message = new { content = reply } } } }));
+        });
+        Assert.Null(await rig.Service.ResolveAsync(Request(), Configuration(true), CancellationToken.None));
+        Assert.Null(await rig.Service.ResolveAsync(Request(), Configuration(true), CancellationToken.None));
+        Assert.Equal(2, aiCalls);
+    }
+
+    [Fact]
+    public async Task AnEnglishAnimeClickTitleIsTranslatedBeforeLookingForExternalEnglish()
+    {
+        var aiCalls = 0;
+        using var rig = new Rig(request =>
+        {
+            if (request.RequestUri!.Host == "api.themoviedb.org") return Json(Translations("en", "The End"));
+            aiCalls++;
+            Assert.Contains("A new beginning", request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            return Json("""{"choices":[{"message":{"content":"Un nuovo inizio"}}]}""");
+        });
+        var request = Request() with { AnimeClickEnglishTitle = "A new beginning", AnimeClickIdentity = "72" };
+        var result = await rig.Service.ResolveAsync(request, Configuration(true), CancellationToken.None);
+        Assert.Equal("AnimeClick", result!.Source); Assert.True(result.UsedAi);
+        Assert.Equal("Un nuovo inizio", result.Title); Assert.Equal(1, aiCalls);
+        Assert.Equal(2, rig.Calls);
+    }
+
+    [Fact]
+    public async Task AnItalianExternalTitleWinsOverTranslatingAnimeClickEnglish()
+    {
+        using var rig = new Rig(request => request.RequestUri!.Host == "api.themoviedb.org"
+            ? Json(Translations("it", "Un nuovo giorno")) : throw new InvalidOperationException("AI should not run"));
+        var request = Request() with { AnimeClickEnglishTitle = "A new beginning", AnimeClickIdentity = "72" };
+        var result = await rig.Service.ResolveAsync(request, Configuration(true), CancellationToken.None);
+        Assert.Equal("Un nuovo giorno", result!.Title); Assert.False(result.UsedAi);
+    }
+
     [Fact]
     public async Task KnownEpisodeIdentityCannotBeReplacedByTheSameCoordinateOfAnotherEpisode()
     {

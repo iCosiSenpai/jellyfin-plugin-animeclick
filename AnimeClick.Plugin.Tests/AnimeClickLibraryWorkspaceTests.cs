@@ -42,6 +42,85 @@ public sealed class AnimeClickLibraryWorkspaceTests
     }
 
     [Theory]
+    [InlineData("A new beginning", true)]
+    [InlineData("The End", true)]
+    [InlineData("My Brother", true)]
+    [InlineData("I want to see you again", true)]
+    [InlineData("Me Target My Brother", true)]
+    [InlineData("The girl I like", true)]
+    [InlineData("I'm Dead", true)]
+    [InlineData("Happy Birthday", true)]
+    [InlineData("I am Ichikawa", true)]
+    [InlineData("Vivere in pace", false)]
+    [InlineData("L'amore della mia vita", false)]
+    [InlineData("Il ritorno di John Smith", false)]
+    [InlineData("Una nuova giornata", false)]
+    [InlineData("La fine del mondo", false)]
+    [InlineData("Vigilia di Natale", false)]
+    [InlineData("San Valentino", false)]
+    [InlineData("Steins;Gate", false)]
+    [InlineData("John Smith", false)]
+    [InlineData("Love Live!", false)]
+    [InlineData("One Piece", false)]
+    [InlineData("I Little Busters", false)]
+    [InlineData("Day", false)]
+    public void EnglishTitleSelectionPreservesItalianAndUncertainNames(string name, bool english)
+    {
+        Assert.Equal(english, AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(name));
+        Assert.Equal(english, AnimeClick.Plugin.Tasks.AnimeClickRefreshMissingTitlesTask.NeedsTitle(Episode(name)));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnglishTitleRepairOnlyWritesAnItalianReplacementAndRespectsNameLocks(bool locked)
+    {
+        var item = Episode("A new beginning"); item.LockedFields = locked ? [MetadataField.Name] : [];
+        item.SetProviderId("Tmdb", "88"); var writes = 0;
+        var library = TestDoubles.Proxy<ILibraryManager>((method, _) => method.Name switch
+        {
+            "GetItemById" => item,
+            "UpdateItemAsync" => Save(),
+            _ => TestDoubles.DefaultReturn(method)
+        });
+        Task Save() { writes++; return Task.CompletedTask; }
+        var repair = new AnimeClickTitleRepairService(library, new TitleResolver(() => "Un nuovo inizio"));
+        Assert.Equal(!locked, await repair.RepairAsync(item, new(), CancellationToken.None));
+        Assert.Equal(locked ? "A new beginning" : "Un nuovo inizio", item.Name);
+        Assert.Equal(locked ? 0 : 1, writes);
+        Assert.Equal("88", item.GetProviderId("Tmdb")); Assert.Equal(3, item.IndexNumber);
+        Assert.Equal("Questa è una trama già corretta e deve rimanere al suo posto.", item.Overview);
+    }
+
+    [Theory]
+    [InlineData("A new beginning")]
+    [InlineData("The beginning of the end")]
+    [InlineData("Episodio 3")]
+    public async Task EnglishOrGenericLookupResultsNeverCountAsARepair(string replacement)
+    {
+        var item = Episode("A new beginning"); var writes = 0;
+        var library = TestDoubles.Proxy<ILibraryManager>((method, _) =>
+        {
+            if (method.Name == "GetItemById") return item;
+            if (method.Name == "UpdateItemAsync") writes++;
+            return TestDoubles.DefaultReturn(method);
+        });
+        Assert.False(await new AnimeClickTitleRepairService(library, new TitleResolver(() => replacement))
+            .RepairAsync(item, new(), CancellationToken.None));
+        Assert.Equal(0, writes); Assert.Equal("A new beginning", item.Name);
+    }
+
+    [Fact]
+    public async Task AnotherEnglishManualCorrectionDuringLookupWins()
+    {
+        var item = Episode("A new beginning");
+        var resolver = new TitleResolver(() => { item.Name = "My best friend"; return "Un nuovo inizio"; });
+        var library = TestDoubles.Proxy<ILibraryManager>((method, _) => method.Name == "GetItemById" ? item : TestDoubles.DefaultReturn(method));
+        Assert.False(await new AnimeClickTitleRepairService(library, resolver).RepairAsync(item, new(), CancellationToken.None));
+        Assert.Equal("My best friend", item.Name);
+    }
+
+    [Theory]
     [InlineData("manual")]
     [InlineData("lock")]
     [InlineData("number")]
