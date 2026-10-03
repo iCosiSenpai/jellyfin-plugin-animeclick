@@ -32,6 +32,8 @@ marchi», NON vengono concessi diritti sull'uso dei seguenti segni distintivi:
     «AnimeClick Plugin»;
   - il logo e il banner del progetto (assets/logo.png, assets/banner.png,
     assets/logo ALT.png, assets/banner-alt.png, assets/banner-plugin-interno.png);
+  - la mascotte del plugin (assets/mascot.png), usata come identità visiva
+    di questo progetto;
   - il nome utente e l'identità «iCosiSenpai».
 
 Che cosa significa in pratica. I file immagine restano parte del programma e si
@@ -80,10 +82,28 @@ alcun diritto su di esse:
 
   - AnimeClick.it — Associazione NewType Media. Fonte italiana principale.
     Marchio e contenuti appartengono ai titolari del sito.
+    Salvo diversa indicazione, i contenuti redazionali di cui l'Associazione
+    possiede i diritti sono distribuiti sotto CC BY-NC-ND 4.0:
+    https://creativecommons.org/licenses/by-nc-nd/4.0/.
+    Questa licenza non si estende automaticamente a contenuti degli utenti,
+    immagini, video, marchi o materiali di terzi presenti sul sito.
+    Condizioni: https://www.animeclick.it/termini-di-servizio.
   - TheTVDB — Metadata provided by TheTVDB. Please consider adding missing
     information or subscribing: <https://thetvdb.com/subscribe>.
+    © 2026 TheTVDB.com ®, A Whip Media Company. ALL RIGHTS RESERVED.
+    Attribuzione e condizioni: https://www.thetvdb.com/api-information.
   - TMDB — This product uses the TMDB API but is not endorsed or certified
     by TMDB.
+    Marchio e attribuzione: https://developer.themoviedb.org/docs/faq.
+    Condizioni API: https://www.themoviedb.org/api-terms-of-use.
+  - Fanart.tv — Artwork provided by Fanart.tv.
+    I diritti sulle immagini restano ai rispettivi titolari.
+    Condizioni: https://fanart.tv/terms-and-conditions/.
+
+I loghi delle fonti in assets/providers sono riprodotti per identificare i
+servizi e attribuire i dati. Non sono marchi del plugin e non vengono
+rilicenziati sotto GPL. La loro presenza non indica affiliazione,
+approvazione o certificazione. Provenienza dei file: assets/README.md.
 
 I servizi AI eventualmente configurati dall'utente sono soggetti ai propri
 termini: le chiavi API e i relativi costi sono responsabilità di chi li usa.

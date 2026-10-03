@@ -1,9 +1,11 @@
 # AnimeClick Metadata per Jellyfin
 
-[![Release](https://img.shields.io/github/v/release/iCosiSenpai/jellyfin-plugin-animeclick?label=release)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest)
-[![Build](https://img.shields.io/github/actions/workflow/status/iCosiSenpai/jellyfin-plugin-animeclick/build.yml?branch=main)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/actions/workflows/build.yml)
-[![Jellyfin](https://img.shields.io/badge/Jellyfin-12.0%2B-7b68ee)](#installazione)
-[![Licenza](https://img.shields.io/github/license/iCosiSenpai/jellyfin-plugin-animeclick)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/iCosiSenpai/jellyfin-plugin-animeclick?label=release)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest) [![Build](https://img.shields.io/github/actions/workflow/status/iCosiSenpai/jellyfin-plugin-animeclick/build.yml?branch=main)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/actions/workflows/build.yml) [![Jellyfin](https://img.shields.io/badge/Jellyfin-12.0%2B-7b68ee)](#installazione) [![Licenza](https://img.shields.io/github/license/iCosiSenpai/jellyfin-plugin-animeclick)](LICENSE)
+
+<p align="center">
+  <img src="assets/logo.png" alt="Logo di AnimeClick Metadata Plugin, sviluppato da iCosiSenpai" width="140" />
+  <img src="assets/mascot.png" alt="Mascotte del plugin: un gatto robot bibliotecario con felpa rossa e schede degli anime" width="160" />
+</p>
 
 **Un solo plugin per gli anime in italiano:** titoli, trame, episodi e immagini nella tua libreria Jellyfin, con AnimeClick come prima fonte dei metadati.
 
@@ -90,20 +92,41 @@ Per [segnalare un problema](https://github.com/iCosiSenpai/jellyfin-plugin-anime
 
 Le chiavi vengono salvate nella configurazione amministrativa Jellyfin. La traduzione invia al servizio scelto solo i testi da tradurre, senza file o informazioni sugli utenti, e può avere costi secondo il fornitore.
 
-## Documentazione e crediti
+## Documentazione
 
 [Novità delle versioni](CHANGELOG.md) · [Audit e verifiche 1.2](docs/AUDIT-1.2.md) · [Procedura di rilascio](docs/RELEASING.md) · [Pipeline di test](.github/workflows/build.yml)
 
-Codice sotto **[GNU GPL v3](LICENSE)**. Il progetto non è affiliato con AnimeClick.it. L'autorizzazione allo scraping riguarda questo progetto, per uso non commerciale, e non è trasferibile ai fork: condizioni, marchi e licenze delle dipendenze sono in **[NOTICE](NOTICE)**. Il plugin mantiene cache e limiti alle richieste e non importa i commenti degli utenti come sinossi; non usarlo per raccolte massive o commerciali.
+## Copyright, fonti e licenze
 
-Metadati principali da [AnimeClick.it](https://www.animeclick.it/).
+### Plugin e identità del progetto
 
-Metadata provided by [TheTVDB](https://thetvdb.com/). Please consider adding missing information or [subscribing](https://thetvdb.com/subscribe).
+**Copyright (C) 2026 Alessio Cosi (iCosiSenpai).** Il codice è distribuito sotto **[GNU GPL v3](LICENSE)**. Il plugin usa le librerie Jellyfin GPL-3.0-only; chi modifica e distribuisce il codice deve rispettare la stessa licenza e renderne disponibili i sorgenti.
 
-This product uses the TMDB API but is not endorsed or certified by TMDB.
+La GPL riguarda il software e non concede diritti sui marchi. Il nome del plugin, il logo, i banner, la mascotte e l'identità **iCosiSenpai** identificano questo progetto: non possono essere usati per presentare un fork come il progetto originale o come una versione approvata dall'autore. I file dell'identità visiva del progetto restano ridistribuibili con il programma secondo la GPL; un fork deve usare un proprio nome e una propria identità visiva. La riserva sui marchi è descritta in **[NOTICE](NOTICE)**, ai sensi della sezione 7(e) della GPLv3.
 
-Artwork provided by [Fanart.tv](https://fanart.tv/).
+### AnimeClick e autorizzazione allo scraping
+
+<a href="https://www.animeclick.it/"><img src="assets/providers/animeclick.png" alt="Logo ufficiale AnimeClick.it" width="170" /></a>
+
+I metadati italiani provengono da **[AnimeClick.it](https://www.animeclick.it/)**, gestito dall'associazione culturale senza fini di lucro **[Associazione NewType Media](https://www.antme.it/)**. Il marchio, il logo e i contenuti appartengono ai rispettivi titolari; il plugin non rivendica diritti su di essi e non è affiliato con AnimeClick.
+
+Salvo diversa indicazione, i contenuti redazionali su cui l'associazione possiede i diritti sono distribuiti sotto **[CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/)**. Questa licenza non si estende automaticamente a immagini, video, marchi o materiali di terzi: valgono i [termini di AnimeClick](https://www.animeclick.it/termini-di-servizio).
+
+Lo staff AnimeClick ha autorizzato **questo progetto** allo scraping per uso non commerciale. L'autorizzazione è personale e **non trasferibile**: un fork non eredita il consenso e deve ottenere il proprio. Il plugin limita le richieste, usa la cache e non importa i commenti degli utenti come sinossi. Mantieni queste protezioni e non usarlo per raccolte massive o finalità commerciali. I dettagli dell'autorizzazione sono in **[NOTICE](NOTICE)**.
+
+### Provider integrati e piattaforma
+
+I loghi ufficiali sono riportati per identificare le fonti. Marchi, dati e immagini restano soggetti ai diritti dei rispettivi titolari e alle condizioni dei servizi; la licenza del plugin non li rende contenuti GPL.
+
+| Fonte | Attribuzione e condizioni |
+|---|---|
+| <a href="https://www.themoviedb.org/"><img src="assets/providers/tmdb.svg" alt="Logo ufficiale TMDB" width="130" /></a> | **TMDB / The Movie Database.** This product uses the TMDB API but is not endorsed or certified by TMDB. [Attribuzione e marchio](https://developer.themoviedb.org/docs/faq) · [Termini API](https://www.themoviedb.org/api-terms-of-use) |
+| <a href="https://thetvdb.com/"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/providers/thetvdb-dark.png" /><img src="assets/providers/thetvdb.png" alt="Logo ufficiale TheTVDB" width="90" /></picture></a> | **© 2026 TheTVDB.com®, A Whip Media Company. All rights reserved.** Metadata provided by TheTVDB. Please consider adding missing information or [subscribing](https://thetvdb.com/subscribe). [Attribuzione e condizioni API](https://www.thetvdb.com/api-information) |
+| <a href="https://fanart.tv/"><img src="assets/providers/fanart.png" alt="Logo ufficiale Fanart.tv" width="48" /></a> | **Fanart.tv.** Artwork provided by Fanart.tv. I diritti sulle immagini restano ai rispettivi titolari. [Condizioni d'uso](https://fanart.tv/terms-and-conditions/) |
+| [Jellyfin](https://jellyfin.org/) | **Copyright Jellyfin Contributors.** Piattaforma e librerie `Jellyfin.Controller` / `Jellyfin.Model`, sotto GPL-3.0-only. |
+
+La traduzione AI, se attivata, usa il servizio scelto dall'utente ed è soggetta ai suoi termini. **HtmlAgilityPack** è di **ZZZ Projects Inc.**, sotto licenza MIT; **Microsoft.Extensions.*** usa licenze MIT. Le attribuzioni e il testo MIT della DLL inclusa sono conservati in **[NOTICE](NOTICE)**, distribuito anche nello ZIP del plugin.
+
+Origine dei loghi, condizioni d'uso e prompt della mascotte: **[assets/README.md](assets/README.md)**.
 
 [Buy Me a Coffee](https://buymeacoffee.com/iCosiSenpai) · [PayPal](https://www.paypal.com/donate/?hosted_button_id=5A4E26XC45GLQ)
-
-Copyright (C) 2026 Alessio Cosi (iCosiSenpai)
