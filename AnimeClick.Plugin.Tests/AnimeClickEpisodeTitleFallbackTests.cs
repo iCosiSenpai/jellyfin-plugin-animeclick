@@ -112,11 +112,65 @@ public sealed class AnimeClickEpisodeTitleFallbackTests
     public async Task AnItalianExternalTitleWinsOverTranslatingAnimeClickEnglish()
     {
         using var rig = new Rig(request => request.RequestUri!.Host == "api.themoviedb.org"
-            ? Json(Translations("it", "Un nuovo giorno")) : throw new InvalidOperationException("AI should not run"));
+            ? Json("""{"id":88,"translations":[{"iso_639_1":"it","data":{"name":"Un nuovo giorno"}},{"iso_639_1":"en","data":{"name":"A new beginning"}}]}""")
+            : throw new InvalidOperationException("AI should not run"));
         var request = Request() with { AnimeClickEnglishTitle = "A new beginning", AnimeClickIdentity = "72" };
         var result = await rig.Service.ResolveAsync(request, Configuration(true), CancellationToken.None);
         Assert.Equal("Un nuovo giorno", result!.Title); Assert.False(result.UsedAi);
     }
+
+    private const string ConflictingTranslations = """{"id":88,"translations":[{"iso_639_1":"it","data":{"name":"L'espiazione dell'innocente"}},{"iso_639_1":"en","data":{"name":"Atonement of the innocent"}}]}""";
+    private const string SequelTitle = "Travelling to the Island of Tsukushi... of Hesitation";
+
+    [Fact]
+    public async Task AnItalianTitleFromAnotherSeasonCannotReplaceAKnownEnglishTitle()
+    {
+        using var rig = new Rig(_ => Json(ConflictingTranslations));
+        var request = Request() with { ExistingEnglishTitle = SequelTitle };
+        Assert.Null(await rig.Service.ResolveAsync(request, Configuration(), CancellationToken.None));
+        Assert.Equal(1, rig.Calls);
+    }
+
+    [Fact]
+    public async Task AnExistingEnglishTitleIsTranslatedWhenExternalCoordinatesReferToAnotherSeason()
+    {
+        using var rig = new Rig(request =>
+        {
+            if (request.RequestUri!.Host == "api.themoviedb.org") return Json(ConflictingTranslations);
+            Assert.Contains(SequelTitle, request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            return Json("""{"choices":[{"message":{"content":"Viaggio sull'isola di Tsukushi... dell'esitazione"}}]}""");
+        });
+        var result = await rig.Service.ResolveAsync(Request() with { ExistingEnglishTitle = SequelTitle }, Configuration(true), CancellationToken.None);
+        Assert.Equal("Jellyfin", result!.Source); Assert.True(result.UsedAi);
+        Assert.Equal("Viaggio sull'isola di Tsukushi... dell'esitazione", result.Title);
+    }
+
+    [Fact]
+    public async Task AnimeClickEnglishIsTranslatedBeforeAcceptingAnUnrelatedItalianEpisode()
+    {
+        using var rig = new Rig(request => request.RequestUri!.Host == "api.themoviedb.org"
+            ? Json(ConflictingTranslations)
+            : Json("""{"choices":[{"message":{"content":"Viaggio sull'isola di Tsukushi... dell'esitazione"}}]}"""));
+        var result = await rig.Service.ResolveAsync(Request() with { AnimeClickEnglishTitle = SequelTitle, AnimeClickIdentity = "123" },
+            Configuration(true), CancellationToken.None);
+        Assert.Equal("AnimeClick", result!.Source); Assert.True(result.UsedAi);
+        Assert.NotEqual("L'espiazione dell'innocente", result.Title);
+    }
+
+    [Fact]
+    public async Task AVerifiedItalianTranslationWinsWhenTheOriginalTitleMatches()
+    {
+        using var rig = new Rig(_ => Json(ConflictingTranslations));
+        var result = await rig.Service.ResolveAsync(Request() with { ExistingEnglishTitle = "Atonement of the innocent" },
+            Configuration(), CancellationToken.None);
+        Assert.Equal("L'espiazione dell'innocente", result!.Title); Assert.False(result.UsedAi);
+    }
+
+    [Theory]
+    [InlineData("The Dangers in My Heart - S01E01", "/media/The Dangers in My Heart - S01E01.mkv")]
+    [InlineData("THE DANGERS IN MY HEART - S01E01", "/media/The Dangers in My Heart - S01E01.mkv")]
+    public void EnglishWordsInAFileNameNeverBecomeATranslationSource(string name, string path)
+        => Assert.Null(AnimeClickEpisodeTitleFallback.ExistingEnglishTitle(name, path));
 
     [Fact]
     public async Task KnownEpisodeIdentityCannotBeReplacedByTheSameCoordinateOfAnotherEpisode()

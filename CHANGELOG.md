@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.2.0
+
+Scarta i titoli alternativi di un'altra stagione verificando il titolo inglese originale. Quando manca una fonte coerente, traduce il titolo inglese già valido; esclude i nomi dei file. Correzione trovata sul NAS in anteprima, senza salvare la proposta errata. Include le novità 1.2.1.
+
+- [Note complete](docs/releases/1.2.2.0.md)
+- [Audit e verifiche](docs/AUDIT-1.2.2.md)
+
 ## 1.2.1.0
 
 «Sistema tutti i titoli» include i nomi inglesi con AnimeClick prioritario, fonti italiane e traduzione AI se necessaria. Protezione dei nomi italiani/incerti e dei blocchi; risultati ancora inglesi rifiutati. Icona cinema nella sidebar Jellyfin 12, collisione OpenAPI risolta e installazione da manifest ripristinata come metodo consigliato nel README.

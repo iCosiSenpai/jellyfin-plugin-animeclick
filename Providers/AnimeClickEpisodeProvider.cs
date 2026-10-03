@@ -321,7 +321,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         if (_titleFallback is null || episode.ParentIndexNumber is null) return null;
         var request = new AnimeClickEpisodeTitleRequest(episode.Series?.ProviderIds ?? [], episode.ProviderIds,
             episode.ParentIndexNumber.Value, episode.IndexNumber.Value, episode.IndexNumberEnd,
-            animeClickEnglish, identity.MatchingId);
+            animeClickEnglish, identity.MatchingId,
+            AnimeClickEpisodeTitleFallback.ExistingEnglishTitle(episode.Name, episode.Path));
         var fallback = await _titleFallback.ResolveAsync(request, configuration, cancellationToken,
             refreshedCatalogs.ReportPhase).ConfigureAwait(false);
         if (fallback is null) return null;
@@ -342,7 +343,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         var request = new AnimeClickEpisodeTitleRequest(info.SeriesProviderIds ?? [], info.ProviderIds ?? [],
             info.ParentIndexNumber.Value, info.IndexNumber.Value, info.IndexNumberEnd,
             AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(animeClickTitle) ? animeClickTitle : null,
-            animeClickIdentity);
+            animeClickIdentity, AnimeClickEpisodeTitleFallback.ExistingEnglishTitle(info.Name, info.Path));
         var fallback = await _titleFallback.ResolveAsync(request, configuration, token).ConfigureAwait(false);
         if (fallback is null) return;
         result.Item.Name = fallback.Title;
