@@ -121,7 +121,7 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
                     if (await _repair.RepairAsync(episode, refreshedCatalogs, cancellationToken).ConfigureAwait(false))
                     {
                         applied++;
-                        if (refreshedCatalogs.LastSource is not (null or "AnimeClick")) alternativeTitles++;
+                        if (refreshedCatalogs.LastSource is not (null or "AnimeClick" or "Jellyfin")) alternativeTitles++;
                         if (refreshedCatalogs.LastUsedAi) translatedTitles++;
                     }
                 }

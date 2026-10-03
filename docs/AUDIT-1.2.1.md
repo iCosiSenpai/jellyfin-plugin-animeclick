@@ -24,6 +24,8 @@ Data: 2026-10-03. Richieste: includere i titoli inglesi nel recupero, verificare
 
 ## Installazione e limiti
 
+Il successivo collaudo in anteprima sul NAS ha trovato una proposta di un'altra stagione prima del salvataggio. 1.2.1 è stata marcata prerelease/non-latest e il recupero temporaneamente disabilitato. Risultati e correzione sono nell'[audit 1.2.2](AUDIT-1.2.2.md).
+
 Aggiornamento esclusivamente di AnimeClick nel container Jellyfin esistente, con backup operativo e confronto di configurazione, opzioni librerie, altri plugin e metadati prima/dopo. Catalogo pubblico invariato. Il registro `/volume1/docker/AGENT.md` documenta l'esito sul NAS.
 
 Le prove non garantiscono copertura o qualità di ogni titolo disponibile: un dato assente, un'identità ambigua o un titolo dalla lingua incerta rimangono invariati. Il test amministrativo di un episodio permette di verificare un caso senza attivare il lavoro globale.
