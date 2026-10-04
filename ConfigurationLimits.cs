@@ -48,6 +48,11 @@ internal static class ConfigurationLimits
     internal const int RequestDelayMinimum = 500;
     internal const int RequestDelayMaximum = 60_000;
 
+    // The guided setup is versioned by small integers; a negative or absurd value would either
+    // replay the first-run wizard forever or hide every future update step.
+    internal const int SetupVersionMinimum = 0;
+    internal const int SetupVersionMaximum = 1000;
+
     /// <summary>
     /// Clamps <paramref name="value"/> into the inclusive range. Unlike <see cref="Math.Clamp"/>
     /// this tolerates an inverted range instead of throwing, because the arguments come from

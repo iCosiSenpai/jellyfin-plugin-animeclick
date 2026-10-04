@@ -188,7 +188,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.2.2.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.3.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Schema of the persisted settings. One-time upgrades are gated on this rather than on whether
@@ -198,17 +198,43 @@ public class PluginConfiguration : BasePluginConfiguration
     public int ConfigurationVersion { get; set; }
 
     /// <summary>
+    /// The last guided setup the administrator completed or skipped on the configuration page. 0 is a
+    /// fresh installation and gets the full setup; a lower number than the page's current setup shows
+    /// only the steps added since, which is how an update that needs a decision asks for it once.
+    /// </summary>
+    public int SetupCompletedVersion { get; set; }
+
+    /// <summary>
     /// Applies narrow one-time upgrades to persisted settings, then records the schema so they never
     /// run again. Credentials and anything the user typed are never overwritten.
     /// </summary>
     internal bool ApplyMigrations()
     {
-        const int currentSchema = 1;
+        const int currentSchema = 2;
         if (ConfigurationVersion >= currentSchema)
         {
             return false;
         }
 
+        if (ConfigurationVersion < 1)
+        {
+            ApplySchemaOneMigrations();
+        }
+
+        // Schema 2 introduced the guided setup. An installation that already reached schema 1 was
+        // configured with the previous page, so it starts from the first setup instead of zero and is
+        // shown only what changed since, never the whole first-run wizard again.
+        if (ConfigurationVersion >= 1 && SetupCompletedVersion < 1)
+        {
+            SetupCompletedVersion = 1;
+        }
+
+        ConfigurationVersion = currentSchema;
+        return true;
+    }
+
+    private void ApplySchemaOneMigrations()
+    {
         // Move installs still on a previously shipped default to the current default.
         // Custom model names (anything the user typed) are deliberately left untouched.
         if (string.Equals(OllamaCloudModel, "gemma4:cloud", System.StringComparison.Ordinal)
@@ -263,9 +289,6 @@ public class PluginConfiguration : BasePluginConfiguration
                     ? "ollama-local"
                     : Services.AnimeClickAiProviders.CustomId;
         }
-
-        ConfigurationVersion = currentSchema;
-        return true;
     }
 
     /// <summary>
@@ -285,8 +308,13 @@ public class PluginConfiguration : BasePluginConfiguration
             CacheHours,
             NegativeCacheHours,
             RequestDelayMilliseconds,
-            BaseUrl);
+            BaseUrl,
+            SetupCompletedVersion);
 
+        SetupCompletedVersion = ConfigurationLimits.Clamp(
+            SetupCompletedVersion,
+            ConfigurationLimits.SetupVersionMinimum,
+            ConfigurationLimits.SetupVersionMaximum);
         MinPosterWidth = ConfigurationLimits.Clamp(
             MinPosterWidth,
             ConfigurationLimits.MinPosterWidthMinimum,
@@ -325,6 +353,7 @@ public class PluginConfiguration : BasePluginConfiguration
             CacheHours,
             NegativeCacheHours,
             RequestDelayMilliseconds,
-            BaseUrl);
+            BaseUrl,
+            SetupCompletedVersion);
     }
 }

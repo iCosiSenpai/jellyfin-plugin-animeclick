@@ -29,7 +29,8 @@ public sealed class AnimeClickCommunityService(IHttpClientFactory factory, Anime
     private const int MaximumBytes = 1024 * 1024;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private DateTimeOffset _nextDatasetAttempt;
-    private string _message = "La condivisione è disattivata.";
+    private const string DisabledMessage = "La condivisione è disattivata.";
+    private string _message = DisabledMessage;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
@@ -150,10 +151,18 @@ public sealed class AnimeClickCommunityService(IHttpClientFactory factory, Anime
         {
             var pending = await LoadOutboxAsync(token).ConfigureAwait(false);
             var config = _configuration();
+
+            // _message only changes when something is sent or queued, so right after sharing is switched
+            // on it still held the initial "disattivata" text and the page contradicted the setting.
+            var message = !config.EnableCommunitySharing
+                ? "La condivisione è disattivata. Nessun invio viene eseguito."
+                : string.IsNullOrWhiteSpace(config.CommunityGitHubToken)
+                    ? "Condivisione attiva ma senza token GitHub: nessun invio è possibile finché non lo salvi."
+                    : _message != DisabledMessage
+                        ? _message
+                        : pending.Count > 0 ? "Correzioni in attesa di invio." : "Condivisione attiva: nessuna correzione in attesa di invio.";
             return new { Enabled = config.EnableCommunitySharing, Pending = pending.Count(entry => entry.Attempts < 5),
-                Failed = pending.Count(entry => entry.Attempts >= 5), Message = !config.EnableCommunitySharing
-                    ? "La condivisione è disattivata. Nessun invio viene eseguito."
-                    : pending.Count > 0 && _message == "La condivisione è disattivata." ? "Correzioni in attesa di invio." : _message };
+                Failed = pending.Count(entry => entry.Attempts >= 5), Message = message };
         }
         finally { _gate.Release(); }
     }
