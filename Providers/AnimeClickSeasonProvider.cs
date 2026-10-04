@@ -148,7 +148,7 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
             }
             _logger.LogInformation(
                 "AnimeClick: Season {Season} provider ID set → {Id}",
-                seasonNumber.Value,
+                seasonNumber,
                 resolvedId);
         }
 
