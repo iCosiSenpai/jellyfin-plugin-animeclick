@@ -32,6 +32,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
     private readonly AnimeClickEpisodeListLoader _episodeListLoader;
     private readonly AnimeClickSeasonResolver _seasonResolver;
     private readonly AnimeClickEpisodeLayoutResolver _layoutResolver;
+    private readonly AnimeClickAniListMetadata? _aniList;
     private readonly ILogger<AnimeClickEpisodeProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AnimeClickMetadataFallbackService _fallbackService;
@@ -49,7 +50,8 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         IHttpClientFactory httpClientFactory,
         AnimeClickMetadataFallbackService fallbackService,
         AnimeClickEpisodeTitleFallback? titleFallback = null,
-        AnimeClickIntegratedMetadata? integrated = null)
+        AnimeClickIntegratedMetadata? integrated = null,
+        AnimeClickAniListMetadata? aniList = null)
     {
         _client = client;
         _cache = cache;
@@ -62,6 +64,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         _fallbackService = fallbackService;
         _titleFallback = titleFallback;
         _integrated = integrated;
+        _aniList = aniList;
     }
 
     public string Name => "AnimeClick";
@@ -389,13 +392,22 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         var isSeasonSpecificPage = false;
         if (!string.IsNullOrWhiteSpace(traversalRootId))
         {
+            // A season Jellyfin has no date for borrows the year from the AniList sequel chain.
+            var airYears = libraryLayout?.GetSeasonAirYears();
+            if (_aniList is not null && libraryLayout is not null && seasonNumber is { } season
+                && libraryLayout.Seasons.TryGetValue(season, out var seasonLayout))
+            {
+                airYears = await _aniList.WithSeasonYearAsync(airYears, libraryLayout.SeriesProviderIds, season,
+                    seasonLayout.KnownEpisodeCount, configuration, cancellationToken).ConfigureAwait(false);
+            }
+
             resolvedAnimeClickId = await _seasonResolver
                 .ResolveAsync(
                     traversalRootId,
                     seasonNumber,
                     configuration,
                     cancellationToken,
-                    libraryLayout?.GetSeasonAirYears())
+                    airYears)
                 .ConfigureAwait(false);
             isSeasonSpecificPage = resolvedAnimeClickId is not null;
         }

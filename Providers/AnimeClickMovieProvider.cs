@@ -184,11 +184,9 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
                 .ToList();
         }
 
-        await FillItalianOverviewAsync(result, info, configuration, cancellationToken, anime).ConfigureAwait(false);
-        result.HasMetadata = true;
-
         // Preserve a verified Jellyfin ID. Only discover a new mapping when none
         // exists, and require AniList title/year/format confidence before writing it.
+        // Resolved before the internal sources run, because AniList is one of them.
         var existingAniListId = info.GetProviderId("AniList");
         if (!string.IsNullOrWhiteSpace(existingAniListId))
         {
@@ -213,6 +211,9 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
                     anime.Title);
             }
         }
+
+        await FillItalianOverviewAsync(result, info, configuration, cancellationToken, anime).ConfigureAwait(false);
+        result.HasMetadata = true;
 
         // Report fields still missing after the configured internal sources.
         var emptyFields = new List<string>();

@@ -10,7 +10,7 @@ const results = path.join(__dirname, 'test-results');
 let browser, server, origin;
 
 const defaults = {
-    ConfigurationVersion: 3, SetupCompletedVersion: 3, PreferItalianTitle: true, EnablePlot: true,
+    ConfigurationVersion: 3, SetupCompletedVersion: 4, PreferItalianTitle: true, EnablePlot: true,
     EnableEpisodeTitles: true, EnableEpisodeTitleFallback: true, EnableEpisodeSynopsisTranslation: true,
     EnableAiTranslation: true, MinPosterWidth: 400, MaxSearchResults: 10,
     CacheHours: 48, NegativeCacheHours: 12, RequestDelayMilliseconds: 1000,
@@ -18,7 +18,7 @@ const defaults = {
     BaseUrl: 'https://www.animeclick.it', UserAgent: 'test',
     AiProvider: 'custom', AiEndpoint: 'https://translation.example/v1/chat/completions',
     AiModel: 'saved-model', AiApiKey: 'test-secret', TmdbApiKey: 'saved-tmdb', TvdbApiKey: '',
-    EnableCommunityMappings: false, CommunitySharingMode: 'Ask', CommunityGitHubToken: ''
+    EnableCommunityMappings: false, CommunitySharingMode: 'Ask', CommunityGitHubToken: '', EnableAniListMetadata: false
 };
 
 const saikiSeason = { kind: 'Season', animeClickId: '26035', series: { Tmdb: '67676', Tvdb: '313435' }, seasonNumber: 3, episodeCount: 2 };
@@ -277,6 +277,7 @@ test('a fresh installation runs the full setup, saves its choices and enables th
         assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Benvenuto', 'Fonti', 'Preferenze', 'Librerie', 'Comunità', 'Fatto']);
         await shot(page, 'setup-welcome-desktop');
         await page.getByRole('button', { name: 'Iniziamo' }).click();
+        assert.equal(await page.locator('#acSetupAniList').isChecked(), true, 'AniList is proposed switched on');
         await page.locator('#acSetupTmdbKey').fill('new-tmdb-key');
         await page.locator('#acSetupNext').click();
         await page.locator('#acSetupPref_EnableCast').uncheck();
@@ -285,6 +286,7 @@ test('a fresh installation runs the full setup, saves its choices and enables th
         assert.equal(state.writes.length, 1);
         assert.equal(state.config.TmdbApiKey, 'new-tmdb-key');
         assert.equal(state.config.EnableCast, false);
+        assert.equal(state.config.EnableAniListMetadata, true);
         assert.equal(state.config.SetupCompletedVersion, 0);
         assert.equal(await page.locator('#acSetupLib_lib-anime').isChecked(), true, 'libraries named after anime are preselected');
         assert.equal(await page.locator('#acSetupLib_lib-film').isDisabled(), true);
@@ -303,7 +305,7 @@ test('a fresh installation runs the full setup, saves its choices and enables th
         assert.equal(state.config.CommunitySharingMode, 'Ask');
         await page.locator('#acSetupFinish').click();
         await page.locator('#acSetup').waitFor({ state: 'hidden' });
-        assert.equal(state.config.SetupCompletedVersion, 3);
+        assert.equal(state.config.SetupCompletedVersion, 4);
         assert.equal(state.config.TmdbApiKey, 'new-tmdb-key');
         assert.equal(await page.locator('#acView_home').isVisible(), true);
         assert.deepEqual(state.errors, []);
@@ -314,12 +316,12 @@ test('an update shows only the new steps and skipping keeps every other setting'
     const { page, state } = await mount({ config: { SetupCompletedVersion: 1 } });
     try {
         await page.locator('#acSetup').waitFor();
-        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Novità', 'Librerie', 'Comunità', 'Fatto']);
+        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Novità', 'Librerie', 'Comunità', 'AniList', 'Fatto']);
         const before = { ...state.config };
         await page.locator('#acSetupSkip').click();
         await confirmDialog(page, 'Salta');
         await page.locator('#acSetup').waitFor({ state: 'hidden' });
-        assert.equal(state.config.SetupCompletedVersion, 3);
+        assert.equal(state.config.SetupCompletedVersion, 4);
         assert.deepEqual({ ...state.config, SetupCompletedVersion: 1 }, before);
         assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
@@ -630,23 +632,51 @@ test('synopses without a source can be retried in a balanced batch', async () =>
     } finally { await page.close(); }
 });
 
-test('updating from 1.3 shows only the community step and saves the chosen sharing', async () => {
+test('updating from 1.3 shows the community and AniList steps and saves both choices', async () => {
     const { page, state } = await mount({ config: { SetupCompletedVersion: 2, EnableCommunityMappings: false, CommunitySharingMode: 'Ask' } });
     try {
         await page.locator('#acSetup').waitFor();
-        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Comunità', 'Fatto']);
+        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Comunità', 'AniList', 'Fatto']);
         assert.equal(await page.locator('#acSetupCommunityMappings').isChecked(), true);
         await page.locator('label[for="acSetupSharing_Never"]').click();
         await page.locator('#acSetupCommunityMappings').uncheck();
         await page.getByRole('button', { name: 'Salva e continua' }).click();
-        await page.locator('#acSetupFinish').waitFor();
+        await page.locator('#acSetupAniList').waitFor();
         assert.equal(state.writes.length, 1);
         assert.equal(state.config.CommunitySharingMode, 'Never');
         assert.equal(state.config.EnableCommunityMappings, false);
         assert.equal(state.config.SetupCompletedVersion, 2, 'the setup is recorded only at the end');
+        await page.getByRole('button', { name: 'Salva e continua' }).click();
+        await page.locator('#acSetupFinish').waitFor();
+        assert.equal(state.config.EnableAniListMetadata, true);
         await page.locator('#acSetupFinish').click();
         await page.locator('#acSetup').waitFor({ state: 'hidden' });
-        assert.equal(state.config.SetupCompletedVersion, 3);
+        assert.equal(state.config.SetupCompletedVersion, 4);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('updating from 1.4 shows only the AniList step and respects a switched-off choice', async () => {
+    const { page, state } = await mount({ config: { SetupCompletedVersion: 3, EnableAniListMetadata: false } });
+    try {
+        await page.locator('#acSetup').waitFor();
+        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['AniList', 'Fatto']);
+        assert.equal(await page.locator('#acSetupAniList').isChecked(), true, 'proposed on the first time it is shown');
+        await shot(page, 'setup-anilist-desktop');
+        await page.locator('#acSetupAniList').uncheck();
+        await page.getByRole('button', { name: 'Salva e continua' }).click();
+        await page.locator('#acSetupFinish').waitFor();
+        assert.equal(state.config.EnableAniListMetadata, false);
+        await page.locator('#acSetupFinish').click();
+        await page.locator('#acSetup').waitFor({ state: 'hidden' });
+        assert.equal(state.config.SetupCompletedVersion, 4);
+        await select(page, 'Fonti');
+        assert.equal(await page.locator('#acEnableAniListMetadata').isChecked(), false);
+        assert.match(await page.locator('#acSourceState_anilist').innerText(), /Spenta/);
+        await page.locator('#acEnableAniListMetadata').check();
+        assert.match(await page.locator('#acSourceState_anilist').innerText(), /Attiva/);
+        await saveAndWait(page);
+        assert.equal(state.config.EnableAniListMetadata, true);
         assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });

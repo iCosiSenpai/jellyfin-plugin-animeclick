@@ -125,29 +125,10 @@ public sealed class AnimeClickCommunityService(IHttpClientFactory factory, Anime
     }
 
     /// <summary>Counts the episodes of a season from the library, or null when it cannot be read.</summary>
-    public int? CountSeasonEpisodes(Season season)
-    {
-        if (library is null) return null;
-        try
-        {
-            return CountEpisodes(library.GetItemList(new InternalItemsQuery
-            {
-                ParentId = season.Id, IncludeItemTypes = [BaseItemKind.Episode], Recursive = true, IsVirtualItem = false
-            }).OfType<Episode>().DistinctBy(episode => episode.Id));
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
+    public int? CountSeasonEpisodes(Season season) => AnimeClickLibrarySeasons.CountEpisodes(library, season);
 
     /// <summary>Finds the library season a metadata request is about, through its folder.</summary>
-    public Season? FindSeason(string? path)
-    {
-        if (library is null || string.IsNullOrWhiteSpace(path)) return null;
-        try { return library.FindByPath(path, isFolder: true) as Season; }
-        catch (Exception) { return null; }
-    }
+    public Season? FindSeason(string? path) => AnimeClickLibrarySeasons.Find(library, path);
 
     private static Dictionary<string, string> PublicIds(IReadOnlyDictionary<string, string> ids, string[] allowed)
     {

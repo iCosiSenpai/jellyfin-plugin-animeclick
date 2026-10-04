@@ -29,13 +29,17 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
     private readonly AnimeClickCacheService? _cache;
     private readonly AnimeClickHtmlParser? _parser;
     private readonly AnimeClickCommunityService? _community;
+    private readonly AnimeClickAniListMetadata? _aniList;
+    private readonly MediaBrowser.Controller.Library.ILibraryManager? _libraryManager;
 
     public AnimeClickSeasonProvider(
         AnimeClickSeasonResolver seasonResolver,
         ILogger<AnimeClickSeasonProvider> logger,
         IHttpClientFactory httpClientFactory, AnimeClickIntegratedMetadata? integrated = null,
         AnimeClickClient? client = null, AnimeClickCacheService? cache = null, AnimeClickHtmlParser? parser = null,
-        AnimeClickCommunityService? community = null)
+        AnimeClickCommunityService? community = null,
+        AnimeClickAniListMetadata? aniList = null,
+        MediaBrowser.Controller.Library.ILibraryManager? libraryManager = null)
     {
         _seasonResolver = seasonResolver;
         _logger = logger;
@@ -45,6 +49,8 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
         _cache = cache;
         _parser = parser;
         _community = community;
+        _aniList = aniList;
+        _libraryManager = libraryManager;
     }
 
     public string Name => "AnimeClick";
@@ -108,8 +114,17 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
                 return await CompleteAsync().ConfigureAwait(false);
             }
 
+            // Without dates in Jellyfin, the AniList sequel chain can say which year this season aired.
+            IReadOnlyDictionary<int, int>? airYears = null;
+            if (_aniList is not null && configuration.EnableAniListMetadata
+                && info.SeriesProviderIds?.ContainsKey("AniList") == true)
+            {
+                airYears = await _aniList.WithSeasonYearAsync(null, info.SeriesProviderIds, seasonNumber.Value,
+                    AnimeClickLibrarySeasons.CountEpisodes(_libraryManager, info.Path), configuration, cancellationToken).ConfigureAwait(false);
+            }
+
             resolvedId = await _seasonResolver
-                .ResolveAsync(normalizedMainId, seasonNumber, configuration, cancellationToken)
+                .ResolveAsync(normalizedMainId, seasonNumber, configuration, cancellationToken, airYears)
                 .ConfigureAwait(false);
         }
 
