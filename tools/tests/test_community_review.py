@@ -101,7 +101,7 @@ class Checks(unittest.TestCase):
 
     def test_a_film_linked_to_a_series_card_is_flagged(self):
         series = {"kind": "Series", "animeClickId": "25493", "providerIds": {"AniList": "1"}}
-        review, text = cr.run_check(*issue(series), EMPTY, web({cr.ANIMECLICK: (200, MOVIE_CARD)}))
+        review, text = cr.run_check(*issue(series), EMPTY, web({cr.ANIMECLICK: (200, MOVIE_CARD)}), post=lambda url, payload: (0, ""))
         self.assertEqual("doubt", review.verdict)
         self.assertIn("collegata a un film", text)
 
@@ -119,6 +119,17 @@ class Checks(unittest.TestCase):
         review, text = cr.run_check(*issue(other), approved, web({cr.ANIMECLICK: (200, SEASON_CARD)}))
         self.assertEqual("doubt", review.verdict)
         self.assertIn("conflitto", text)
+
+    def test_an_anilist_id_of_the_series_on_a_film_is_flagged(self):
+        movie = {"kind": "Movie", "animeClickId": "25493", "providerIds": {"AniList": "21202"}}
+        tv = lambda url, payload: (200, json.dumps({"data": {"Media": {"format": "TV", "seasonYear": 2016, "title": {"romaji": "KonoSuba"}}}}))
+        review, text = cr.run_check(*issue(movie), EMPTY, web({cr.ANIMECLICK: (200, MOVIE_CARD)}), post=tv)
+        self.assertEqual("doubt", review.verdict)
+        self.assertIn("un film collegato a una serie", text)
+        film = lambda url, payload: (200, json.dumps({"data": {"Media": {"format": "MOVIE", "seasonYear": 2019, "title": {"romaji": "Yumemiru"}}}}))
+        self.assertEqual("ok", cr.run_check(*issue(movie), EMPTY, web({cr.ANIMECLICK: (200, MOVIE_CARD)}), post=film)[0].verdict)
+        missing = lambda url, payload: (404, json.dumps({"data": {"Media": None}}))
+        self.assertEqual("impossible", cr.run_check(*issue(movie), EMPTY, web({cr.ANIMECLICK: (200, MOVIE_CARD)}), post=missing)[0].verdict)
 
     def test_a_malformed_issue_is_impossible(self):
         review, text = cr.run_check("Domanda generica", "ciao", EMPTY, web({}))

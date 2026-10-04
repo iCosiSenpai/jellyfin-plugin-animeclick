@@ -92,7 +92,8 @@ dal servizio o da un plugin con token:
 
 1. Legge solo il blocco JSON, verifica che corrisponda all'impronta del titolo e alle regole dello schema.
 2. Controlla che la scheda AnimeClick esista e confronta tipo, anno ed episodi; con `TMDB_API_KEY` verifica anche
-   l'ID TMDB e, per una stagione, quanti episodi ha con quella numerazione.
+   l'ID TMDB e, per una stagione, quanti episodi ha con quella numerazione; l'ID AniList deve indicare un'opera dello
+   stesso tipo (film o serie) e dello stesso anno.
 3. Commenta l'esito e mette `controlli-ok` o `controlli-dubbi`. Chiude da sola le proposte impossibili (scheda o ID
    inesistenti, JSON alterato) e quelle già approvate.
 

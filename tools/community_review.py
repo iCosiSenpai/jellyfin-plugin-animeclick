@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Automatic checks for a community proposal issue, and its approval.
 
-  check   reads the issue, verifies the proposal against AnimeClick, TMDB and TheTVDB, and prints the
+  check   reads the issue, verifies the proposal against AnimeClick, TMDB and AniList, and prints the
           comment for the issue; the verdict (ok, doubt, impossible or duplicate) goes to GITHUB_OUTPUT.
   approve adds the proposal of an issue to the dataset and regenerates both files.
 
@@ -166,6 +166,46 @@ def check_tmdb(review, mapping, card, get, key):
         review.add("ok", "TMDB", detail)
 
 
+ANILIST = "https://graphql.anilist.co"
+ANILIST_QUERY = "query($id:Int){Media(id:$id,type:ANIME){format seasonYear title{romaji}}}"
+
+
+def post_json(url, payload):
+    """POST returning (status, text), with the same failure handling as fetch."""
+    request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={
+        "User-Agent": USER_AGENT, "Content-Type": "application/json", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.status, response.read(256 * 1024).decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        return error.code, ""
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return 0, ""
+
+
+def check_anilist(review, mapping, card, post):
+    """AniList identifies one cour or one film: its type and year must agree with the AnimeClick card."""
+    anilist = (mapping.get("providerIds") or {}).get("AniList")
+    if not anilist:
+        return
+    status, text = post(ANILIST, {"query": ANILIST_QUERY, "variables": {"id": int(anilist)}})
+    media = (json.loads(text).get("data") or {}).get("Media") if status in (200, 404) and text else None
+    if status == 404 or (status == 200 and media is None):
+        review.add("bad", "AniList", f"L’ID {anilist} non esiste su AniList.")
+        return
+    if status != 200:
+        review.add("warn", "AniList", f"Non verificabile adesso (risposta {status or 'assente'}).")
+        return
+    detail = f"«{(media.get('title') or {}).get('romaji') or '?'}» · {media.get('format') or '?'} · {media.get('seasonYear') or 'anno ?'}"
+    is_movie = media.get("format") == "MOVIE"
+    if (mapping["kind"] == "Movie") != is_movie:
+        review.add("warn", "AniList", detail + (": un film collegato a una serie." if mapping["kind"] == "Movie" else ": una serie collegata a un film."))
+    elif card and card.get("year") and media.get("seasonYear") and abs(card["year"] - media["seasonYear"]) > 1:
+        review.add("warn", "AniList", detail + f": anno diverso dalla scheda AnimeClick ({card['year']}).")
+    else:
+        review.add("ok", "AniList", detail)
+
+
 def check_dataset(review, proposal, dataset):
     if proposal.mapping in dataset["mappings"]:
         review.verdict = "duplicate"
@@ -194,7 +234,7 @@ def comment(review, proposal):
     return "\n".join(lines) + "\n"
 
 
-def run_check(title, body, dataset, get=fetch, tmdb_key=""):
+def run_check(title, body, dataset, get=fetch, tmdb_key="", post=post_json):
     try:
         proposal = read_proposal(title, body)
     except (ValueError, json.JSONDecodeError) as error:
@@ -207,6 +247,7 @@ def run_check(title, body, dataset, get=fetch, tmdb_key=""):
     if review.verdict != "duplicate":
         card = check_animeclick(review, proposal.mapping, get)
         check_tmdb(review, proposal.mapping, card, get, tmdb_key)
+        check_anilist(review, proposal.mapping, card, post)
     return review, comment(review, proposal)
 
 
