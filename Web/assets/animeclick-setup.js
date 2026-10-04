@@ -17,7 +17,7 @@
     var val = AC.util.val, plural = AC.util.plural, truncate = AC.util.truncate;
     var ui = AC.ui, api = AC.api;
 
-    var SETUP_VERSION = 2;
+    var SETUP_VERSION = 3;
 
     var STEPS = [
         { id: 'welcome', since: 1, label: 'Benvenuto', render: renderWelcome },
@@ -25,6 +25,7 @@
         { id: 'sources', since: 1, label: 'Fonti', render: renderSources },
         { id: 'preferences', since: 1, label: 'Preferenze', render: renderPreferences },
         { id: 'libraries', since: 2, label: 'Librerie', render: renderLibraries },
+        { id: 'community', since: 3, label: 'Comunità', render: renderCommunity },
         { id: 'done', since: 1, always: true, label: 'Fatto', render: renderDone }
     ];
 
@@ -78,6 +79,10 @@
         PREFERENCES.forEach(function (pref) { draft[pref[0]] = config[pref[0]] !== false; });
         draft.TmdbApiKey = config.TmdbApiKey || '';
         draft.FanartPersonalApiKey = config.FanartPersonalApiKey || '';
+        // The community step proposes reading the approved list switched on, but only the first time it
+        // is shown: a setup reopened later keeps whatever the administrator chose since.
+        draft.EnableCommunityMappings = (Number(config.SetupCompletedVersion) || 0) < 3 ? true : !!config.EnableCommunityMappings;
+        draft.CommunitySharingMode = ['Ask', 'Always', 'Never'].indexOf(config.CommunitySharingMode) >= 0 ? config.CommunitySharingMode : 'Ask';
         AC.app.showSetup(true);
         render();
     }
@@ -373,6 +378,51 @@
         mascot(side, 'Solo le librerie anime: il resto lo lascio stare.');
     }
 
+    var SHARING = [
+        ['Ask', 'Chiedimi ogni volta', 'Consigliato. Dopo una correzione ti mostro cosa verrebbe inviato e decidi tu.'],
+        ['Always', 'Condividi sempre', 'Le correzioni partono da sole, con i soli ID pubblici.'],
+        ['Never', 'Non condividere', 'Le tue correzioni restano solo tue.']
+    ];
+
+    function renderCommunity(main, side) {
+        heading('コミュニティ', 'Comunità', 'Una correzione, per tutti',
+            'Quando correggi un abbinamento, la stessa correzione può sistemare la libreria di chi ha la stessa opera. Ogni proposta passa controlli automatici e una revisione prima di arrivare a tutti. Non serve nessun account.')
+            .forEach(function (node) { if (node) main.appendChild(node); });
+        var receive = ui.switchRow('acSetupCommunityMappings', 'Usa gli abbinamenti della comunità',
+            'Una volta al giorno scarica l’elenco approvato. Vale solo per serie, film e stagioni senza un ID AnimeClick: non cambia mai un abbinamento che hai già.');
+        var receiveInput = receive.querySelector('input');
+        receiveInput.checked = !!draft.EnableCommunityMappings;
+        receiveInput.addEventListener('change', function () { draft.EnableCommunityMappings = receiveInput.checked; });
+        main.appendChild(ui.switches([receive]));
+
+        main.appendChild(h('p', { class: 'ac-step-title', id: 'acSetupSharingLabel', text: 'Dopo una correzione' }));
+        main.appendChild(h('div', { class: 'ac-mode-choices', role: 'radiogroup', 'aria-labelledby': 'acSetupSharingLabel' }, SHARING.map(function (choice) {
+            var input = h('input', { type: 'radio', name: 'acSetupSharing', id: 'acSetupSharing_' + choice[0], value: choice[0] });
+            input.checked = draft.CommunitySharingMode === choice[0];
+            input.addEventListener('change', function () { if (input.checked) draft.CommunitySharingMode = choice[0]; });
+            return h('label', { class: 'ac-mode-choice', htmlFor: input.id }, input,
+                h('span', null, h('strong', { text: choice[1] }), h('small', { class: 'ac-hint', text: choice[2] })));
+        })));
+        main.appendChild(ui.callout('Cosa parte, e cosa mai',
+            'Solo ID pubblici: tipo, ID AnimeClick e ID TMDB, TheTVDB o AniList; per una stagione anche il suo numero e quanti episodi contiene. Mai titoli, utenti, percorsi, file, indirizzo del server, trame o immagini. Come per ogni servizio web, chi riceve la proposta vede l’indirizzo IP da cui arriva.', 'info', 'eye'));
+        actions(main, {
+            nextLabel: 'Salva e continua',
+            nextIcon: 'save',
+            beforeNext: function (buttonNode) {
+                ui.setBusy(buttonNode, true, 'Salvataggio…');
+                return AC.settings.savePatch({
+                    EnableCommunityMappings: !!draft.EnableCommunityMappings,
+                    CommunitySharingMode: draft.CommunitySharingMode
+                }).then(function () { return true; }).catch(function (error) {
+                    ui.toast('Non riesco a salvare: ' + truncate(error.message, 200), 'error');
+                    ui.setBusy(buttonNode, false);
+                    return false;
+                });
+            }
+        });
+        mascot(side, 'Una tua correzione può sistemare la libreria di tanti altri!');
+    }
+
     function renderDone(main, side, cardNode) {
         heading('完了', 'Fatto', mode === 'update' ? 'Tutto aggiornato!' : 'Tutto pronto!',
             'Al prossimo aggiornamento dei metadati Jellyfin userà AnimeClick. Gli anime aggiornati compariranno nella vetrina di Inizio.')
@@ -388,7 +438,9 @@
         main.appendChild(h('ul', { class: 'ac-list' },
             summary(true, 'AnimeClick', 'Pronto, senza chiavi.'),
             summary(state.tmdb, 'TMDB', state.tmdb ? 'Chiave salvata.' : 'Puoi aggiungerla quando vuoi in Fonti.'),
-            summary(active > 0, 'Librerie', active ? plural(active, 'libreria usa', 'librerie usano') + ' AnimeClick come primo provider.' : 'Attiva AnimeClick nelle librerie anime da Inizio.')));
+            summary(active > 0, 'Librerie', active ? plural(active, 'libreria usa', 'librerie usano') + ' AnimeClick come primo provider.' : 'Attiva AnimeClick nelle librerie anime da Inizio.'),
+            summary(!!config.EnableCommunityMappings, 'Comunità', (config.EnableCommunityMappings ? 'Ricevi gli abbinamenti approvati. ' : 'Abbinamenti della comunità spenti. ')
+                + (config.CommunitySharingMode === 'Always' ? 'Le tue correzioni vengono condivise.' : config.CommunitySharingMode === 'Never' ? 'Le tue correzioni restano tue.' : 'Ti chiederò se condividere ogni correzione.'))));
         main.appendChild(ui.hint('Puoi chiedere a Jellyfin di aggiornare subito una libreria da Dashboard → Librerie → «Scansiona tutte le librerie», oppure aspettare la scansione programmata.'));
         var row = h('div', { class: 'ac-setup-actions' },
             h('span', { style: 'margin-right:auto' }),

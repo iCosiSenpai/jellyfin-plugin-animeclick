@@ -10,15 +10,24 @@ const results = path.join(__dirname, 'test-results');
 let browser, server, origin;
 
 const defaults = {
-    ConfigurationVersion: 2, SetupCompletedVersion: 2, PreferItalianTitle: true, EnablePlot: true,
+    ConfigurationVersion: 3, SetupCompletedVersion: 3, PreferItalianTitle: true, EnablePlot: true,
     EnableEpisodeTitles: true, EnableEpisodeTitleFallback: true, EnableEpisodeSynopsisTranslation: true,
     EnableAiTranslation: true, MinPosterWidth: 400, MaxSearchResults: 10,
     CacheHours: 48, NegativeCacheHours: 12, RequestDelayMilliseconds: 1000,
     TranslationCacheHours: 87600, EpisodeTranslationTimeoutSec: 90,
     BaseUrl: 'https://www.animeclick.it', UserAgent: 'test',
     AiProvider: 'custom', AiEndpoint: 'https://translation.example/v1/chat/completions',
-    AiModel: 'saved-model', AiApiKey: 'test-secret', TmdbApiKey: 'saved-tmdb', TvdbApiKey: ''
+    AiModel: 'saved-model', AiApiKey: 'test-secret', TmdbApiKey: 'saved-tmdb', TvdbApiKey: '',
+    EnableCommunityMappings: false, CommunitySharingMode: 'Ask', CommunityGitHubToken: ''
 };
+
+const saikiSeason = { kind: 'Season', animeClickId: '26035', series: { Tmdb: '67676', Tvdb: '313435' }, seasonNumber: 3, episodeCount: 2 };
+
+const proposalsFixture = [
+    { fingerprint: 'bbb1d0908031f10d13b0', mapping: saikiSeason, state: 'Sent', issue: 41, url: 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/41' },
+    { fingerprint: 'aaa', mapping: { kind: 'Series', animeClickId: '16615', providerIds: { Tmdb: '67676' } }, state: 'Approved', issue: 7, url: 'https://evil.example/issues/7' },
+    { fingerprint: 'ccc', mapping: { kind: 'Movie', animeClickId: '420', providerIds: { Tmdb: '128' } }, state: 'Queued' }
+];
 
 const ids = { frieren: 'a1000000000000000000000000000001', dandadan: 'a1000000000000000000000000000002', mononoke: 'a1000000000000000000000000000003', lost: 'a1000000000000000000000000000004' };
 
@@ -199,7 +208,23 @@ async function mount(options = {}) {
         if (target.endsWith('/TestTmdb')) return route.fulfill({ json: { success: true, sampleName: 'Frieren' } });
         if (target.endsWith('/IdentifyAndRefresh')) {
             state.identifications.push(request.postDataJSON());
-            return route.fulfill({ json: { Success: true, RefreshTriggered: true } });
+            const ask = state.config.CommunitySharingMode === 'Ask';
+            return route.fulfill({ json: { Success: true, RefreshTriggered: true,
+                CommunityProposal: ask ? saikiSeason : null,
+                CommunityMessage: state.config.CommunitySharingMode === 'Always' ? 'Grazie! La proposta partirà a breve per la revisione.' : null } });
+        }
+        if (target.endsWith('/Community/Summary')) {
+            return route.fulfill({ json: { MappingsEnabled: state.config.EnableCommunityMappings, Mode: state.config.CommunitySharingMode,
+                DatasetAvailable: true, Available: 412, AvailableSeasons: 37, InLibrary: 9, RelayAvailable: true,
+                Queued: 1, InReview: 1, Approved: 5, NotAccepted: 0, Failed: 0 } });
+        }
+        if (target.endsWith('/Community/Proposals')) return route.fulfill({ json: options.proposals || proposalsFixture });
+        if (target.endsWith('/Community/Status')) {
+            return route.fulfill({ json: { Mode: state.config.CommunitySharingMode, Channel: 'relay', Pending: 1, Failed: 0, Message: 'Correzioni in attesa di invio.' } });
+        }
+        if (target.endsWith('/Community/Share')) {
+            state.shares = (state.shares || []).concat([request.postDataJSON()]);
+            return route.fulfill({ json: { Message: 'Grazie! La proposta partirà a breve per la revisione.' } });
         }
         return route.fulfill({ json: {} });
     });
@@ -239,11 +264,11 @@ test('home opens on the showcase and dashboard, and the tabs work with the keybo
 });
 
 test('a fresh installation runs the full setup, saves its choices and enables the chosen library', async () => {
-    const { page, state } = await mount({ config: { ConfigurationVersion: 2, SetupCompletedVersion: 0, TmdbApiKey: '' } });
+    const { page, state } = await mount({ config: { ConfigurationVersion: 3, SetupCompletedVersion: 0, TmdbApiKey: '' } });
     try {
         await page.locator('#acSetup').waitFor();
         assert.equal(await page.locator('.ac-main').isVisible(), false);
-        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Benvenuto', 'Fonti', 'Preferenze', 'Librerie', 'Fatto']);
+        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Benvenuto', 'Fonti', 'Preferenze', 'Librerie', 'Comunità', 'Fatto']);
         await shot(page, 'setup-welcome-desktop');
         await page.getByRole('button', { name: 'Iniziamo' }).click();
         await page.locator('#acSetupTmdbKey').fill('new-tmdb-key');
@@ -263,9 +288,16 @@ test('a fresh installation runs the full setup, saves its choices and enables th
         await page.locator('#acSetupLibrariesResult', { hasText: 'Fatto!' }).waitFor();
         assert.deepEqual(state.enabled, ['lib-anime']);
         await page.locator('#acSetupNext').click();
+        assert.equal(await page.locator('#acSetupCommunityMappings').isChecked(), true, 'the approved list is proposed switched on');
+        assert.equal(await page.locator('#acSetupSharing_Ask').isChecked(), true);
+        await shot(page, 'setup-community-desktop');
+        await page.getByRole('button', { name: 'Salva e continua' }).click();
+        await page.locator('#acSetupFinish').waitFor();
+        assert.equal(state.config.EnableCommunityMappings, true);
+        assert.equal(state.config.CommunitySharingMode, 'Ask');
         await page.locator('#acSetupFinish').click();
         await page.locator('#acSetup').waitFor({ state: 'hidden' });
-        assert.equal(state.config.SetupCompletedVersion, 2);
+        assert.equal(state.config.SetupCompletedVersion, 3);
         assert.equal(state.config.TmdbApiKey, 'new-tmdb-key');
         assert.equal(await page.locator('#acView_home').isVisible(), true);
         assert.deepEqual(state.errors, []);
@@ -276,12 +308,12 @@ test('an update shows only the new steps and skipping keeps every other setting'
     const { page, state } = await mount({ config: { SetupCompletedVersion: 1 } });
     try {
         await page.locator('#acSetup').waitFor();
-        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Novità', 'Librerie', 'Fatto']);
+        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Novità', 'Librerie', 'Comunità', 'Fatto']);
         const before = { ...state.config };
         await page.locator('#acSetupSkip').click();
         await confirmDialog(page, 'Salta');
         await page.locator('#acSetup').waitFor({ state: 'hidden' });
-        assert.equal(state.config.SetupCompletedVersion, 2);
+        assert.equal(state.config.SetupCompletedVersion, 3);
         assert.deepEqual({ ...state.config, SetupCompletedVersion: 1 }, before);
         assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
@@ -592,26 +624,101 @@ test('synopses without a source can be retried in a balanced batch', async () =>
     } finally { await page.close(); }
 });
 
-test('community sharing is opt-in, requires a token, and allows revoking it', async () => {
+test('updating from 1.3 shows only the community step and saves the chosen sharing', async () => {
+    const { page, state } = await mount({ config: { SetupCompletedVersion: 2, EnableCommunityMappings: false, CommunitySharingMode: 'Ask' } });
+    try {
+        await page.locator('#acSetup').waitFor();
+        assert.deepEqual(await page.locator('.ac-steps li').allInnerTexts(), ['Comunità', 'Fatto']);
+        assert.equal(await page.locator('#acSetupCommunityMappings').isChecked(), true);
+        await page.locator('label[for="acSetupSharing_Never"]').click();
+        await page.locator('#acSetupCommunityMappings').uncheck();
+        await page.getByRole('button', { name: 'Salva e continua' }).click();
+        await page.locator('#acSetupFinish').waitFor();
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.config.CommunitySharingMode, 'Never');
+        assert.equal(state.config.EnableCommunityMappings, false);
+        assert.equal(state.config.SetupCompletedVersion, 2, 'the setup is recorded only at the end');
+        await page.locator('#acSetupFinish').click();
+        await page.locator('#acSetup').waitFor({ state: 'hidden' });
+        assert.equal(state.config.SetupCompletedVersion, 3);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('a correction offers to share it, sends it only after the click, and can stop asking', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'Strumenti');
+        await page.locator('#acItemSearch').fill('Un titolo');
+        await page.locator('#acBtnFindItem').click();
+        await page.locator('#acItemCandidates .ac-pick').click();
+        await page.locator('#acAnimeClickId').fill('26035');
+        await page.locator('#acBtnIdentify').click();
+        await page.locator('#acShareBox').waitFor();
+        assert.match(await page.locator('#acShareSummary').innerText(), /Stagione 3 \(2 episodi\) della serie TMDB 67676, TheTVDB 313435 → scheda AnimeClick 26035/);
+        assert.equal(state.shares, undefined, 'nothing is shared before the click');
+        await shot(page, 'community-share-offer');
+        await page.locator('#acShareOffer').click();
+        await page.locator('#acShareBox', { hasText: 'Grazie!' }).waitFor();
+        assert.deepEqual(state.shares, [{ itemId: 'safe-item-id' }]);
+
+        await page.locator('#acBtnIdentify').click();
+        await page.locator('#acShareNever').waitFor();
+        await page.locator('#acShareNever').click();
+        await page.locator('#acShareBox').waitFor({ state: 'detached' });
+        assert.equal(state.config.CommunitySharingMode, 'Never');
+        assert.equal(state.shares.length, 1);
+        await page.locator('#acBtnIdentify').click();
+        await page.locator('#acIdentifyResult').getByText('Abbinamento salvato', { exact: true }).waitFor();
+        assert.equal(await page.locator('#acShareBox').count(), 0, 'Never does not ask again');
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('the home page shows the community and can switch the approved list on', async () => {
+    const { page, state } = await mount();
+    try {
+        await page.locator('#acHomeCommunityAvailable', { hasText: '412' }).waitFor();
+        assert.match(await page.locator("#acHomeCommunityAvailable").innerText(), /37 stagioni/i);
+        assert.match(await page.locator('#acHomeCommunityInLibrary').innerText(), /9/);
+        assert.match(await page.locator('#acHomeCommunityReview').innerText(), /2/);
+        assert.match(await page.locator('#acHomeCommunityApproved').innerText(), /5/);
+        await page.locator('#acHomeCommunityEnable').click();
+        await page.locator('#acHomeCommunityEnable').waitFor({ state: 'detached' });
+        assert.equal(state.config.EnableCommunityMappings, true);
+        assert.equal(state.writes.length, 1);
+        await page.locator('#acHomeCommunity').scrollIntoViewIfNeeded();
+        await shot(page, 'home-community');
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('the community tab lists proposals with safe links and keeps the sharing choice and token', async () => {
     const { page, state } = await mount();
     try {
         await select(page, 'Comunità');
-        assert.equal(await page.locator('#acEnableCommunitySharing').isChecked(), false);
-        assert.equal(await page.locator('#acEnableCommunityMappings').isChecked(), false);
-        await page.locator('#acEnableCommunitySharing').check();
-        await page.locator('#acBtnSave').click();
-        await page.getByText(/Per l’invio automatico serve/).waitFor();
-        assert.equal(state.writes.length, 0);
+        await page.locator('#acCommunityProposals .ac-list-item').first().waitFor();
+        const rows = await page.locator('#acCommunityProposals .ac-list-item').allInnerTexts();
+        assert.equal(rows.length, 3);
+        assert.match(rows[0], /Stagione 3.*In revisione/s);
+        assert.match(rows[1], /Approvata/);
+        assert.match(rows[2], /In partenza/);
+        const links = await page.locator('#acCommunityProposals a').evaluateAll(nodes => nodes.map(n => n.href));
+        assert.deepEqual(links, ['https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/41'], 'a link outside the repository is never shown');
+        assert.match(await page.locator('#acCommunityResult').innerText(), /in attesa di invio/);
+        assert.equal(await page.locator('#acCommunitySharingMode').inputValue(), 'Ask');
+        await page.locator('#acCommunitySharingMode').selectOption('Always');
+        await openDetails(page, 'Avanzate: invio con il tuo account GitHub');
         await page.locator('#acCommunityGitHubToken').fill('fake-browser-test-token');
         await saveAndWait(page);
-        assert.equal(state.config.EnableCommunitySharing, true);
+        assert.equal(state.config.CommunitySharingMode, 'Always');
         assert.equal(state.config.CommunityGitHubToken, 'fake-browser-test-token');
         assert.equal(await page.locator('#acCommunityGitHubToken').inputValue(), '');
-        await page.locator('#acEnableCommunitySharing').uncheck();
         await page.locator('#acClearCommunityToken').check();
         await saveAndWait(page);
         assert.equal(state.config.CommunityGitHubToken, '');
-        assert.equal(state.config.EnableCommunitySharing, false);
+        await shot(page, 'community-desktop');
+        assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });
 
@@ -628,8 +735,6 @@ test('every metadata switch and numeric preference survives save and reload', as
         await page.evaluate(numbers => Object.entries(numbers).forEach(([id, value]) => {
             const node = document.getElementById(id); node.value = value; node.dispatchEvent(new Event('input'));
         }), numbers);
-        // Sharing needs a token, so give it one for this round trip.
-        await page.locator('#acCommunityGitHubToken').evaluate(node => { node.value = 'token-for-roundtrip'; node.dispatchEvent(new Event('input')); });
         await saveAndWait(page);
         for (const { key, checked } of controls) assert.equal(state.config[key], !checked, key);
         for (const [id, value] of Object.entries(numbers)) assert.equal(await page.locator('#' + id).inputValue(), value, id);

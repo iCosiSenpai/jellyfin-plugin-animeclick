@@ -383,6 +383,67 @@
         })));
     }
 
+    /* ===== community ===== */
+
+    var community = { summary: null, error: null, at: 0, loading: null };
+
+    function loadCommunity(force) {
+        if (community.loading) return community.loading;
+        if (community.summary && !force && Date.now() - community.at < 60000) return Promise.resolve(community.summary);
+        community.loading = api.request('GET', 'Plugins/AnimeClick/Community/Summary').then(function (summary) {
+            community.summary = summary || {};
+            community.error = null;
+            community.at = Date.now();
+        }).catch(function (error) {
+            community.error = error.message;
+        }).finally(function () {
+            community.loading = null;
+            renderCommunity();
+        });
+        return community.loading;
+    }
+
+    function renderCommunity() {
+        var host = el('acHomeCommunityBody');
+        if (!host) return;
+        var summary = community.summary;
+        if (!summary) {
+            replace(host, community.error ? ui.callout('Comunità non disponibile', truncate(community.error, 240), 'warn') : ui.skeleton(84));
+            return;
+        }
+        var stat = function (value, label, id) {
+            return h('div', { class: 'ac-stat', id: id }, h('b', { text: num(value || 0) }), h('span', { text: label }));
+        };
+        var seasons = val(summary, 'availableSeasons') || 0;
+        var nodes = [h('div', { class: 'ac-stats' },
+            stat(val(summary, 'available'), seasons ? 'Abbinamenti (' + num(seasons) + ' stagioni)' : 'Abbinamenti condivisi', 'acHomeCommunityAvailable'),
+            stat(val(summary, 'inLibrary'), 'Nella tua libreria', 'acHomeCommunityInLibrary'),
+            stat((val(summary, 'inReview') || 0) + (val(summary, 'queued') || 0), 'Tue proposte in revisione', 'acHomeCommunityReview'),
+            stat(val(summary, 'approved'), 'Tue proposte approvate', 'acHomeCommunityApproved'))];
+        if (!val(summary, 'mappingsEnabled')) {
+            var turnOn = ui.button('Attiva', { small: true, variant: 'primary', icon: 'check', id: 'acHomeCommunityEnable' });
+            turnOn.addEventListener('click', function () {
+                ui.setBusy(turnOn, true, 'Attivazione…');
+                AC.settings.savePatch({ EnableCommunityMappings: true }).then(function () {
+                    ui.toast('Abbinamenti della comunità attivi', 'success');
+                    return loadCommunity(true);
+                }).catch(function (error) {
+                    ui.toast(truncate(error.message, 240), 'error');
+                    ui.setBusy(turnOn, false);
+                });
+            });
+            nodes.push(h('div', { class: 'ac-row ac-community-note' },
+                h('span', { class: 'ac-hint', text: 'Gli abbinamenti della comunità sono spenti: le correzioni degli altri non arrivano nella tua libreria.' }), turnOn));
+        } else if (val(summary, 'mode') === 'Never') {
+            nodes.push(h('p', { class: 'ac-hint ac-community-note', text: 'Ricevi gli abbinamenti degli altri; le tue correzioni restano solo tue. Puoi cambiare idea in Comunità.' }));
+        } else if (!val(summary, 'relayAvailable') && val(summary, 'queued')) {
+            nodes.push(h('p', { class: 'ac-hint ac-community-note', text: 'L’invio senza account non è ancora attivo: le tue proposte restano in coda e partiranno da sole.' }));
+        } else {
+            nodes.push(h('p', { class: 'ac-hint ac-community-note', text: 'Correggi un abbinamento in Strumenti: potrai condividerlo con un clic.' }));
+        }
+        replace(host, nodes);
+    }
+
     function renderJobs() {
         AC.library.updateJobPanel('titles', 'acHome');
         AC.library.updateJobPanel('synopses', 'acHome');
@@ -418,17 +479,24 @@
         var libs = ui.card({ id: 'acHomeLibraries', icon: 'folder', title: 'Librerie', text: 'Dove AnimeClick fornisce i metadati. Attivalo solo nelle librerie anime.', cls: 'ac-libraries-card', aside: refreshLibs });
         libs.body.appendChild(h('div', { id: 'acHomeLibrariesBody' }));
 
-        container.appendChild(h('div', { class: 'ac-dash' }, health.card, activity.card, todo.card, sources.card, libs.card));
+        var communityCard = ui.card({ id: 'acHomeCommunity', icon: 'users', title: 'Comunità', text: 'Abbinamenti corretti dagli utenti e approvati, per tutti.', cls: 'ac-community-card',
+            aside: ui.button('Apri', { small: true, variant: 'ghost', icon: 'arrowRight', onClick: function () { AC.app.go('community'); } }) });
+        communityCard.body.appendChild(h('div', { id: 'acHomeCommunityBody', class: 'ac-stack' }));
+
+        container.appendChild(h('div', { class: 'ac-dash' }, health.card, activity.card, todo.card, sources.card, communityCard.card, libs.card));
 
         AC.bus.on('reports', function () { renderHealth(); renderStats(); renderTodo(); });
         AC.bus.on('jobs', function () { renderJobs(); renderTodo(); });
         AC.bus.on('libraries', function () { renderLibraries(); renderTodo(); });
         AC.bus.on('config', function () { renderSources(); renderTodo(); });
         AC.bus.on('library-changed', function () { showcaseAt = 0; });
+        AC.bus.on('community-changed', function () { community.at = 0; });
+        AC.bus.on('config', function () { community.at = 0; });
         renderHealth();
         renderStats();
         renderTodo();
         renderLibraries();
+        renderCommunity();
         renderJobs();
     }
 
@@ -442,6 +510,7 @@
             replace(el('acHomeHero'), ui.callout('Vetrina non disponibile', truncate(error.message, 240), 'warn'));
         });
         loadLibraries(false).catch(function () { /* shown in the card */ });
+        loadCommunity(false);
         AC.library.loadReports(false);
         AC.library.poll();
     }
@@ -451,7 +520,11 @@
         attach: function (pageElement) { page = pageElement; },
         enter: enter,
         leave: stopHero,
-        reset: function () { showcase = null; showcaseAt = 0; libraries.rows = null; libraries.error = null; stopHero(); }
+        reset: function () {
+            showcase = null; showcaseAt = 0; libraries.rows = null; libraries.error = null;
+            community.summary = null; community.error = null; community.at = 0;
+            stopHero();
+        }
     };
 
     AC.libraries = {
