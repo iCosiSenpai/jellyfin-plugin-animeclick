@@ -1,0 +1,59 @@
+name: community relay
+
+on:
+  push:
+    branches: [main]
+    paths: ['community/relay/**', 'community/fixtures/**', '.github/workflows/community-relay.yml']
+  pull_request:
+    branches: [main]
+    paths: ['community/relay/**', 'community/fixtures/**', '.github/workflows/community-relay.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: '22'
+      - run: npm test
+        working-directory: community/relay
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency: community-relay-deploy
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Wait for the one-time Cloudflare setup
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: echo "::notice::Relay not published: add the Cloudflare secrets described in community/README.md."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.CLOUDFLARE_API_TOKEN != ''
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          node-version: '22'
+      - name: Publish the worker and its secrets
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        working-directory: community/relay
+        env:
+          RELAY_KV_ID: ${{ vars.RELAY_KV_ID }}
+          RELAY_GITHUB_TOKEN: ${{ secrets.RELAY_GITHUB_TOKEN }}
+          RELAY_INSTALL_SALT: ${{ secrets.RELAY_INSTALL_SALT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${RELAY_KV_ID}" =~ ^[0-9a-f]{32}$ ]] || { echo "::error::RELAY_KV_ID must be the 32-character KV namespace ID."; exit 1; }
+          [[ -n "${RELAY_GITHUB_TOKEN}" && -n "${RELAY_INSTALL_SALT}" ]] || { echo "::error::RELAY_GITHUB_TOKEN and RELAY_INSTALL_SALT are required."; exit 1; }
+          sed -i "s/PROPOSALS_KV_ID/${RELAY_KV_ID}/" wrangler.toml
+          npx --yes wrangler@4.147.0 deploy
+          printf '%s' "${RELAY_GITHUB_TOKEN}" | npx --yes wrangler@4.147.0 secret put GITHUB_TOKEN
+          printf '%s' "${RELAY_INSTALL_SALT}" | npx --yes wrangler@4.147.0 secret put INSTALL_SALT

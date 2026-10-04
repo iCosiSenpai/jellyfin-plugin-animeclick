@@ -67,8 +67,9 @@ Un compito: ricevere proposte e aprire le issue. La lettura del dataset resta su
 - L'impronta (SHA-256 della proposta canonica) evita i doppioni: una proposta già presente non apre una nuova issue,
   aggiunge una **conferma** se arriva da un'installazione diversa (hash con chiave segreta, salvato in KV) e aggiorna
   la riga «Conferme» nella issue.
-- Limiti: 20 proposte al giorno per installazione, 60 per IP (limitatore di Cloudflare, IP mai salvato), 300 issue
-  nuove al giorno in tutto; oltre, `429` e il plugin ritenta con la coda che ha già.
+- Limiti: 10 richieste al minuto per IP (il limitatore di Cloudflare conta solo per finestre di 10 o 60 secondi; IP
+  mai salvato), 20 proposte al giorno per installazione e 300 issue nuove al giorno in tutto (contatori in KV);
+  oltre, `429` e il plugin ritenta con la coda che ha già.
 - Le issue contengono solo campi validati: nessun testo libero.
 - Credenziale: token GitHub fine-grained limitato a questo repository e alle sole issue, nei segreti del Worker.
 - Pubblicazione da GitHub Actions (`community-relay.yml`) solo se i segreti Cloudflare esistono.

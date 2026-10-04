@@ -1,0 +1,123 @@
+name: community review
+
+# Proposals arrive as issues whose title carries mapping-<fingerprint>, from the community relay or from
+# a plugin that sends with its own token. Title and body are untrusted: they reach the scripts only
+# through environment variables and files, never through ${{ }} inside a command.
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: >-
+      contains(github.event.issue.title, 'mapping-') &&
+      (github.event.action == 'opened' || github.event.label.name == 'ricontrolla')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    concurrency: community-review-${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the proposal
+        id: review
+        env:
+          TITLE: ${{ github.event.issue.title }}
+          BODY: ${{ github.event.issue.body }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${BODY}" > "${RUNNER_TEMP}/body.md"
+          python3 tools/community_review.py check --title "${TITLE}" --body-file "${RUNNER_TEMP}/body.md" > "${RUNNER_TEMP}/comment.md"
+      - name: Report on the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          VERDICT: ${{ steps.review.outputs.verdict }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo=(-R "${GITHUB_REPOSITORY}")
+          gh label create proposta --color 1d76db --description "Proposta di abbinamento dal plugin" --force "${repo[@]}"
+          gh label create controlli-ok --color 0e8a16 --description "Controlli automatici superati" --force "${repo[@]}"
+          gh label create controlli-dubbi --color fbca04 --description "Controlli da guardare" --force "${repo[@]}"
+          gh label create approvato --color 5319e7 --description "Approvala: entra nell'elenco della comunità" --force "${repo[@]}"
+          gh label create ricontrolla --color c5def5 --description "Ripeti i controlli automatici" --force "${repo[@]}"
+          gh issue comment "${ISSUE}" --body-file "${RUNNER_TEMP}/comment.md" "${repo[@]}"
+          gh issue edit "${ISSUE}" --add-label proposta --remove-label controlli-ok,controlli-dubbi,ricontrolla "${repo[@]}" || true
+          case "${VERDICT}" in
+            ok) gh issue edit "${ISSUE}" --add-label controlli-ok "${repo[@]}" ;;
+            doubt) gh issue edit "${ISSUE}" --add-label controlli-dubbi "${repo[@]}" ;;
+            impossible) gh issue close "${ISSUE}" --reason "not planned" "${repo[@]}" ;;
+            duplicate) gh issue close "${ISSUE}" --reason completed "${repo[@]}" ;;
+          esac
+
+  approve:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'approvato' &&
+      github.event.sender.login == github.repository_owner &&
+      contains(github.event.issue.title, 'mapping-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    # One dataset commit at a time, whatever the issue.
+    concurrency: community-dataset
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: Add the proposal to the dataset
+        id: approve
+        env:
+          TITLE: ${{ github.event.issue.title }}
+          BODY: ${{ github.event.issue.body }}
+          ISSUE: ${{ github.event.issue.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${BODY}" > "${RUNNER_TEMP}/body.md"
+          python3 tools/community_review.py approve --title "${TITLE}" --body-file "${RUNNER_TEMP}/body.md"
+          python3 tools/community_mappings.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add community/mappings-v2.json community/mappings.json
+          if git diff --cached --quiet; then
+            echo "commit=" >> "${GITHUB_OUTPUT}"
+          else
+            git commit -q -m "community: approve proposal #${ISSUE}"
+            git push origin HEAD:main
+            echo "commit=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          COMMIT: ${{ steps.approve.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${COMMIT}" ]]; then
+            message="Approvata e pubblicata in ${COMMIT}. Arriverà a chi usa gli abbinamenti della comunità entro un giorno. Grazie!"
+          else
+            message="Era già nell'elenco approvato: nessuna modifica."
+          fi
+          gh issue comment "${ISSUE}" --body "${message}" -R "${GITHUB_REPOSITORY}"
+          gh issue close "${ISSUE}" --reason completed -R "${GITHUB_REPOSITORY}"
+      - name: Explain a failed approval
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          gh issue comment "${ISSUE}" -R "${GITHUB_REPOSITORY}" --body "Approvazione non riuscita: la proposta non è valida o va in conflitto con un abbinamento già approvato. Dettagli: ${RUN}"
+          gh issue edit "${ISSUE}" --remove-label approvato -R "${GITHUB_REPOSITORY}" || true

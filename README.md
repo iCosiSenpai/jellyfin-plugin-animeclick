@@ -93,18 +93,18 @@ L'analisi indica cosa controllare, senza garantire che una fonte abbia il dato. 
 
 Apri **Strumenti → Correggi un abbinamento** (oppure **Correggi abbinamento** dal dettaglio di un anime in Libreria), scegli il film o la serie e cerca la scheda giusta su AnimeClick, o incolla il suo link. Il plugin verifica la scheda, salva l'ID e prosegue l'aggiornamento in background.
 
-Se una stagione ha una scheda AnimeClick distinta, inserisci il suo ID nel campo **AnimeClick** dell'editor metadati della stagione in Jellyfin: avrà precedenza sull'ID della serie per la lista episodi.
+Se una stagione ha una scheda AnimeClick sua (un sequel, un arco finale), dopo aver scelto la serie seleziona la stagione in **Cosa correggere**: la serie conserva la propria scheda e la stagione usa quella indicata. In alternativa puoi scrivere l'ID nel campo **AnimeClick** dell'editor metadati della stagione in Jellyfin.
 
-## Condividere le correzioni
+## Comunità
 
-In **Comunità** trovi due opzioni indipendenti, **entrambe disattivate di default**:
+Le correzioni di ciascuno possono sistemare la libreria di tutti, **senza account e senza condividere la libreria**.
 
-- **Leggere gli abbinamenti approvati**, per riconoscere opere senza un ID AnimeClick già presente.
-- **Inviare automaticamente le correzioni manuali**, dopo aver abilitato la condivisione e configurato un token GitHub capace di creare issue nel repository.
+- **Ricevere**: con **Usa gli abbinamenti della comunità** il plugin scarica una volta al giorno l'elenco approvato. Vale solo per serie, film e stagioni che non hanno ancora un ID AnimeClick e non cambia mai un abbinamento esistente. Una stagione viene collegata solo se la tua libreria ha lo stesso numero di stagione **e** lo stesso numero di episodi della proposta: chi ha suddiviso la serie diversamente non riceve una scheda sbagliata.
+- **Condividere**: dopo una correzione il plugin chiede **Condividi · Non ora · Non chiedere più** e mostra esattamente cosa partirebbe. Nel setup e in **Comunità** puoi scegliere tra *Chiedimi ogni volta* (predefinito), *Condividi sempre* e *Non condividere*.
 
-Ogni invio crea una **issue pubblica associata al tuo account GitHub**, contenente solo il tipo dell'opera e gli ID AnimeClick/TMDB/TVDB/AniList. Non include file, percorsi, utenti Jellyfin, URL del server o cronologia. Puoi vedere l'anteprima e lo stato degli invii nelle impostazioni.
+Partono solo identificativi pubblici: tipo, ID AnimeClick e ID TMDB, TheTVDB o AniList; per una stagione anche il suo numero e quanti episodi contiene. Mai titoli, utenti, percorsi, file, indirizzo del server, trame o immagini. Le proposte passano dal servizio della comunità, che apre una segnalazione pubblica nel repository; chi preferisce può inviarle a proprio nome con un token GitHub (in **Comunità → Avanzate**).
 
-Il plugin usa soltanto gli abbinamenti revisionati e approvati: migliora il riconoscimento attraverso un dataset condiviso, senza addestrare un modello AI. Disabilitare la condivisione ferma gli invii futuri; le issue già pubblicate restano su GitHub. [Dettagli e revisione delle proposte](community/README.md).
+Ogni proposta passa controlli automatici (la scheda esiste, tipo, anno ed episodi coerenti con TMDB) e l'approvazione del curatore del plugin prima di arrivare a tutti. Lo stato delle tue proposte è in **Comunità**, i numeri della comunità in **Inizio**. [Come funziona nel dettaglio](community/README.md).
 
 ## Problemi e assistenza
 

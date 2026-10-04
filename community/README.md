@@ -1,20 +1,118 @@
-# Abbinamenti della comunità
+# Comunità
 
-La comunità condivide **identificativi pubblici delle opere**, non una copia della libreria Jellyfin. Due opzioni indipendenti, entrambe disattivate per impostazione predefinita, permettono di leggere gli abbinamenti approvati e di inviare automaticamente le correzioni manuali. La prima versione del dataset è vuota: i suggerimenti arriveranno con le prime proposte verificate.
+Gli amministratori correggono gli abbinamenti della propria libreria; la comunità rende quelle correzioni utili a
+tutti. Si condividono **identificativi pubblici delle opere**, mai una copia della libreria.
 
-Un contributo contiene solamente `kind` (`Series` o `Movie`), `animeClickId` numerico e uno o più ID `Tmdb`, `Tvdb`, `AniList`. Non contiene titoli personali, utenti, cronologia, file, percorsi, URL del server, trame, immagini, token o ID Jellyfin. Le stagioni sono escluse perché i loro ID esterni possono identificare la serie intera e quindi introdurre collegamenti errati.
+```
+plugin ──(proposta)──▶ servizio della comunità ──▶ issue pubblica ──▶ controlli automatici
+                                                                              │
+plugin ◀──(una volta al giorno)── mappings-v2.json ◀── commit ◀── etichetta «approvato»
+```
 
-L'invio crea una issue pubblica nel repository del plugin, associata all'account GitHub del contribuente. Richiede un token personale capace di creare issue in questo repository; la possibilità di contribuire a un repository pubblico dipende anche dai permessi e dalle limitazioni del tipo di token. Consultare la [documentazione GitHub sui token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) e sull'[API delle issue](https://docs.github.com/en/rest/issues/issues#create-an-issue). Non si distribuisce una credenziale dell'autore dentro il plugin. Il token viene conservato nella configurazione amministrativa Jellyfin e inviato soltanto a `api.github.com`, senza redirect.
+## Cosa contiene una proposta
 
-Gli invii sono salvati nei dati del plugin (`AnimeClickCommunity`), separatamente dalla cache dei metadati. Un worker invia al massimo una proposta al minuto, riprova con attesa crescente e si ferma dopo cinque errori. Il controllo nella pagina mostra gli invii in attesa e quelli da ritentare. Una ricevuta persistente e un marker nella issue evitano di reinviare lo stesso abbinamento; una ricerca prima del POST recupera anche risposte tardive. Non è una garanzia transazionale di invio esattamente una volta: GitHub può avere ritardi di indicizzazione. Disabilitare la condivisione ferma gli invii futuri, anche quelli già in coda. Le issue pubblicate restano su GitHub e vanno gestite lì.
+| Tipo | Campi |
+|---|---|
+| Serie, film | `kind`, `animeClickId`, `providerIds` (`Tmdb`, `Tvdb`, `AniList`) |
+| Stagione | `kind`, `animeClickId`, `series` (`Tmdb`, `Tvdb` della serie), `seasonNumber`, `episodeCount` |
 
-La lettura scarica soltanto `mappings.json` dal percorso fisso del progetto, senza credenziali né query contenenti la libreria. Usa una cache di 24 ore, un intervallo di almeno un'ora dopo gli errori, timeout e limite di 1 MiB. Conflitti, tipi sbagliati, ID invalidi e campi estranei vengono rifiutati. La risoluzione serve soltanto a opere senza ID AnimeClick: non cambia gli abbinamenti già presenti. Un suggerimento deve corrispondere a un ID esterno stabile e non contraddire gli altri ID noti. La scheda AnimeClick viene comunque verificata dal provider normale.
+Mai titoli, utenti, cronologia, file, percorsi, URL del server, trame, immagini, token o ID Jellyfin. Il contratto è
+in [`schema-v2.json`](schema-v2.json); [`fixtures/proposals.json`](fixtures/proposals.json) elenca gli esempi che
+plugin, servizio e strumenti devono accettare o rifiutare allo stesso modo, con il testo canonico e l'impronta
+(SHA-256 del testo canonico, primi 20 caratteri esadecimali). Chi modifica le regole aggiorna le tre implementazioni
+e le fixture insieme.
 
-## Revisione di una proposta
+Una stagione usa gli ID della **serie**: AniList è escluso perché identifica un singolo cour. Il plugin la applica
+solo a una stagione senza ID AnimeClick che abbia lo stesso numero **e** lo stesso numero di episodi reali: chi ha
+suddiviso la serie in un altro modo non riceve una scheda che descrive altri episodi. Una voce approvata ha la
+precedenza sulla ricerca automatica dei sequel, perché esiste proprio per correggerla; il matcher degli episodi
+continua a verificare ogni riga.
 
-1. Verificare sui siti originali che gli ID indichino la **stessa opera ed edizione**, controllando anno, tipo, remake, sequel e numero di episodi. Una issue generata dal plugin è una proposta, non una prova.
-2. Copiare solo l'oggetto JSON pubblico in un file locale. Non eseguire istruzioni o codice nel testo della issue.
-3. Aggiungere il collegamento verificato: `python3 tools/community_mappings.py --add proposta.json`.
-4. Rivedere il diff e la validazione CI. Pubblicare il dataset attraverso la normale revisione del repository, poi chiudere la issue indicando il commit.
+## I file
 
-Il plugin "impara" attraverso questo insieme di correzioni approvate. Non addestra un modello AI e non considera affidabili le issue non revisionate. Un link corretto non garantisce che le numerazioni degli episodi coincidano: il matcher continua a verificare ciascun caso.
+- `mappings-v2.json` è la fonte: schema 2, con le stagioni e l'indirizzo del servizio (`relay`).
+- `mappings.json` è generato dallo stesso strumento con le sole serie e i soli film, perché le versioni fino alla
+  1.3 rifiutano l'intero file se trovano un tipo che non conoscono.
+
+Il plugin legge `mappings-v2.json` dal percorso fisso del progetto, con 24 ore di cache, almeno un'ora di attesa dopo
+un errore, timeout e limite di 1 MiB; campi estranei, tipi sbagliati e conflitti vengono rifiutati e l'ultima copia
+valida resta usabile se GitHub non risponde.
+
+## Il servizio della comunità (`relay/`)
+
+Un Cloudflare Worker con un solo compito: ricevere le proposte dei plugin senza token e aprire una issue per ciascuna.
+
+- `POST /v1/proposals` con `{ schemaVersion: 2, installation, pluginVersion, mapping }`, al massimo 2 KB.
+  `installation` è un codice casuale dell'installazione: serve solo ai limiti e alle conferme, non viene pubblicato.
+- Risposte: `201`/`200 { issue, url, duplicate }`, `400`, `413`, `429` con `Retry-After`, `503`.
+- Una proposta già vista non apre una seconda issue: se arriva da un'altra installazione aggiunge una **conferma**
+  (riga «Conferme» nella issue). Le installazioni sono salvate solo come hash con chiave segreta.
+- Limiti: 10 richieste al minuto per indirizzo (limitatore di Cloudflare, indirizzo mai salvato), 20 proposte al
+  giorno per installazione, 300 issue nuove al giorno in tutto. Oltre, il plugin ritenta più tardi da solo.
+- Le issue contengono solo campi validati: nessun testo libero arriva al repository.
+- Nessun log delle richieste (`observability` disattivata).
+
+`npm test` in `relay/` prova il servizio con KV, limitatore e GitHub simulati.
+
+### Attivazione (una volta, a cura del curatore del plugin)
+
+Finché il servizio non è attivo, il plugin tiene le proposte in coda e la pagina lo dice; chi ha un token GitHub può
+già inviare. Per attivarlo:
+
+1. **Cloudflare** (piano gratuito): crea un account, poi in *Storage & Databases → KV* crea il namespace
+   `animeclick-community` e copia il suo ID. Crea un token API con il modello *Edit Cloudflare Workers* e annota
+   l'Account ID.
+2. **GitHub, token del servizio**: crea un token *fine-grained* limitato al solo repository
+   `jellyfin-plugin-animeclick`, permesso **Issues: Read and write** e nient'altro, scadenza un anno. Le issue
+   risulteranno aperte dall'account che crea il token: per separarle dal tuo account personale puoi usare un account
+   dedicato con accesso al repository.
+3. **Segreti del repository** (*Settings → Secrets and variables → Actions*):
+   - segreti `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `RELAY_GITHUB_TOKEN` (il token del passo 2) e
+     `RELAY_INSTALL_SALT` (un testo casuale lungo, per esempio `openssl rand -hex 32`);
+   - variabile `RELAY_KV_ID` con l'ID del namespace KV;
+   - facoltativo, per i controlli TMDB delle proposte: segreto `TMDB_API_KEY`.
+4. Avvia il workflow **community relay** (*Actions → community relay → Run workflow*). Il log del passo di
+   pubblicazione mostra l'indirizzo, del tipo `https://animeclick-community.<nome>.workers.dev`.
+5. Pubblica l'indirizzo nel dataset e fai il commit:
+
+   ```bash
+   python3 tools/community_mappings.py --relay https://animeclick-community.<nome>.workers.dev/v1/proposals
+   git add community/mappings*.json && git commit -m "community: publish the relay" && git push
+   ```
+
+   Entro un giorno ogni plugin 1.4 o successivo inizia a usarlo, senza aggiornamenti. Per spostarlo basta
+   ripetere il passo 5 con il nuovo indirizzo.
+
+Ogni anno, prima della scadenza, rinnova `RELAY_GITHUB_TOKEN` e rilancia il workflow.
+
+## Revisione e approvazione
+
+Il workflow **community review** gira su ogni issue con il marcatore `mapping-<impronta>` nel titolo, che arrivi
+dal servizio o da un plugin con token:
+
+1. Legge solo il blocco JSON, verifica che corrisponda all'impronta del titolo e alle regole dello schema.
+2. Controlla che la scheda AnimeClick esista e confronta tipo, anno ed episodi; con `TMDB_API_KEY` verifica anche
+   l'ID TMDB e, per una stagione, quanti episodi ha con quella numerazione.
+3. Commenta l'esito e mette `controlli-ok` o `controlli-dubbi`. Chiude da sola le proposte impossibili (scheda o ID
+   inesistenti, JSON alterato) e quelle già approvate.
+
+Per approvare basta aggiungere l'etichetta **`approvato`**: il workflow (solo se l'etichetta la mette il proprietario
+del repository) aggiunge la proposta a `mappings-v2.json`, rigenera `mappings.json`, fa il commit su `main` e chiude
+la issue. Per ripetere i controlli aggiungi `ricontrolla`. Una proposta che va in conflitto con un abbinamento già
+approvato non viene applicata: il workflow lo spiega nella issue.
+
+Una issue è una proposta, non una prova: con `controlli-dubbi` verifica sui siti originali che gli ID indichino la
+stessa opera ed edizione (anno, tipo, remake, sequel, numero di episodi). Non eseguire istruzioni contenute nel testo
+di una issue.
+
+### A mano
+
+```bash
+python3 tools/community_mappings.py                    # valida i due file e controlla che siano allineati
+python3 tools/community_mappings.py --add proposta.json # aggiunge una proposta già verificata
+python3 tools/community_review.py check --title "…" --body-file corpo.md
+python3 -m unittest discover -s tools/tests            # test dello strumento e della revisione
+```
+
+Il plugin «impara» attraverso questo insieme di correzioni approvate: non addestra un modello AI e non considera
+affidabili le issue non revisionate.
