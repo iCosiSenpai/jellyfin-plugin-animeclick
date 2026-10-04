@@ -12,7 +12,8 @@ using static AnimeClick.Plugin.Services.AnimeClickTmdbClient;
 namespace AnimeClick.Plugin.Services;
 
 /// <summary>Internal data sources fill only gaps left by AnimeClick. No library writes happen here.</summary>
-public sealed class AnimeClickIntegratedMetadata(AnimeClickTmdbClient tmdb, AnimeClickAiTranslator translator)
+public sealed class AnimeClickIntegratedMetadata(AnimeClickTmdbClient tmdb, AnimeClickAiTranslator translator,
+    AnimeClickAniListMetadata? aniList = null)
 {
     public async Task CompleteAsync<T>(MetadataResult<T> result, string? name, int? year,
         IReadOnlyDictionary<string, string> storedIds, AnimeClickAnime? anime, bool movie,
@@ -22,6 +23,11 @@ public sealed class AnimeClickIntegratedMetadata(AnimeClickTmdbClient tmdb, Anim
         if (!configuration.EnableIntegratedMetadata) return;
         var target = result.Item;
         var ids = MergeIds(target, storedIds);
+
+        // AniList first: its animation studio and its Japanese cast with characters suit anime better
+        // than TMDB's production companies and credits. Both only fill what AnimeClick left empty.
+        if (aniList is not null)
+            await aniList.CompleteAsync(result, ids, movie, configuration, token).ConfigureAwait(false);
         var id = await tmdb.ResolveAnimeIdAsync(ids, anime?.OriginalTitle, anime?.Title ?? name,
             anime?.ProductionYear ?? year, movie, configuration, token).ConfigureAwait(false);
         if (id is null) return;

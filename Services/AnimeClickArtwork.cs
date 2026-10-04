@@ -10,7 +10,7 @@ using static AnimeClick.Plugin.Services.AnimeClickTmdbClient;
 
 namespace AnimeClick.Plugin.Services;
 
-public sealed class AnimeClickArtwork(AnimeClickTmdbClient tmdb, AnimeClickFanartClient fanart)
+public sealed class AnimeClickArtwork(AnimeClickTmdbClient tmdb, AnimeClickFanartClient fanart, AnimeClickAniListMetadata? aniList = null)
 {
     public async Task<List<RemoteImageInfo>> GetImagesAsync(BaseItem item, PluginConfiguration configuration, CancellationToken token)
     {
@@ -26,7 +26,14 @@ public sealed class AnimeClickArtwork(AnimeClickTmdbClient tmdb, AnimeClickFanar
             var data = await fanart.GetArtworkAsync(fanartId, movie, configuration, token).ConfigureAwait(false);
             if (data is { } root) results.AddRange(ParseFanart(root, movie, item is Season season ? season.IndexNumber : null, configuration.MinPosterWidth));
         }
-        if (!configuration.EnableIntegratedImages) return results;
+        // AniList's cover and banner come after Fanart and TMDB: lower resolution, but keyless.
+        async Task<List<RemoteImageInfo>> WithAniList(List<RemoteImageInfo> found)
+        {
+            if (aniList is not null) found.AddRange(await aniList.GetImagesAsync(item, configuration, token).ConfigureAwait(false));
+            return found.DistinctBy(v => (v.Type, v.Url)).ToList();
+        }
+
+        if (!configuration.EnableIntegratedImages) return await WithAniList(results).ConfigureAwait(false);
         string? path = null;
         int? expected = null;
         if (item is Movie && tmdbId.HasValue) { path = "movie/" + tmdbId; expected = tmdbId; }
@@ -43,14 +50,14 @@ public sealed class AnimeClickArtwork(AnimeClickTmdbClient tmdb, AnimeClickFanar
             if (child is { } c) { path = $"tv/{tmdbId}/season/{ep.ParentIndexNumber}/episode/{ep.IndexNumber}"; expected = Number(c, "id"); }
         }
         if (item is Person && PositiveId(item.GetProviderId("Tmdb")) is { } person) { path = "person/" + person; expected = person; }
-        if (path is null) return results;
+        if (path is null) return await WithAniList(results).ConfigureAwait(false);
         var images = await tmdb.GetIntegratedImagesAsync(path, expected, configuration, token).ConfigureAwait(false);
         if (images is { } imageRoot)
         {
             foreach (var (field, type) in new[] { ("posters", ImageType.Primary), ("backdrops", ImageType.Backdrop), ("logos", ImageType.Logo), ("stills", ImageType.Primary), ("profiles", ImageType.Primary) })
                 results.AddRange(Sort(Array(imageRoot, field).Select(v => Make(v, type, false, configuration.MinPosterWidth)).OfType<RemoteImageInfo>()).Take(20));
         }
-        return results.DistinctBy(v => (v.Type, v.Url)).ToList();
+        return await WithAniList(results).ConfigureAwait(false);
     }
 
     internal static List<RemoteImageInfo> ParseFanart(JsonElement root, bool movie, int? season, int minWidth)
@@ -94,5 +101,12 @@ public sealed class AnimeClickArtwork(AnimeClickTmdbClient tmdb, AnimeClickFanar
         && uri.Scheme == "https" && uri.IsDefaultPort && string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment)
         && ((uri.IdnHost == "image.tmdb.org" && uri.AbsolutePath.StartsWith("/t/p/original/", StringComparison.Ordinal)
             && TmdbImageUrl(uri.AbsolutePath["/t/p/original".Length..]) == uri.AbsoluteUri)
-            || NormalizeFanartUrl(url) == uri.AbsoluteUri);
+            || NormalizeFanartUrl(url) == uri.AbsoluteUri
+            || IsAniListImage(url));
+
+    /// <summary>AniList's CDN, only under the paths it uses for anime covers, banners and staff photos.</summary>
+    internal static bool IsAniListImage(string? url) => Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && uri.Scheme == "https" && uri.IsDefaultPort && uri.IdnHost == "s4.anilist.co"
+        && string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment)
+        && Regex.IsMatch(uri.AbsolutePath, @"^/file/anilistcdn/(?:media/anime/(?:cover/(?:extraLarge|large|medium)|banner)|staff/(?:large|medium))/[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|webp)$", RegexOptions.IgnoreCase);
 }

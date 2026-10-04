@@ -21,6 +21,13 @@ public class PluginConfiguration : BasePluginConfiguration
 
     public string CommunityGitHubToken { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Complete works from AniList (no key): cast with characters, animation studio, dates, status, score,
+    /// trailer, cover and banner, plus the year of each season for the sequel traversal. Off until the
+    /// administrator confirms it in the setup, which proposes it switched on.
+    /// </summary>
+    public bool EnableAniListMetadata { get; set; } = false;
+
     // ── Metadati ──
     /// <summary>Resolve external identities and complete metadata internally, without other Jellyfin metadata plugins.</summary>
     public bool EnableIntegratedMetadata { get; set; } = true;
@@ -197,7 +204,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.4.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.5.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Schema of the persisted settings. One-time upgrades are gated on this rather than on whether

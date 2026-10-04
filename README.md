@@ -20,9 +20,12 @@ Nelle librerie dedicate agli anime puoi attivare **AnimeClick come unico provide
 | **TMDB** | Identificazione delle opere, completamento dei dati mancanti e immagini alla risoluzione originale | [Chiave API TMDB](https://developer.themoviedb.org/docs/getting-started) |
 | **Fanart** | Locandine, sfondi anche 4K, loghi, banner e artwork delle stagioni | [Chiave personale Fanart](https://fanart.tv/get-an-api-key/), sufficiente anche da sola |
 | **TheTVDB** | Fonte aggiuntiva per titoli e trame | [Chiave API TheTVDB](https://thetvdb.com/dashboard) e opzione **Usa TheTVDB** |
+| **AniList** | Cast giapponese con i personaggi, studio di animazione, date, voto, trailer, copertina e banner; l'anno di ogni stagione per collegare i sequel | Nessuna chiave: opzione **Usa AniList** in Fonti |
 | **Traduzione AI** | Traduzione dei testi disponibili soltanto in inglese | Servizio abilitato, modello scelto e credenziali richieste dal servizio |
 
-I metadati vengono completati **campo per campo**: AnimeClick → altre fonti in italiano → testi inglesi tradotti. Le immagini seguono l'ordine **Fanart → TMDB → locandina AnimeClick**. Le fonti aggiuntive funzionano solo se configurate.
+I metadati vengono completati **campo per campo**: AnimeClick → altre fonti in italiano → testi inglesi tradotti. Cast, studio, date, voto e trailer: AnimeClick → AniList → TMDB. Le immagini seguono l'ordine **Fanart → TMDB → AniList → locandina AnimeClick**. Le fonti aggiuntive funzionano solo se configurate.
+
+AniList non scrive testi (è solo in inglese) e un suo ID viene usato soltanto se tipo (film o serie) e anno coincidono con l'opera: un ID lasciato da un altro plugin che indica uno spot o un'altra stagione viene ignorato. Quando Jellyfin non sa in che anno è andata in onda una stagione, il plugin lo ricava dalla catena dei sequel di AniList, ma solo se quella stagione ha lo stesso numero di episodi della libreria.
 
 I nomi propri, gli ID e i dati numerici non vengono tradotti. Se manca un dato o l'abbinamento è ambiguo, il campo resta invariato: il plugin non inventa titoli o trame.
 

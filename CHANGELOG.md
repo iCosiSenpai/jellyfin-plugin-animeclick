@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.0.0
+
+AniList come fonte senza chiave insieme a TMDB: cast giapponese con i personaggi, studio di animazione, date, stato, voto, trailer, copertina e banner, solo nei campi vuoti. L'anno di una stagione senza date arriva dalla catena dei sequel di AniList, se gli episodi coincidono. Gli ID AniList che non corrispondono per tipo o anno vengono ignorati. Nuovo passo AniList nel setup.
+
+- [Note complete](docs/releases/1.5.0.0.md)
+- [Audit e verifiche](docs/AUDIT-1.5.md)
+
 ## 1.4.0.0
 
 Comunità per tutti: dopo una correzione il plugin chiede se condividerla e la invia tramite il servizio della comunità, senza account; il token GitHub diventa facoltativo. Si condividono anche le stagioni con una scheda propria, applicate agli altri solo se numero di stagione ed episodi coincidono. Elenco approvato aggiornato ogni giorno, controlli automatici e approvazione con un'etichetta, tessera Comunità in Inizio, passo Comunità nel setup e scelta della stagione in «Correggi un abbinamento».

@@ -102,7 +102,7 @@ public sealed class AnimeClickEpisodeLayoutResolver
 
             return seasons.Count == 0
                 ? null
-                : new AnimeClickEpisodeLibraryLayout(series.Id, seasons);
+                : new AnimeClickEpisodeLibraryLayout(series.Id, seasons, new Dictionary<string, string>(series.ProviderIds));
         }
         catch (Exception ex)
         {
@@ -149,13 +149,18 @@ public sealed class AnimeClickEpisodeLibraryLayout
 {
     public AnimeClickEpisodeLibraryLayout(
         Guid seriesId,
-        IReadOnlyDictionary<int, AnimeClickEpisodeSeasonLayout> seasons)
+        IReadOnlyDictionary<int, AnimeClickEpisodeSeasonLayout> seasons,
+        IReadOnlyDictionary<string, string>? seriesProviderIds = null)
     {
         SeriesId = seriesId;
         Seasons = seasons;
+        SeriesProviderIds = seriesProviderIds ?? new Dictionary<string, string>();
     }
 
     public Guid SeriesId { get; }
+
+    /// <summary>The series' public IDs: AniList's tells which year each season aired.</summary>
+    public IReadOnlyDictionary<string, string> SeriesProviderIds { get; }
 
     public IReadOnlyDictionary<int, AnimeClickEpisodeSeasonLayout> Seasons { get; }
 

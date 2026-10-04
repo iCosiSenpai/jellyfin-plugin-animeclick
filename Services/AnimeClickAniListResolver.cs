@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using AnimeClick.Plugin.Configuration;
+using AnimeClick.Plugin.Models;
 using Microsoft.Extensions.Logging;
 
 namespace AnimeClick.Plugin.Services;
@@ -173,6 +174,96 @@ public class AnimeClickAniListResolver
         finally
         {
             gate.Release();
+        }
+    }
+
+    private const string MediaQuery = """
+        query ($id: Int!) {
+          Media(id: $id, type: ANIME) {
+            id format episodes status seasonYear averageScore bannerImage
+            startDate { year month day }
+            endDate { year month day }
+            title { romaji }
+            coverImage { extraLarge large }
+            trailer { site id }
+            studios(isMain: true) { nodes { name } }
+            characters(perPage: 25, sort: [ROLE, RELEVANCE]) {
+              edges { node { name { full } } voiceActors(language: JAPANESE) { name { full } image { large } } }
+            }
+            staff(perPage: 25, sort: [RELEVANCE]) { edges { role node { name { full } image { large } } } }
+            relations { edges { relationType node { id type format seasonYear episodes } } }
+          }
+        }
+        """;
+
+    /// <summary>
+    /// One AniList entry with everything the plugin can complete from it, cached like an AnimeClick
+    /// card. Shares the throttle and the circuit breaker of the identity lookups: AniList counts both.
+    /// A missing entry is negatively cached; a failed request is not.
+    /// </summary>
+    public async Task<AnimeClickAniListMedia?> GetMediaAsync(int id, PluginConfiguration configuration, CancellationToken cancellationToken)
+    {
+        if (id <= 0) return null;
+        var cacheKey = "anilist:media:v1::" + id.ToString(CultureInfo.InvariantCulture);
+        var cached = await _cache.GetAsync<AnimeClickAniListMedia>(cacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
+        if (cached is not null) return cached;
+        if (string.Equals(await _cache.GetAsync<string>(cacheKey + "::miss", configuration.NegativeCacheHours, cancellationToken).ConfigureAwait(false), "miss", StringComparison.Ordinal))
+            return null;
+        if (!Breaker.TryEnter()) return null;
+
+        try
+        {
+            using var client = _httpClientFactory.CreateClient(AnimeClickHttp.ClientName);
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.MaxResponseContentBufferSize = MaximumResponseBytes;
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://graphql.anilist.co")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { query = MediaQuery, variables = new { id } }), Encoding.UTF8, "application/json")
+            };
+            request.Headers.TryAddWithoutValidation("User-Agent", AnimeClickClient.GetEffectiveUserAgent(configuration));
+            request.Headers.TryAddWithoutValidation("Accept", "application/json");
+            await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (RequestThrottle.IsRateLimited(response.StatusCode))
+            {
+                Breaker.RecordIndeterminate();
+                Throttle.NoticeRateLimit(response);
+                return null;
+            }
+
+            // AniList answers 404 with a JSON body for an ID that does not exist.
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                Breaker.RecordSuccess();
+                await _cache.SetAsync(cacheKey + "::miss", "miss", cancellationToken).ConfigureAwait(false);
+                return null;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Breaker.RecordFailure();
+                return null;
+            }
+
+            Breaker.RecordSuccess();
+            using var document = JsonDocument.Parse(json);
+            var media = document.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object
+                && data.TryGetProperty("Media", out var node) ? AnimeClickAniListMedia.Parse(node) : null;
+            if (media is null) return null;
+            await _cache.SetAsync(cacheKey, media, cancellationToken).ConfigureAwait(false);
+            return media;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            Breaker.RecordIndeterminate();
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Breaker.RecordFailure();
+            _logger.LogDebug(ex, "AniListResolver: media {Id} unavailable", id);
+            return null;
         }
     }
 

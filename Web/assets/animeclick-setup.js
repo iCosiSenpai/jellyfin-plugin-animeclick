@@ -17,7 +17,7 @@
     var val = AC.util.val, plural = AC.util.plural, truncate = AC.util.truncate;
     var ui = AC.ui, api = AC.api;
 
-    var SETUP_VERSION = 3;
+    var SETUP_VERSION = 4;
 
     var STEPS = [
         { id: 'welcome', since: 1, label: 'Benvenuto', render: renderWelcome },
@@ -26,6 +26,7 @@
         { id: 'preferences', since: 1, label: 'Preferenze', render: renderPreferences },
         { id: 'libraries', since: 2, label: 'Librerie', render: renderLibraries },
         { id: 'community', since: 3, label: 'Comunità', render: renderCommunity },
+        { id: 'anilist', since: 4, updateOnly: true, label: 'AniList', render: renderAniList },
         { id: 'done', since: 1, always: true, label: 'Fatto', render: renderDone }
     ];
 
@@ -83,6 +84,7 @@
         // is shown: a setup reopened later keeps whatever the administrator chose since.
         draft.EnableCommunityMappings = (Number(config.SetupCompletedVersion) || 0) < 3 ? true : !!config.EnableCommunityMappings;
         draft.CommunitySharingMode = ['Ask', 'Always', 'Never'].indexOf(config.CommunitySharingMode) >= 0 ? config.CommunitySharingMode : 'Ask';
+        draft.EnableAniListMetadata = (Number(config.SetupCompletedVersion) || 0) < 4 ? true : !!config.EnableAniListMetadata;
         AC.app.showSetup(true);
         render();
     }
@@ -230,6 +232,7 @@
         main.appendChild(h('div', { class: 'ac-row' }, tmdbTest, tmdbResult));
         main.appendChild(fanart);
         main.appendChild(h('div', { class: 'ac-row' }, fanartTest, fanartResult));
+        main.appendChild(aniListSwitch());
         main.appendChild(ui.hint('TheTVDB e la traduzione AI le trovi più avanti in Fonti.'));
         el('acSetupTmdbKey').value = draft.TmdbApiKey;
         el('acSetupFanartKey').value = draft.FanartPersonalApiKey;
@@ -288,6 +291,7 @@
                 PREFERENCES.forEach(function (pref) { patch[pref[0]] = !!draft[pref[0]]; });
                 patch.TmdbApiKey = draft.TmdbApiKey;
                 patch.FanartPersonalApiKey = draft.FanartPersonalApiKey;
+                patch.EnableAniListMetadata = !!draft.EnableAniListMetadata;
                 ui.setBusy(buttonNode, true, 'Salvataggio…');
                 return AC.settings.savePatch(patch).then(function () { return true; }).catch(function (error) {
                     ui.toast('Non riesco a salvare: ' + truncate(error.message, 200), 'error');
@@ -378,6 +382,40 @@
         mascot(side, 'Solo le librerie anime: il resto lo lascio stare.');
     }
 
+    function aniListSwitch() {
+        var row = ui.switchRow('acSetupAniList', 'AniList, senza chiave',
+            'Completa cast con personaggi e doppiatori, studio, date, voto, trailer, copertina e banner, e l’anno delle stagioni per collegare i sequel. Solo i campi vuoti; nessun testo, perché AniList è in inglese.');
+        var input = row.querySelector('input');
+        input.checked = !!draft.EnableAniListMetadata;
+        input.addEventListener('change', function () { draft.EnableAniListMetadata = input.checked; });
+        return ui.switches([row]);
+    }
+
+    function renderAniList(main, side) {
+        heading('アニリスト', 'Novità', 'AniList, insieme a TMDB',
+            'Una fonte in più, senza chiave, per i dati delle opere che AnimeClick non ha. Non cambia nulla di quello che è già nella libreria: completa i campi vuoti al prossimo aggiornamento dei metadati.')
+            .forEach(function (node) { if (node) main.appendChild(node); });
+        main.appendChild(h('div', { class: 'ac-features' },
+            feature('users', 'Cast giapponese con i personaggi', 'Doppiatori con foto e il personaggio che interpretano, più regia e soggetto.'),
+            feature('sparkles', 'Studio, date, voto e trailer', 'Lo studio di animazione al posto delle case di produzione, quando AnimeClick non lo indica.'),
+            feature('layers', 'Stagioni più sicure', 'Quando Jellyfin non sa in che anno è andata in onda una stagione, AniList lo dice: il sequel giusto si trova anche senza date.')));
+        main.appendChild(aniListSwitch());
+        main.appendChild(ui.hint('Un ID AniList viene usato solo se tipo (film o serie) e anno coincidono con l’opera. Puoi cambiare idea in Fonti.'));
+        actions(main, {
+            nextLabel: 'Salva e continua',
+            nextIcon: 'save',
+            beforeNext: function (buttonNode) {
+                ui.setBusy(buttonNode, true, 'Salvataggio…');
+                return AC.settings.savePatch({ EnableAniListMetadata: !!draft.EnableAniListMetadata }).then(function () { return true; }).catch(function (error) {
+                    ui.toast('Non riesco a salvare: ' + truncate(error.message, 200), 'error');
+                    ui.setBusy(buttonNode, false);
+                    return false;
+                });
+            }
+        });
+        mascot(side, 'Più dati per i tuoi anime, senza nessuna chiave!');
+    }
+
     var SHARING = [
         ['Ask', 'Chiedimi ogni volta', 'Consigliato. Dopo una correzione ti mostro cosa verrebbe inviato e decidi tu.'],
         ['Always', 'Condividi sempre', 'Le correzioni partono da sole, con i soli ID pubblici.'],
@@ -438,6 +476,7 @@
         main.appendChild(h('ul', { class: 'ac-list' },
             summary(true, 'AnimeClick', 'Pronto, senza chiavi.'),
             summary(state.tmdb, 'TMDB', state.tmdb ? 'Chiave salvata.' : 'Puoi aggiungerla quando vuoi in Fonti.'),
+            summary(state.aniList, 'AniList', state.aniList ? 'Completa le opere senza chiave.' : 'Spenta: puoi accenderla in Fonti.'),
             summary(active > 0, 'Librerie', active ? plural(active, 'libreria usa', 'librerie usano') + ' AnimeClick come primo provider.' : 'Attiva AnimeClick nelle librerie anime da Inizio.'),
             summary(!!config.EnableCommunityMappings, 'Comunità', (config.EnableCommunityMappings ? 'Ricevi gli abbinamenti approvati. ' : 'Abbinamenti della comunità spenti. ')
                 + (config.CommunitySharingMode === 'Always' ? 'Le tue correzioni vengono condivise.' : config.CommunitySharingMode === 'Never' ? 'Le tue correzioni restano tue.' : 'Ti chiederò se condividere ogni correzione.'))));

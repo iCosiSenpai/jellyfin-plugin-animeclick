@@ -335,6 +335,7 @@
         replace(host,
             pill('AnimeClick', true, 'Sempre attiva'),
             pill('TMDB', state.tmdb),
+            pill('AniList', state.aniList, state.aniList ? 'Attiva, senza chiave' : 'Spenta'),
             pill('Fanart', state.fanart),
             pill('TheTVDB', state.tvdb),
             pill('Traduzione AI', state.ai));

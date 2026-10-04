@@ -24,7 +24,7 @@
         EnableCast: true, EnableThemeSongs: true, EnableIntegratedImages: true, EnableFanartImages: true,
         EnableAnimeClickImages: true, OverwriteNonItalianFields: false, EnableStudios: true,
         EnableCommunityRating: true, EnableCollections: false, EnableTvdbSynopsis: false,
-        EnableAiTranslation: true, EnableCommunityMappings: false
+        EnableAiTranslation: true, EnableCommunityMappings: false, EnableAniListMetadata: false
     };
     var NUMBERS = {
         MinPosterWidth: 400, EpisodeTranslationTimeoutSec: 90, TranslationCacheHours: 87600,
@@ -263,6 +263,7 @@
         var ai = !!(config.EnableAiTranslation && config.AiModel && (config.AiEndpoint || config.AiProvider));
         return {
             tmdb: !!config.TmdbApiKey,
+            aniList: !!config.EnableAniListMetadata,
             fanart: fanart,
             tvdb: !!(config.EnableTvdbSynopsis && config.TvdbApiKey),
             ai: ai
@@ -294,6 +295,10 @@
                     : state[source] ? ui.badge('Da verificare', 'warn') : ui.badge('Non configurata');
             replace(badgeHost, node);
         });
+        var aniListState = el('acSourceState_anilist');
+        if (aniListState) {
+            replace(aniListState, el('acEnableAniListMetadata').checked ? ui.badge('Attiva', 'ok', 'check') : ui.badge('Spenta'));
+        }
         renderChain(state);
     }
 
@@ -540,6 +545,10 @@
         tvdb.body.appendChild(h('div', { class: 'ac-row' }, testButton('tvdb', 'Verifica TheTVDB'), ui.liveStatus('acTestResult_tvdb')));
         tvdb.body.appendChild(ui.hint('Metadata provided by TheTVDB.'));
 
+        var anilist = sourceCard({ id: 'anilist', name: 'AniList', icon: 'users', role: 'Senza chiave: cast con personaggi e doppiatori, studio, date, voto, trailer, copertina e banner; e l’anno di ogni stagione per collegare i sequel.' });
+        anilist.body.appendChild(ui.switches([ui.switchRow('acEnableAniListMetadata', 'Usa AniList', 'Completa solo i campi che AnimeClick lascia vuoti, prima di TMDB.', { key: 'EnableAniListMetadata' })]));
+        anilist.body.appendChild(ui.hint('Non scrive testi: AniList è solo in inglese, quindi titoli e trame restano ad AnimeClick, TMDB e TheTVDB. Un ID AniList viene usato solo se tipo e anno coincidono con l’opera. Dati forniti da AniList.'));
+
         var ai = sourceCard({ id: 'ai', name: 'Traduzione AI', icon: 'translate', role: 'Ultima risorsa: traduce in italiano titoli e trame disponibili solo in inglese.' });
         ai.card.classList.add('ac-source-wide');
         ai.body.appendChild(ui.callout(null, 'Si attiva solo quando AnimeClick non ha il testo. Vengono inviati soltanto i testi da tradurre; i servizi online possono avere un costo.', 'info'));
@@ -571,7 +580,7 @@
             previewOut
         ]));
 
-        view.appendChild(h('div', { class: 'ac-sources' }, tmdb.card, fanart.card, tvdb.card, ai.card));
+        view.appendChild(h('div', { class: 'ac-sources' }, tmdb.card, fanart.card, tvdb.card, anilist.card, ai.card));
 
         el('acAiProvider').addEventListener('change', function () {
             // A model name from one vendor means nothing to another, and the endpoint follows the service.
