@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/blob/main/community/schema-v2.json",
+  "title": "AnimeClick community mappings, schema 2",
+  "description": "Contract shared by the plugin, the relay and the review action. fixtures/proposals.json lists the examples every implementation must accept or reject.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "mappings"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "relay": {
+      "description": "Where plugins without a GitHub token send proposals. Plain https, no credentials, query or fragment.",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^https://[^/?#@]+(/[^?#]*)?$"
+    },
+    "mappings": {
+      "type": "array",
+      "maxItems": 5000,
+      "items": { "$ref": "#/$defs/mapping" }
+    }
+  },
+  "$defs": {
+    "publicId": { "type": "string", "pattern": "^[1-9][0-9]{0,9}$" },
+    "mapping": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "animeClickId", "providerIds"],
+          "properties": {
+            "kind": { "enum": ["Series", "Movie"] },
+            "animeClickId": { "$ref": "#/$defs/publicId" },
+            "providerIds": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": false,
+              "properties": {
+                "Tmdb": { "$ref": "#/$defs/publicId" },
+                "Tvdb": { "$ref": "#/$defs/publicId" },
+                "AniList": { "$ref": "#/$defs/publicId" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "animeClickId", "series", "seasonNumber", "episodeCount"],
+          "properties": {
+            "kind": { "const": "Season" },
+            "animeClickId": { "$ref": "#/$defs/publicId" },
+            "series": {
+              "description": "IDs of the whole series. AniList is excluded: it identifies a single cour.",
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": false,
+              "properties": {
+                "Tmdb": { "$ref": "#/$defs/publicId" },
+                "Tvdb": { "$ref": "#/$defs/publicId" }
+              }
+            },
+            "seasonNumber": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "episodeCount": { "type": "integer", "minimum": 1, "maximum": 2000 }
+          }
+        }
+      ]
+    }
+  }
+}

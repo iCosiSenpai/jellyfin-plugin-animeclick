@@ -97,12 +97,15 @@ public class AnimeClickIdentifyController : ControllerBase
             return Conflict(new { error = "L’abbinamento è cambiato durante la verifica. Ricarica la scheda e riprova." });
         item.SetProviderId(ProviderKey, animeClickId);
         await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
-        string? communityMessage = null;
+        AnimeClickCommunityOffer? communityOffer = null;
         if (_community is not null)
         {
-            try { communityMessage = await _community.EnqueueCorrectionAsync(item, cancellationToken).ConfigureAwait(false); }
-            catch { communityMessage = "La correzione locale è salvata; l’invio alla comunità non è stato accodato."; }
+            try { communityOffer = await _community.OfferAsync(item, cancellationToken).ConfigureAwait(false); }
+            catch { communityOffer = new AnimeClickCommunityOffer { Message = "La correzione locale è salvata; l’invio alla comunità non è stato accodato." }; }
         }
+
+        var communityMessage = communityOffer?.Message;
+        var communityProposal = communityOffer?.Proposal;
         var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
         {
             MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
@@ -121,7 +124,7 @@ public class AnimeClickIdentifyController : ControllerBase
             return Ok(new IdentifyAndRefreshResponse
             {
                 ItemId = item.Id.ToString(), AnimeClickId = animeClickId, PreviousAnimeClickId = previousId,
-                CommunityMessage = communityMessage,
+                CommunityMessage = communityMessage, CommunityProposal = communityProposal,
                 Error = "L’abbinamento è salvato, ma l’aggiornamento non è partito. Usa «Aggiorna metadati» nella scheda Jellyfin."
             });
         }
@@ -129,7 +132,8 @@ public class AnimeClickIdentifyController : ControllerBase
         {
             Success = true, ItemId = item.Id.ToString(), Name = item.Name, AnimeClickId = animeClickId,
             PreviousAnimeClickId = previousId, RefreshTriggered = true, ReplaceAllImages = request.ReplaceAllImages,
-            CommunityMessage = communityMessage
+            CommunityMessage = communityMessage,
+            CommunityProposal = communityProposal
         });
     }
 
@@ -238,6 +242,10 @@ public sealed class IdentifyAndRefreshRequest
 public sealed class IdentifyAndRefreshResponse
 {
     public string? CommunityMessage { get; set; }
+
+    /// <summary>With «Chiedi»: the exact public IDs «Condividi» would send for this correction.</summary>
+    public AnimeClickCommunityMapping? CommunityProposal { get; set; }
+
     public bool Success { get; set; }
     public string ItemId { get; set; } = string.Empty;
     public string? Name { get; set; }

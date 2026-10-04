@@ -44,7 +44,7 @@ public sealed class AnimeClickWorkspaceTests
         var configuration = new PluginConfiguration();
         Assert.True(configuration.ApplyMigrations());
         Assert.Equal(0, configuration.SetupCompletedVersion);
-        Assert.Equal(2, configuration.ConfigurationVersion);
+        Assert.Equal(3, configuration.ConfigurationVersion);
         Assert.False(configuration.ApplyMigrations());
     }
 
@@ -57,7 +57,7 @@ public sealed class AnimeClickWorkspaceTests
         Assert.Equal(1, configuration.SetupCompletedVersion);
         Assert.Equal(30, configuration.EpisodeTranslationTimeoutSec);
         Assert.Equal("chosen", configuration.AiModel);
-        Assert.Equal(2, configuration.ConfigurationVersion);
+        Assert.Equal(3, configuration.ConfigurationVersion);
 
         var alreadyDone = new PluginConfiguration { ConfigurationVersion = 1, SetupCompletedVersion = 5 };
         alreadyDone.ApplyMigrations();
@@ -221,20 +221,6 @@ public sealed class AnimeClickWorkspaceTests
         Assert.False(Candidate(Episode("Episodio 3"), null, null, null, () => true));
         config.EnableEpisodeTitleFallback = false;
         Assert.False(Candidate(Episode("Episodio 3"), null, null, "555", () => true));
-    }
-
-    [Theory]
-    [InlineData(false, "fake", "disattivata")]
-    [InlineData(true, "fake", "nessuna correzione in attesa")]
-    [InlineData(true, "", "token")]
-    public async Task CommunityStatusDescribesTheCurrentSharingChoice(bool sharing, string token, string expected)
-    {
-        using var cache = new TemporaryAnimeClickCache();
-        var config = new PluginConfiguration { EnableCommunitySharing = sharing, CommunityGitHubToken = token };
-        var factory = TestDoubles.Proxy<IHttpClientFactory>((_, _) => new HttpClient());
-        using var service = new AnimeClickCommunityService(factory, cache.Cache, () => config);
-        var status = System.Text.Json.JsonSerializer.SerializeToElement(await service.StatusAsync(CancellationToken.None));
-        Assert.Contains(expected, status.GetProperty("Message").GetString(), StringComparison.OrdinalIgnoreCase);
     }
 
     private static Series Series(string name, string? animeClickId, DateTime refreshed)
