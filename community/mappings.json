@@ -1,4 +1,1487 @@
 {
-  "mappings": [],
+  "mappings": [
+    {
+      "animeClickId": "893",
+      "kind": "Movie",
+      "providerIds": {
+        "Tmdb": "4977"
+      }
+    },
+    {
+      "animeClickId": "1616",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "5",
+        "Tmdb": "11299"
+      }
+    },
+    {
+      "animeClickId": "2663",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "7311",
+        "Tmdb": "36865"
+      }
+    },
+    {
+      "animeClickId": "3432",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "9617",
+        "Tmdb": "120811"
+      }
+    },
+    {
+      "animeClickId": "3800",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "14669",
+        "Tmdb": "225086"
+      }
+    },
+    {
+      "animeClickId": "4371",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "14175",
+        "Tmdb": "229756"
+      }
+    },
+    {
+      "animeClickId": "16714",
+      "kind": "Movie",
+      "providerIds": {
+        "Tmdb": "372058"
+      }
+    },
+    {
+      "animeClickId": "22906",
+      "kind": "Movie",
+      "providerIds": {
+        "Tmdb": "608826"
+      }
+    },
+    {
+      "animeClickId": "24794",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "102976",
+        "Tmdb": "532067"
+      }
+    },
+    {
+      "animeClickId": "25065",
+      "kind": "Movie",
+      "providerIds": {
+        "Tmdb": "637202"
+      }
+    },
+    {
+      "animeClickId": "25493",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "104157",
+        "Tmdb": "572154"
+      }
+    },
+    {
+      "animeClickId": "26248",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "106286",
+        "Tmdb": "568160"
+      }
+    },
+    {
+      "animeClickId": "33991",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "127271",
+        "Tmdb": "776305"
+      }
+    },
+    {
+      "animeClickId": "38803",
+      "kind": "Movie",
+      "providerIds": {
+        "Tmdb": "938567"
+      }
+    },
+    {
+      "animeClickId": "47097",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "154967",
+        "Tmdb": "1056803"
+      }
+    },
+    {
+      "animeClickId": "48990",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "161474",
+        "Tmdb": "1086591"
+      }
+    },
+    {
+      "animeClickId": "53342",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "182317",
+        "Tmdb": "1363979"
+      }
+    },
+    {
+      "animeClickId": "56117",
+      "kind": "Movie",
+      "providerIds": {
+        "AniList": "177687",
+        "Tmdb": "1295026"
+      }
+    },
+    {
+      "animeClickId": "48",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "66",
+        "Tmdb": "12143",
+        "Tvdb": "79077"
+      }
+    },
+    {
+      "animeClickId": "654",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "457",
+        "Tmdb": "26867",
+        "Tvdb": "79214"
+      }
+    },
+    {
+      "animeClickId": "783",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "849",
+        "Tmdb": "42511",
+        "Tvdb": "79414"
+      }
+    },
+    {
+      "animeClickId": "1137",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "2034",
+        "Tmdb": "27167",
+        "Tvdb": "80901"
+      }
+    },
+    {
+      "animeClickId": "1238",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "2167",
+        "Tmdb": "24835",
+        "Tvdb": "80644"
+      }
+    },
+    {
+      "animeClickId": "1253",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "2963",
+        "Tmdb": "56354",
+        "Tvdb": "81463"
+      }
+    },
+    {
+      "animeClickId": "1515",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "4224",
+        "Tmdb": "42916",
+        "Tvdb": "83277"
+      }
+    },
+    {
+      "animeClickId": "1533",
+      "kind": "Series",
+      "providerIds": {
+        "Tmdb": "30980",
+        "Tvdb": "83322"
+      }
+    },
+    {
+      "animeClickId": "1951",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "5680",
+        "Tmdb": "42253",
+        "Tvdb": "87501"
+      }
+    },
+    {
+      "animeClickId": "2378",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "6213"
+      }
+    },
+    {
+      "animeClickId": "2388",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "6045",
+        "Tmdb": "68854",
+        "Tvdb": "117801"
+      }
+    },
+    {
+      "animeClickId": "2390",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "6702",
+        "Tmdb": "46261",
+        "Tvdb": "114801"
+      }
+    },
+    {
+      "animeClickId": "2635",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "6956",
+        "Tmdb": "46153",
+        "Tvdb": "145211"
+      }
+    },
+    {
+      "animeClickId": "2723",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "7769",
+        "Tmdb": "68637",
+        "Tvdb": "172781"
+      }
+    },
+    {
+      "animeClickId": "2971",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "8525",
+        "Tmdb": "56351",
+        "Tvdb": "195711"
+      }
+    },
+    {
+      "animeClickId": "3055",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "9041",
+        "Tmdb": "46025",
+        "Tvdb": "219131"
+      }
+    },
+    {
+      "animeClickId": "3128",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "10165",
+        "Tmdb": "44684",
+        "Tvdb": "240291"
+      }
+    },
+    {
+      "animeClickId": "3135",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "9289",
+        "Tmdb": "42417",
+        "Tvdb": "246521"
+      }
+    },
+    {
+      "animeClickId": "3598",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "12189",
+        "Tmdb": "65329",
+        "Tvdb": "257764"
+      }
+    },
+    {
+      "animeClickId": "3610",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "13203"
+      }
+    },
+    {
+      "animeClickId": "3696",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "11757",
+        "Tmdb": "45782",
+        "Tvdb": "259640"
+      }
+    },
+    {
+      "animeClickId": "3733",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "14289",
+        "Tmdb": "52878",
+        "Tvdb": "262112"
+      }
+    },
+    {
+      "animeClickId": "3767",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "13759",
+        "Tmdb": "50325",
+        "Tvdb": "262114"
+      }
+    },
+    {
+      "animeClickId": "4033",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "13655",
+        "Tmdb": "53715",
+        "Tvdb": "259638"
+      }
+    },
+    {
+      "animeClickId": "4225",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "16049"
+      }
+    },
+    {
+      "animeClickId": "4231",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "16067",
+        "Tmdb": "61408",
+        "Tvdb": "272073"
+      }
+    },
+    {
+      "animeClickId": "4510",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "19221",
+        "Tmdb": "72798",
+        "Tvdb": "272314"
+      }
+    },
+    {
+      "animeClickId": "5025",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "18671"
+      }
+    },
+    {
+      "animeClickId": "5123",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "19023",
+        "Tmdb": "74191",
+        "Tvdb": "275609"
+      }
+    },
+    {
+      "animeClickId": "5226",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "20529",
+        "Tmdb": "60812",
+        "Tvdb": "278196"
+      }
+    },
+    {
+      "animeClickId": "7614",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21018",
+        "Tmdb": "62283",
+        "Tvdb": "291629"
+      }
+    },
+    {
+      "animeClickId": "7621",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "20566",
+        "Tmdb": "68574",
+        "Tvdb": "292689"
+      }
+    },
+    {
+      "animeClickId": "7883",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21131",
+        "Tmdb": "64671",
+        "Tvdb": "293996"
+      }
+    },
+    {
+      "animeClickId": "8687",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21092",
+        "Tmdb": "67154",
+        "Tvdb": "299506"
+      }
+    },
+    {
+      "animeClickId": "8695",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21243",
+        "Tmdb": "75431",
+        "Tvdb": "299537"
+      }
+    },
+    {
+      "animeClickId": "8708",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "20771",
+        "Tmdb": "64552",
+        "Tvdb": "284073"
+      }
+    },
+    {
+      "animeClickId": "8873",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21202",
+        "Tmdb": "65844",
+        "Tvdb": "303867"
+      }
+    },
+    {
+      "animeClickId": "8954",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21613",
+        "Tmdb": "69346",
+        "Tvdb": "315500"
+      }
+    },
+    {
+      "animeClickId": "8971",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21290",
+        "Tmdb": "65948",
+        "Tvdb": "306741"
+      }
+    },
+    {
+      "animeClickId": "9073",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21686",
+        "Tmdb": "68188",
+        "Tvdb": "316814"
+      }
+    },
+    {
+      "animeClickId": "9126",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21444",
+        "Tmdb": "65661",
+        "Tvdb": "303147"
+      }
+    },
+    {
+      "animeClickId": "16615",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21804",
+        "Tmdb": "67676",
+        "Tvdb": "313435"
+      }
+    },
+    {
+      "animeClickId": "16777",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21764",
+        "Tmdb": "68070",
+        "Tvdb": "317802"
+      }
+    },
+    {
+      "animeClickId": "17216",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21887",
+        "Tmdb": "69284",
+        "Tvdb": "319982"
+      }
+    },
+    {
+      "animeClickId": "17764",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "97768",
+        "Tmdb": "76125",
+        "Tvdb": "335116"
+      }
+    },
+    {
+      "animeClickId": "18499",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "21860",
+        "Tmdb": "70639",
+        "Tvdb": "325208"
+      }
+    },
+    {
+      "animeClickId": "19317",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "98425",
+        "Tmdb": "70972",
+        "Tvdb": "327261"
+      }
+    },
+    {
+      "animeClickId": "19352",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "98436",
+        "Tmdb": "73833",
+        "Tvdb": "316842"
+      }
+    },
+    {
+      "animeClickId": "20163",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "98693",
+        "Tmdb": "76099",
+        "Tvdb": "337013"
+      }
+    },
+    {
+      "animeClickId": "20650",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "97940",
+        "Tmdb": "73223",
+        "Tvdb": "331753"
+      }
+    },
+    {
+      "animeClickId": "21148",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "101426",
+        "Tmdb": "75865",
+        "Tvdb": "337936"
+      }
+    },
+    {
+      "animeClickId": "22695",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "100526",
+        "Tmdb": "77721",
+        "Tvdb": "342010"
+      }
+    },
+    {
+      "animeClickId": "23291",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "100922",
+        "Tmdb": "79166",
+        "Tvdb": "343913"
+      }
+    },
+    {
+      "animeClickId": "23515",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "101045",
+        "Tmdb": "80537",
+        "Tvdb": "348294"
+      }
+    },
+    {
+      "animeClickId": "23809",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "101291",
+        "Tmdb": "82739",
+        "Tvdb": "345596"
+      }
+    },
+    {
+      "animeClickId": "23844",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "101310",
+        "Tmdb": "82823",
+        "Tvdb": "350555"
+      }
+    },
+    {
+      "animeClickId": "24530",
+      "kind": "Series",
+      "providerIds": {
+        "Tmdb": "83121",
+        "Tvdb": "354198"
+      }
+    },
+    {
+      "animeClickId": "25673",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "104461",
+        "Tmdb": "95213",
+        "Tvdb": "423893"
+      }
+    },
+    {
+      "animeClickId": "25686",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "104462"
+      }
+    },
+    {
+      "animeClickId": "25687",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "104463",
+        "Tmdb": "90546",
+        "Tvdb": "360438"
+      }
+    },
+    {
+      "animeClickId": "25937",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "105156",
+        "Tmdb": "93256",
+        "Tvdb": "369048"
+      }
+    },
+    {
+      "animeClickId": "25987",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "105334",
+        "Tmdb": "85991",
+        "Tvdb": "357488"
+      }
+    },
+    {
+      "animeClickId": "26147",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "105932",
+        "Tmdb": "88042",
+        "Tvdb": "361705"
+      }
+    },
+    {
+      "animeClickId": "26918",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "108268",
+        "Tmdb": "91768",
+        "Tvdb": "366263"
+      }
+    },
+    {
+      "animeClickId": "27106",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "112625",
+        "Tmdb": "97009",
+        "Tvdb": "439228"
+      }
+    },
+    {
+      "animeClickId": "28177",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "110353",
+        "Tmdb": "92588",
+        "Tvdb": "378878"
+      }
+    },
+    {
+      "animeClickId": "28793",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "111965",
+        "Tmdb": "99080",
+        "Tvdb": "379923"
+      }
+    },
+    {
+      "animeClickId": "29067",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "112802",
+        "Tmdb": "96442",
+        "Tvdb": "401234"
+      }
+    },
+    {
+      "animeClickId": "30361",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "116267",
+        "Tmdb": "100049",
+        "Tvdb": "385077"
+      }
+    },
+    {
+      "animeClickId": "30361",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "127371",
+        "Tmdb": "100049",
+        "Tvdb": "385077"
+      }
+    },
+    {
+      "animeClickId": "30559",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "116589",
+        "Tmdb": "100565",
+        "Tvdb": "378609"
+      }
+    },
+    {
+      "animeClickId": "31070",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "117989",
+        "Tmdb": "103962",
+        "Tvdb": "400642"
+      }
+    },
+    {
+      "animeClickId": "31074",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "167820",
+        "Tmdb": "231677",
+        "Tvdb": "437799"
+      }
+    },
+    {
+      "animeClickId": "31637",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "120377",
+        "Tmdb": "105248",
+        "Tvdb": "384541"
+      }
+    },
+    {
+      "animeClickId": "31676",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "120646",
+        "Tmdb": "105511",
+        "Tvdb": "401874"
+      }
+    },
+    {
+      "animeClickId": "34665",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "128545",
+        "Tmdb": "116724",
+        "Tvdb": "395198"
+      }
+    },
+    {
+      "animeClickId": "34827",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "128712",
+        "Tmdb": "117061",
+        "Tvdb": "397197"
+      }
+    },
+    {
+      "animeClickId": "35123",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "129195",
+        "Tmdb": "117879",
+        "Tvdb": "404174"
+      }
+    },
+    {
+      "animeClickId": "36697",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "132456",
+        "Tmdb": "123446",
+        "Tvdb": "401911"
+      }
+    },
+    {
+      "animeClickId": "36713",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "132473",
+        "Tmdb": "123525",
+        "Tvdb": "401915"
+      }
+    },
+    {
+      "animeClickId": "39193",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "130586",
+        "Tmdb": "120155",
+        "Tvdb": "402652"
+      }
+    },
+    {
+      "animeClickId": "41179",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "143338",
+        "Tmdb": "154743",
+        "Tvdb": "414221"
+      }
+    },
+    {
+      "animeClickId": "42474",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "146210",
+        "Tmdb": "194774",
+        "Tvdb": "417658"
+      }
+    },
+    {
+      "animeClickId": "42643",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "146850",
+        "Tmdb": "196285",
+        "Tvdb": "418367"
+      }
+    },
+    {
+      "animeClickId": "43684",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "150075",
+        "Tmdb": "203040",
+        "Tvdb": "420657"
+      }
+    },
+    {
+      "animeClickId": "44780",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "153152",
+        "Tmdb": "207250",
+        "Tvdb": "422981"
+      }
+    },
+    {
+      "animeClickId": "44856",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "153332",
+        "Tmdb": "207493",
+        "Tvdb": "423094"
+      }
+    },
+    {
+      "animeClickId": "44912",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "153554",
+        "Tmdb": "217407",
+        "Tvdb": "423264"
+      }
+    },
+    {
+      "animeClickId": "45092",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "154214",
+        "Tmdb": "217405",
+        "Tvdb": "424116"
+      }
+    },
+    {
+      "animeClickId": "45394",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "154391",
+        "Tmdb": "209649",
+        "Tvdb": "424414"
+      }
+    },
+    {
+      "animeClickId": "45399",
+      "kind": "Series",
+      "providerIds": {
+        "Tmdb": "209707",
+        "Tvdb": "424435"
+      }
+    },
+    {
+      "animeClickId": "46164",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "155527",
+        "Tmdb": "212053",
+        "Tvdb": "424459"
+      }
+    },
+    {
+      "animeClickId": "46986",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "158036",
+        "Tmdb": "305567",
+        "Tvdb": "468660"
+      }
+    },
+    {
+      "animeClickId": "47235",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "158898",
+        "Tmdb": "216467",
+        "Tvdb": "424019"
+      }
+    },
+    {
+      "animeClickId": "47242",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "158926",
+        "Tmdb": "216523",
+        "Tvdb": "427919"
+      }
+    },
+    {
+      "animeClickId": "47685",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "160188",
+        "Tmdb": "218263",
+        "Tvdb": "429634"
+      }
+    },
+    {
+      "animeClickId": "49414",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "165790",
+        "Tmdb": "230189",
+        "Tvdb": "433584"
+      }
+    },
+    {
+      "animeClickId": "49521",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "164244",
+        "Tmdb": "231357",
+        "Tvdb": "433034"
+      }
+    },
+    {
+      "animeClickId": "49546",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "164299",
+        "Tmdb": "244624",
+        "Tvdb": "434310"
+      }
+    },
+    {
+      "animeClickId": "51979",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "169580",
+        "Tmdb": "290019",
+        "Tvdb": "440057"
+      }
+    },
+    {
+      "animeClickId": "51980",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "169582",
+        "Tmdb": "284581",
+        "Tvdb": "476185"
+      }
+    },
+    {
+      "animeClickId": "51982",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "169583",
+        "Tmdb": "250008",
+        "Tvdb": "467401"
+      }
+    },
+    {
+      "animeClickId": "52015",
+      "kind": "Series",
+      "providerIds": {
+        "Tmdb": "235930",
+        "Tvdb": "440193"
+      }
+    },
+    {
+      "animeClickId": "52975",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "170938",
+        "Tmdb": "239764",
+        "Tvdb": "442367"
+      }
+    },
+    {
+      "animeClickId": "53567",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "172439",
+        "Tmdb": "249031",
+        "Tvdb": "443904"
+      }
+    },
+    {
+      "animeClickId": "54007",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "173584",
+        "Tmdb": "248951",
+        "Tvdb": "444916"
+      }
+    },
+    {
+      "animeClickId": "54023",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "173694",
+        "Tmdb": "245285",
+        "Tvdb": "445011"
+      }
+    },
+    {
+      "animeClickId": "54025",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "173693",
+        "Tmdb": "259558",
+        "Tvdb": "445009"
+      }
+    },
+    {
+      "animeClickId": "54415",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "174802",
+        "Tmdb": "261091",
+        "Tvdb": "446141"
+      }
+    },
+    {
+      "animeClickId": "55849",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "177501",
+        "Tmdb": "291403",
+        "Tvdb": "449883"
+      }
+    },
+    {
+      "animeClickId": "56067",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "177697",
+        "Tmdb": "254987",
+        "Tvdb": "418123"
+      }
+    },
+    {
+      "animeClickId": "56150",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "177709",
+        "Tmdb": "207332",
+        "Tvdb": "423732"
+      }
+    },
+    {
+      "animeClickId": "56682",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "178548",
+        "Tmdb": "270474",
+        "Tvdb": "451596"
+      }
+    },
+    {
+      "animeClickId": "56733",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "178789"
+      }
+    },
+    {
+      "animeClickId": "57218",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "179955",
+        "Tmdb": "260823",
+        "Tvdb": "452710"
+      }
+    },
+    {
+      "animeClickId": "58071",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "181444",
+        "Tmdb": "271607",
+        "Tvdb": "454524"
+      }
+    },
+    {
+      "animeClickId": "58676",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "183128",
+        "Tmdb": "274548",
+        "Tvdb": "455605"
+      }
+    },
+    {
+      "animeClickId": "58993",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "183965",
+        "Tmdb": "276349",
+        "Tvdb": "453230"
+      }
+    },
+    {
+      "animeClickId": "59163",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "184591",
+        "Tmdb": "277513",
+        "Tvdb": "456835"
+      }
+    },
+    {
+      "animeClickId": "59191",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "184951",
+        "Tmdb": "278043",
+        "Tvdb": "457078"
+      }
+    },
+    {
+      "animeClickId": "59546",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "185262",
+        "Tmdb": "280049",
+        "Tvdb": "457532"
+      }
+    },
+    {
+      "animeClickId": "60261",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "186497",
+        "Tmdb": "283428",
+        "Tvdb": "459627"
+      }
+    },
+    {
+      "animeClickId": "61282",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "187538",
+        "Tmdb": "285993",
+        "Tvdb": "461194"
+      }
+    },
+    {
+      "animeClickId": "61375",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "187989",
+        "Tmdb": "284432",
+        "Tvdb": "461513"
+      }
+    },
+    {
+      "animeClickId": "61475",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "188525",
+        "Tmdb": "287028",
+        "Tvdb": "461714"
+      }
+    },
+    {
+      "animeClickId": "61858",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "189565",
+        "Tmdb": "285743",
+        "Tvdb": "462226"
+      }
+    },
+    {
+      "animeClickId": "62001",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "189987",
+        "Tmdb": "288551",
+        "Tvdb": "462400"
+      }
+    },
+    {
+      "animeClickId": "62045",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "190143",
+        "Tmdb": "288659",
+        "Tvdb": "462446"
+      }
+    },
+    {
+      "animeClickId": "62125",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "190704",
+        "Tmdb": "285818",
+        "Tvdb": "462598"
+      }
+    },
+    {
+      "animeClickId": "62375",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "192261",
+        "Tmdb": "290667",
+        "Tvdb": "463334"
+      }
+    },
+    {
+      "animeClickId": "62896",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "194219",
+        "Tmdb": "293489",
+        "Tvdb": "464625"
+      }
+    },
+    {
+      "animeClickId": "62937",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "194393",
+        "Tmdb": "293697",
+        "Tvdb": "464717"
+      }
+    },
+    {
+      "animeClickId": "63326",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "195600",
+        "Tmdb": "260463",
+        "Tvdb": "452711"
+      }
+    },
+    {
+      "animeClickId": "63362",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "195734",
+        "Tmdb": "295751",
+        "Tvdb": "465639"
+      }
+    },
+    {
+      "animeClickId": "63804",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "196974",
+        "Tmdb": "297557",
+        "Tvdb": "466524"
+      }
+    },
+    {
+      "animeClickId": "64018",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "199408",
+        "Tmdb": "298831",
+        "Tvdb": "467005"
+      }
+    },
+    {
+      "animeClickId": "64042",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "197715",
+        "Tmdb": "298994",
+        "Tvdb": "467127"
+      }
+    },
+    {
+      "animeClickId": "64233",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "198113",
+        "Tmdb": "300131",
+        "Tvdb": "467414"
+      }
+    },
+    {
+      "animeClickId": "64607",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "199066",
+        "Tmdb": "312266",
+        "Tvdb": "468399"
+      }
+    },
+    {
+      "animeClickId": "64791",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "199547",
+        "Tmdb": "301944",
+        "Tvdb": "468734"
+      }
+    },
+    {
+      "animeClickId": "64800",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "199588",
+        "Tmdb": "309163",
+        "Tvdb": "468761"
+      }
+    },
+    {
+      "animeClickId": "65413",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "201514",
+        "Tmdb": "312849",
+        "Tvdb": "470406"
+      }
+    },
+    {
+      "animeClickId": "65591",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "202102",
+        "Tmdb": "305329",
+        "Tvdb": "470270"
+      }
+    },
+    {
+      "animeClickId": "65679",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "202269",
+        "Tmdb": "309974",
+        "Tvdb": "470520"
+      }
+    },
+    {
+      "animeClickId": "65900",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "202955",
+        "Tmdb": "306762",
+        "Tvdb": "470980"
+      }
+    },
+    {
+      "animeClickId": "66089",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "203490",
+        "Tmdb": "307585",
+        "Tvdb": "471296"
+      }
+    },
+    {
+      "animeClickId": "66299",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "204466",
+        "Tmdb": "308874",
+        "Tvdb": "471878"
+      }
+    },
+    {
+      "animeClickId": "66649",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "184356",
+        "Tmdb": "297826",
+        "Tvdb": "452039"
+      }
+    },
+    {
+      "animeClickId": "66745",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "206951",
+        "Tmdb": "312522",
+        "Tvdb": "473229"
+      }
+    },
+    {
+      "animeClickId": "66839",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "207141",
+        "Tmdb": "312949",
+        "Tvdb": "473423"
+      }
+    },
+    {
+      "animeClickId": "67054",
+      "kind": "Series",
+      "providerIds": {
+        "AniList": "208044",
+        "Tmdb": "314554",
+        "Tvdb": "474303"
+      }
+    }
+  ],
   "schemaVersion": 1
 }
