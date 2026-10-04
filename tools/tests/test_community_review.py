@@ -59,6 +59,12 @@ class Reading(unittest.TestCase):
         with self.assertRaises(ValueError):
             cr.read_proposal(title, "```json\n" + json.dumps(mapping) + "\n```")
 
+    def test_cards_are_requested_with_a_slug_so_animeclick_redirects_instead_of_404(self):
+        self.assertEqual("https://www.animeclick.it/anime/26035/x", cr.card_url("26035"))
+        get = web({cr.ANIMECLICK: (200, SEASON_CARD)})
+        cr.run_check(*issue(SAIKI["mapping"]), EMPTY, get)
+        self.assertIn("https://www.animeclick.it/anime/26035/x", get.calls)
+
     def test_a_real_card_is_parsed(self):
         card = cr.parse_card(MOVIE_CARD)
         self.assertEqual({"title": "Rascal Does Not Dream of a Dreaming Girl", "year": 2019, "category": "Film", "episodes": 1}, card)
