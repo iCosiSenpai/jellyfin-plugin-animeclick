@@ -1,0 +1,31 @@
+# AnimeClick community relay. Published by .github/workflows/community-relay.yml; the guide for the
+# one-time Cloudflare setup is in community/README.md.
+name = "animeclick-community"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+# No request logs: the relay keeps neither bodies nor addresses.
+[observability]
+enabled = false
+
+[vars]
+REPOSITORY = "iCosiSenpai/jellyfin-plugin-animeclick"
+
+# Proposal records, confirmations and daily counters. The workflow replaces the placeholder with the
+# RELAY_KV_ID repository variable.
+[[kv_namespaces]]
+binding = "PROPOSALS"
+id = "PROPOSALS_KV_ID"
+
+# Bursts from one address: Cloudflare's limiter counts per 10 or 60 seconds only.
+[[ratelimits]]
+name = "IP_LIMITER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+# Secrets, set by the workflow: GITHUB_TOKEN (fine-grained, Issues read and write on this repository
+# only) and INSTALL_SALT (random text that keys the installation hashes).

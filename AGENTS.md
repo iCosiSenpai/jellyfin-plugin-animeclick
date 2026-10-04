@@ -34,12 +34,21 @@ JavaScript vanilla senza build, servito come risorse incorporate. `Configuration
   sostituire `commit()` con un salvataggio dell'intero oggetto.
 - Una chiave AI salvata non deve mai seguire una destinazione diversa (regola replicata anche lato server).
 
+## Comunità
+
+Le regole di una proposta vivono in tre implementazioni: il plugin (`Services/AnimeClickCommunityData.cs`), il
+servizio (`community/relay/src/proposal.js`) e gli strumenti (`tools/community_mappings.py`). Cambiandole, aggiorna
+tutte e tre insieme a `community/schema-v2.json` e agli esempi di `community/fixtures/proposals.json`, che i test di
+ciascuna leggono. `community/mappings.json` (schema 1) si rigenera con `python3 tools/community_mappings.py --write`
+e non si modifica a mano: le versioni ≤ 1.3 lo leggono ancora.
+
 ## Versione e verifiche
 
 - La versione a quattro parti vive nel `.csproj`, in `configPage.html`, in `animeclick-core.js` e nello User-Agent di
   `PluginConfiguration.cs`; la CI controlla che coincidano. Procedura completa in `docs/RELEASING.md`.
-- Test: `dotnet test AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release` e, in
-  `tools/AnimeClick.WebTests`, `npm test`. Le schermate finiscono in `test-results/` (ignorata da git).
+- Test: `dotnet test AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release`, in
+  `tools/AnimeClick.WebTests` `npm test`, `python3 -m unittest discover -s tools/tests` e, in `community/relay`,
+  `npm test`. Le schermate finiscono in `test-results/` (ignorata da git).
 
 ## Il computer di sviluppo è il NAS di produzione
 

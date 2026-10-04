@@ -1,0 +1,6 @@
+{
+  "name": "animeclick-community-relay",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test test/worker.test.mjs" }
+}

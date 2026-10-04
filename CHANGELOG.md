@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0.0
+
+Comunità per tutti: dopo una correzione il plugin chiede se condividerla e la invia tramite il servizio della comunità, senza account; il token GitHub diventa facoltativo. Si condividono anche le stagioni con una scheda propria, applicate agli altri solo se numero di stagione ed episodi coincidono. Elenco approvato aggiornato ogni giorno, controlli automatici e approvazione con un'etichetta, tessera Comunità in Inizio, passo Comunità nel setup e scelta della stagione in «Correggi un abbinamento».
+
+- [Note complete](docs/releases/1.4.0.0.md)
+- [Audit e verifiche](docs/AUDIT-1.4.md)
+
 ## 1.3.0.0
 
 Pagina del plugin rifatta da zero con l'identità di AnimeClick: setup guidato al primo avvio e solo i passi nuovi dopo gli aggiornamenti importanti, vetrina degli ultimi anime aggiornati, cruscotto della collezione, libreria a locandine con titoli e trame uniti per anime, attivazione delle librerie a un clic e ricerca della scheda su AnimeClick per correggere un abbinamento. Corretti i conteggi dell'analisi di una singola serie, lo stato della condivisione comunitaria appena attivata e «Da verificare», che ora coincide con quanto «Sistema tutti i titoli» ricontrolla.

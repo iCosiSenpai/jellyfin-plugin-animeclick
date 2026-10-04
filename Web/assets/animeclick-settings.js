@@ -636,7 +636,36 @@
         clear(el('acItemCandidates'));
         var lookup = el('acAnimeClickSearch');
         if (lookup && !lookup.value) lookup.value = val(item, 'name') || '';
+        if (val(item, 'type') !== 'Movie') loadSeasons(item);
         AC.bus.emit('identify-item', item);
+    }
+
+    /**
+     * A season with its own AnimeClick card (a sequel, a final arc) is corrected on the season itself:
+     * the series keeps its card and the correction can be shared for that season only.
+     */
+    function loadSeasons(item) {
+        var seriesId = val(item, 'id');
+        var host = el('acSelectedItem');
+        var picker = ui.select('acItemSeason', 'Cosa correggere', [{ value: seriesId, label: 'Tutta la serie' }], {
+            hint: 'Scegli una stagione se ha una scheda AnimeClick sua, per esempio un sequel o un arco finale.'
+        });
+        picker.id = 'acItemSeasonField';
+        host.appendChild(picker);
+        var select = el('acItemSeason');
+        select.addEventListener('change', function () { el('acItemId').value = select.value; });
+        api.request('GET', 'Shows/' + encodeURIComponent(seriesId) + '/Seasons?Fields=ProviderIds').then(function (result) {
+            if (el('acItemId').value !== seriesId && el('acItemId').value !== select.value) return;
+            list(val(result, 'items')).forEach(function (season) {
+                var number = val(season, 'indexNumber');
+                var card = val(val(season, 'providerIds') || {}, 'animeClick');
+                select.appendChild(h('option', {
+                    value: val(season, 'id'),
+                    text: (number === 0 ? 'Speciali' : number != null ? 'Stagione ' + number : (val(season, 'name') || 'Stagione'))
+                        + (card ? ' · AnimeClick ' + String(card).split('/')[0] : '')
+                }));
+            });
+        }).catch(function () { /* The series stays selectable on its own. */ });
     }
 
     function renderSelection() {

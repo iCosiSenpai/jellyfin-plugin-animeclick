@@ -196,6 +196,12 @@ async function mount(options = {}) {
             if (options.failProviders) return route.fulfill({ status: 503, body: 'error' });
             return route.fulfill({ json: [{ id: 'custom', displayName: 'Personalizzato', requiresApiKey: false, chatEndpoint: '' }] });
         }
+        if (target.endsWith('/Shows/safe-item-id/Seasons')) {
+            return route.fulfill({ json: { Items: [
+                { Id: 'season-1-id', Name: 'Stagione 1', IndexNumber: 1, ProviderIds: {} },
+                { Id: 'season-3-id', Name: 'Stagione 3', IndexNumber: 3, ProviderIds: { AnimeClick: '16615/saiki-kusuo-no-psi-nan-tv' } }
+            ] } });
+        }
         if (target.endsWith('/Items')) return route.fulfill({ json: { Items: [{ Id: 'safe-item-id', Name: 'Un titolo <img src=x onerror=alert(1)>', ProductionYear: 2026, Type: 'Series', ImageTags: {} }] } });
         if (target.endsWith('/TestLookup')) {
             state.lookups++;
@@ -652,15 +658,19 @@ test('a correction offers to share it, sends it only after the click, and can st
         await page.locator('#acItemSearch').fill('Un titolo');
         await page.locator('#acBtnFindItem').click();
         await page.locator('#acItemCandidates .ac-pick').click();
+        await page.locator('#acItemSeason option[value="season-3-id"]').waitFor({ state: 'attached' });
+        assert.deepEqual(await page.locator('#acItemSeason option').allInnerTexts(), ['Tutta la serie', 'Stagione 1', 'Stagione 3 · AnimeClick 16615']);
+        await page.locator('#acItemSeason').selectOption('season-3-id');
         await page.locator('#acAnimeClickId').fill('26035');
         await page.locator('#acBtnIdentify').click();
         await page.locator('#acShareBox').waitFor();
+        assert.equal(state.identifications[0].itemId, 'season-3-id', 'the season itself is corrected');
         assert.match(await page.locator('#acShareSummary').innerText(), /Stagione 3 \(2 episodi\) della serie TMDB 67676, TheTVDB 313435 → scheda AnimeClick 26035/);
         assert.equal(state.shares, undefined, 'nothing is shared before the click');
         await shot(page, 'community-share-offer');
         await page.locator('#acShareOffer').click();
         await page.locator('#acShareBox', { hasText: 'Grazie!' }).waitFor();
-        assert.deepEqual(state.shares, [{ itemId: 'safe-item-id' }]);
+        assert.deepEqual(state.shares, [{ itemId: 'season-3-id' }]);
 
         await page.locator('#acBtnIdentify').click();
         await page.locator('#acShareNever').waitFor();
