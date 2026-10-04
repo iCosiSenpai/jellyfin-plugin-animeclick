@@ -28,12 +28,14 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
     private readonly AnimeClickClient? _client;
     private readonly AnimeClickCacheService? _cache;
     private readonly AnimeClickHtmlParser? _parser;
+    private readonly AnimeClickCommunityService? _community;
 
     public AnimeClickSeasonProvider(
         AnimeClickSeasonResolver seasonResolver,
         ILogger<AnimeClickSeasonProvider> logger,
         IHttpClientFactory httpClientFactory, AnimeClickIntegratedMetadata? integrated = null,
-        AnimeClickClient? client = null, AnimeClickCacheService? cache = null, AnimeClickHtmlParser? parser = null)
+        AnimeClickClient? client = null, AnimeClickCacheService? cache = null, AnimeClickHtmlParser? parser = null,
+        AnimeClickCommunityService? community = null)
     {
         _seasonResolver = seasonResolver;
         _logger = logger;
@@ -42,6 +44,7 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
         _client = client;
         _cache = cache;
         _parser = parser;
+        _community = community;
     }
 
     public string Name => "AnimeClick";
@@ -80,14 +83,35 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
         }
 
         var seasonNumber = info.IndexNumber;
-        if (!seasonNumber.HasValue || seasonNumber.Value <= 1)
+
+        // A card the community approved for this exact season layout wins over the sequel traversal:
+        // that is what the correction was made for. A season that already has its own ID keeps it.
+        string? resolvedId = null;
+        if (_community is not null
+            && seasonNumber is >= 0 and <= AnimeClickCommunityData.MaximumSeasonNumber
+            && string.IsNullOrWhiteSpace(info.ProviderIds?.GetValueOrDefault("AnimeClick")))
         {
-            return await CompleteAsync().ConfigureAwait(false);
+            var approved = await _community
+                .ResolveLibrarySeasonAsync(info.SeriesProviderIds ?? new Dictionary<string, string>(), seasonNumber.Value, info.Path, configuration, cancellationToken)
+                .ConfigureAwait(false);
+            if (approved is not null && AnimeClickClient.TryNormalizeAnimeClickId(approved, out var normalizedApproved))
+            {
+                resolvedId = normalizedApproved;
+                _logger.LogInformation("AnimeClick: Season {Season} uses the community card {Id}", seasonNumber.Value, resolvedId);
+            }
         }
 
-        var resolvedId = await _seasonResolver
-            .ResolveAsync(normalizedMainId, seasonNumber, configuration, cancellationToken)
-            .ConfigureAwait(false);
+        if (resolvedId is null)
+        {
+            if (!seasonNumber.HasValue || seasonNumber.Value <= 1)
+            {
+                return await CompleteAsync().ConfigureAwait(false);
+            }
+
+            resolvedId = await _seasonResolver
+                .ResolveAsync(normalizedMainId, seasonNumber, configuration, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         if (!string.IsNullOrWhiteSpace(resolvedId))
         {

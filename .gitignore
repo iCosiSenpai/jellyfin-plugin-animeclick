@@ -39,3 +39,4 @@ temp_extract/
 tmp/
 node_modules/
 test-results/
+__pycache__/

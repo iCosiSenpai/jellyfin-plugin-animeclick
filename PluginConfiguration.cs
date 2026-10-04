@@ -4,10 +4,19 @@ namespace AnimeClick.Plugin.Configuration;
 
 public class PluginConfiguration : BasePluginConfiguration
 {
-    /// <summary>Read maintainer-reviewed public ID mappings; opt-in on every installation.</summary>
+    /// <summary>
+    /// Read maintainer-reviewed public ID mappings. Off until the administrator confirms it in the setup,
+    /// which proposes it switched on.
+    /// </summary>
     public bool EnableCommunityMappings { get; set; } = false;
 
-    /// <summary>Automatically submit only corrected public ID pairs. Never shares the library.</summary>
+    /// <summary>
+    /// What happens after a correction: «Ask» offers it with a Share button, «Always» sends it, «Never»
+    /// sends nothing. Only public IDs ever leave the server.
+    /// </summary>
+    public string CommunitySharingMode { get; set; } = Services.AnimeClickCommunitySharing.Ask;
+
+    /// <summary>Superseded by <see cref="CommunitySharingMode"/>; read once by the schema 3 migration.</summary>
     public bool EnableCommunitySharing { get; set; } = false;
 
     public string CommunityGitHubToken { get; set; } = string.Empty;
@@ -210,7 +219,7 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     internal bool ApplyMigrations()
     {
-        const int currentSchema = 2;
+        const int currentSchema = 3;
         if (ConfigurationVersion >= currentSchema)
         {
             return false;
@@ -227,6 +236,14 @@ public class PluginConfiguration : BasePluginConfiguration
         if (ConfigurationVersion >= 1 && SetupCompletedVersion < 1)
         {
             SetupCompletedVersion = 1;
+        }
+
+        // Schema 3 replaced the automatic sharing switch with a choice. Whoever had switched sharing on
+        // keeps it automatic; everyone else is asked after each correction, which never sends anything
+        // without a click.
+        if (ConfigurationVersion < 3 && EnableCommunitySharing)
+        {
+            CommunitySharingMode = Services.AnimeClickCommunitySharing.Always;
         }
 
         ConfigurationVersion = currentSchema;
@@ -309,8 +326,10 @@ public class PluginConfiguration : BasePluginConfiguration
             NegativeCacheHours,
             RequestDelayMilliseconds,
             BaseUrl,
-            SetupCompletedVersion);
+            SetupCompletedVersion,
+            CommunitySharingMode);
 
+        CommunitySharingMode = Services.AnimeClickCommunitySharing.Normalize(CommunitySharingMode);
         SetupCompletedVersion = ConfigurationLimits.Clamp(
             SetupCompletedVersion,
             ConfigurationLimits.SetupVersionMinimum,
@@ -354,6 +373,7 @@ public class PluginConfiguration : BasePluginConfiguration
             NegativeCacheHours,
             RequestDelayMilliseconds,
             BaseUrl,
-            SetupCompletedVersion);
+            SetupCompletedVersion,
+            CommunitySharingMode);
     }
 }

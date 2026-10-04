@@ -1,0 +1,257 @@
+{
+  "valid": [
+    {
+      "name": "series-all-providers",
+      "mapping": {
+        "kind": "Series",
+        "animeClickId": "16615",
+        "providerIds": {
+          "Tmdb": "67676",
+          "Tvdb": "313435",
+          "AniList": "21804"
+        }
+      },
+      "canonical": "{\"animeClickId\":\"16615\",\"kind\":\"Series\",\"providerIds\":{\"AniList\":\"21804\",\"Tmdb\":\"67676\",\"Tvdb\":\"313435\"}}",
+      "fingerprint": "7370ac2e4d6396cf9cc4"
+    },
+    {
+      "name": "movie-tmdb",
+      "mapping": {
+        "kind": "Movie",
+        "animeClickId": "1234",
+        "providerIds": {
+          "Tmdb": "98765"
+        }
+      },
+      "canonical": "{\"animeClickId\":\"1234\",\"kind\":\"Movie\",\"providerIds\":{\"Tmdb\":\"98765\"}}",
+      "fingerprint": "c1526182716a5ab2b50c"
+    },
+    {
+      "name": "season-saiki-final",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "26035",
+        "series": {
+          "Tmdb": "67676",
+          "Tvdb": "313435"
+        },
+        "seasonNumber": 3,
+        "episodeCount": 2
+      },
+      "canonical": "{\"animeClickId\":\"26035\",\"episodeCount\":2,\"kind\":\"Season\",\"seasonNumber\":3,\"series\":{\"Tmdb\":\"67676\",\"Tvdb\":\"313435\"}}",
+      "fingerprint": "bbb1d0908031f10d13b0"
+    },
+    {
+      "name": "season-specials-tvdb-only",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "777",
+        "series": {
+          "Tvdb": "313435"
+        },
+        "seasonNumber": 0,
+        "episodeCount": 1
+      },
+      "canonical": "{\"animeClickId\":\"777\",\"episodeCount\":1,\"kind\":\"Season\",\"seasonNumber\":0,\"series\":{\"Tvdb\":\"313435\"}}",
+      "fingerprint": "aab4d2421e42b6cc5199"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown-kind",
+      "mapping": {
+        "kind": "Episode",
+        "animeClickId": "1",
+        "providerIds": {
+          "Tmdb": "1"
+        }
+      }
+    },
+    {
+      "name": "extra-field",
+      "mapping": {
+        "kind": "Series",
+        "animeClickId": "1",
+        "providerIds": {
+          "Tmdb": "1"
+        },
+        "title": "Saiki"
+      }
+    },
+    {
+      "name": "leading-zero-id",
+      "mapping": {
+        "kind": "Series",
+        "animeClickId": "0123",
+        "providerIds": {
+          "Tmdb": "1"
+        }
+      }
+    },
+    {
+      "name": "id-too-long",
+      "mapping": {
+        "kind": "Movie",
+        "animeClickId": "12345678901",
+        "providerIds": {
+          "Tmdb": "1"
+        }
+      }
+    },
+    {
+      "name": "numeric-not-string",
+      "mapping": {
+        "kind": "Movie",
+        "animeClickId": 1234,
+        "providerIds": {
+          "Tmdb": "1"
+        }
+      }
+    },
+    {
+      "name": "no-provider",
+      "mapping": {
+        "kind": "Series",
+        "animeClickId": "1",
+        "providerIds": {}
+      }
+    },
+    {
+      "name": "unknown-provider",
+      "mapping": {
+        "kind": "Series",
+        "animeClickId": "1",
+        "providerIds": {
+          "Imdb": "1"
+        }
+      }
+    },
+    {
+      "name": "season-with-anilist",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "1",
+        "series": {
+          "AniList": "1"
+        },
+        "seasonNumber": 2,
+        "episodeCount": 12
+      }
+    },
+    {
+      "name": "season-number-too-high",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "1",
+        "series": {
+          "Tmdb": "1"
+        },
+        "seasonNumber": 101,
+        "episodeCount": 12
+      }
+    },
+    {
+      "name": "season-number-as-text",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "1",
+        "series": {
+          "Tmdb": "1"
+        },
+        "seasonNumber": "2",
+        "episodeCount": 12
+      }
+    },
+    {
+      "name": "season-number-boolean",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "1",
+        "series": {
+          "Tmdb": "1"
+        },
+        "seasonNumber": true,
+        "episodeCount": 12
+      }
+    },
+    {
+      "name": "season-zero-episodes",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "1",
+        "series": {
+          "Tmdb": "1"
+        },
+        "seasonNumber": 2,
+        "episodeCount": 0
+      }
+    },
+    {
+      "name": "season-fractional-episodes",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "1",
+        "series": {
+          "Tmdb": "1"
+        },
+        "seasonNumber": 2,
+        "episodeCount": 2.5
+      }
+    },
+    {
+      "name": "season-missing-series",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "1",
+        "seasonNumber": 2,
+        "episodeCount": 12
+      }
+    },
+    {
+      "name": "season-with-provider-ids",
+      "mapping": {
+        "kind": "Season",
+        "animeClickId": "1",
+        "series": {
+          "Tmdb": "1"
+        },
+        "providerIds": {
+          "Tmdb": "1"
+        },
+        "seasonNumber": 2,
+        "episodeCount": 12
+      }
+    },
+    {
+      "name": "series-with-season-number",
+      "mapping": {
+        "kind": "Series",
+        "animeClickId": "1",
+        "providerIds": {
+          "Tmdb": "1"
+        },
+        "seasonNumber": 2
+      }
+    },
+    {
+      "name": "wrong-case-field",
+      "mapping": {
+        "Kind": "Series",
+        "animeClickId": "1",
+        "providerIds": {
+          "Tmdb": "1"
+        }
+      }
+    },
+    {
+      "name": "wrong-case-provider",
+      "mapping": {
+        "kind": "Series",
+        "animeClickId": "1",
+        "providerIds": {
+          "tmdb": "1"
+        }
+      }
+    }
+  ]
+}
