@@ -57,19 +57,31 @@ Usa il pacchetto ZIP: contiene il plugin, HtmlAgilityPack, LICENSE e NOTICE. Non
 
 ## Configurazione
 
-1. In **Preferenze**, lascia attive **Completa i metadati dalle fonti integrate**, **Immagini TMDB ad alta risoluzione** e, se vuoi usarlo, **Preferisci le immagini Fanart**.
-2. In **Fonti aggiuntive**, inserisci la chiave TMDB e le chiavi delle altre fonti desiderate. Per tradurre dall'inglese, abilita il servizio AI, carica il suo elenco di modelli e scegli un modello.
-3. Premi **Salva modifiche**.
-4. Nelle impostazioni delle **sole librerie anime**, seleziona AnimeClick come unico provider remoto per metadati e immagini di serie, stagioni, episodi e film. Puoi mantenere lettori NFO, immagini locali ed estrattori Jellyfin; gli altri plugin possono restare attivi nelle altre librerie.
-5. Controlla l'attivazione dalla pagina **Inizio** e prova un aggiornamento su un singolo titolo.
+Alla prima apertura il plugin parte con un **setup guidato** di pochi passi:
+
+1. **Fonti**: inserisci la chiave TMDB (consigliata) e, se vuoi, quella personale Fanart. Puoi verificarle subito.
+2. **Preferenze**: le scelte consigliate sono già attive; spegni quello che non ti interessa.
+3. **Librerie**: scegli le librerie con i tuoi anime e premi **Attiva nelle librerie scelte**. AnimeClick diventa il primo provider dei metadati di serie, stagioni, episodi e film e si aggiunge alle immagini; gli altri provider restano attivi e le altre librerie non vengono toccate. Nulla cambia senza conferma.
+
+Puoi saltare il setup e riaprirlo quando vuoi da **Strumenti**. Quando un aggiornamento importante richiede una scelta, il plugin mostra soltanto i passi nuovi.
+
+Dopo il setup trovi tutto nelle sezioni della pagina:
+
+- **Preferenze**: cosa importare, raggruppato per identità italiana, episodi, arricchimento, immagini e opzioni invasive.
+- **Fonti**: TMDB, Fanart, TheTVDB e traduzione AI, con stato, verifica e l'ordine con cui vengono consultate. Per tradurre dall'inglese abilita il servizio AI, premi **Elenca modelli** e scegli un modello.
+- **Inizio**: lo stato delle librerie, con **Attiva AnimeClick** per quelle in cui manca. Se preferisci usare AnimeClick come **unico** provider remoto delle librerie anime, togli gli altri provider dalle impostazioni della libreria in Jellyfin; lettori NFO, immagini locali ed estrattori possono restare.
+
+Le modifiche si salvano dalla barra **Salva** in fondo alla pagina.
 
 Senza traduzione AI vengono usati i testi già italiani. Per le serie, Fanart usa l'ID TheTVDB; per i film, l'ID TMDB. Gli ID esterni verificati vengono recuperati dalle integrazioni, senza altri plugin.
 
 L'installazione non avvia una riparazione della libreria. I blocchi dei metadati continuano a essere rispettati; la sostituzione delle immagini esistenti si richiede esplicitamente nel refresh Jellyfin.
 
-## La tua libreria
+## Inizio e libreria
 
-La pagina analizza i metadati locali **senza modificarli**. Le viste **Titoli episodio** e **Trame e sinossi** mostrano cosa manca; apri una serie per i dettagli e usa **Aggiorna analisi** per rileggere la situazione.
+**Inizio** apre sulla vetrina degli ultimi anime aggiornati da AnimeClick, con locandine, trama e generi, e su un cruscotto: quanta parte della collezione è già in italiano, le attività in corso, le fonti collegate, le librerie e le cose da fare.
+
+**Libreria** mostra ogni anime con la sua locandina e lo stato di titoli e trame. L'analisi legge i metadati locali **senza modificarli**; filtri, ricerca e ordinamento portano subito a quello che manca, e un clic apre il dettaglio con stagioni, cause, episodi e azioni. **Aggiorna analisi** rilegge la situazione.
 
 **Sistema tutti i titoli** cerca su AnimeClick e poi nelle fonti configurate. Completa nomi vuoti, generici come “Episodio 12” o derivati dal file e converte i titoli riconoscibilmente inglesi: prima cerca un titolo italiano coerente con quello originale, poi traduce quello inglese della fonte se l’AI è configurata. Se non trova una fonte coerente, può tradurre il titolo inglese già valido, evitando di prendere il titolo di un’altra stagione. Conserva i titoli italiani e quelli dalla lingua incerta. Scrive **solo il nome**, rispettando i campi bloccati e le modifiche manuali intervenute durante la ricerca: numerazione, ID, trame e immagini restano invariati.
 
@@ -79,7 +91,7 @@ L'analisi indica cosa controllare, senza garantire che una fonte abbia il dato. 
 
 ## Correggere un abbinamento
 
-Apri **Avanzate → Correggi un abbinamento**, seleziona un film o una serie della libreria e incolla il link alla scheda AnimeClick corretta. Il plugin verifica la scheda, salva l'ID e prosegue l'aggiornamento in background.
+Apri **Strumenti → Correggi un abbinamento** (oppure **Correggi abbinamento** dal dettaglio di un anime in Libreria), scegli il film o la serie e cerca la scheda giusta su AnimeClick, o incolla il suo link. Il plugin verifica la scheda, salva l'ID e prosegue l'aggiornamento in background.
 
 Se una stagione ha una scheda AnimeClick distinta, inserisci il suo ID nel campo **AnimeClick** dell'editor metadati della stagione in Jellyfin: avrà precedenza sull'ID della serie per la lista episodi.
 
@@ -98,8 +110,8 @@ Il plugin usa soltanto gli abbinamenti revisionati e approvati: migliora il rico
 
 | Problema | Cosa controllare |
 |---|---|
-| Titolo non riconosciuto | Attivazione nella libreria; poi **Avanzate → Correggi un abbinamento** |
-| Titoli o trame mancanti | **La tua libreria**, chiavi delle fonti e configurazione della traduzione |
+| Titolo non riconosciuto | Attivazione nella libreria (**Inizio → Librerie**); poi **Strumenti → Correggi un abbinamento** |
+| Titoli o trame mancanti | **Libreria**, chiavi in **Fonti** e configurazione della traduzione |
 | Un campo non cambia | Blocchi Jellyfin e preferenze del plugin; la riparazione titoli conserva i nomi italiani o dalla lingua incerta |
 | Pagina vuota dopo un aggiornamento | Riavvio di Jellyfin, ricaricamento senza cache e assenza di copie duplicate del plugin |
 

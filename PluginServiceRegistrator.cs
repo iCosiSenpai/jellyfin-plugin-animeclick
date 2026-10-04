@@ -48,6 +48,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         services.AddSingleton<AnimeClickRepairLedger>();
         services.AddSingleton<IAnimeClickOverviewResolver, AnimeClickOverviewResolver>();
         services.AddSingleton<AnimeClickLibraryQualityService>();
+        services.AddSingleton<AnimeClickLibraryWorkspace>();
         services.AddSingleton<AnimeClickActivityService>();
         services.AddSingleton<IAnimeClickTitleResolver, AnimeClickEpisodeProvider>();
         services.AddSingleton<AnimeClickTitleRepairService>();

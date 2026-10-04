@@ -58,7 +58,7 @@ async function main() {
     const plugins = await call('/Plugins');
     const plugin = plugins.find(p => p.Id?.replaceAll('-', '').toLowerCase() === pluginId.replaceAll('-', ''));
     assert.ok(plugin, 'Plugin is absent: ' + JSON.stringify(plugins));
-    assert.equal(plugin?.Version, '1.2.2.0');
+    assert.equal(plugin?.Version, '1.3.0.0');
     assert.equal(plugin.Status, 'Active');
     const configPage = (await call('/web/ConfigurationPages')).find(page => page.Name === 'AnimeClick Plugin');
     assert.equal(configPage?.EnableInMainMenu, true);
@@ -72,6 +72,8 @@ async function main() {
     assert.equal(config.EnableCommunityMappings, false);
     assert.equal(config.EnableCommunitySharing, false);
     assert.equal(config.CommunityGitHubToken, '');
+    assert.equal(config.SetupCompletedVersion, 0, 'A fresh installation starts with the full guided setup');
+    assert.equal(config.ConfigurationVersion, 2);
     await call('/Plugins/' + pluginId + '/Configuration', { ...config, NegativeCacheHours: 0, EnableEpisodeTitleFallback: false }, 204);
     assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).NegativeCacheHours, 0);
     assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).EnableEpisodeTitleFallback, false);
@@ -91,6 +93,21 @@ async function main() {
     await call('/Plugins/AnimeClick/IdentifyStatus?itemId=invalid', undefined, 400);
     await call('/Plugins/AnimeClick/IdentifyAndRefresh', { ItemId: randomUUID(), AnimeClickId: 'https://evil.invalid/anime/1/x' }, 400);
     await call('/Plugins/AnimeClick/IdentifyAndRefresh', { ItemId: randomUUID(), AnimeClickId: '72/naruto' }, 404);
+    const emptyShowcase = await call('/Plugins/AnimeClick/Showcase?limit=8');
+    assert.equal((emptyShowcase.Items ?? emptyShowcase.items).length, 0);
+    assert.deepEqual(await call('/Plugins/AnimeClick/Catalog'), []);
+    await call('/Plugins/AnimeClick/Libraries/Enable', { LibraryId: 'not-a-library' }, 400);
+    // A disposable TV library whose provider list does not include AnimeClick yet.
+    const libraryName = 'Anime di prova';
+    if (!(await call('/Library/VirtualFolders')).some(folder => folder.Name === libraryName)) {
+        const typeOptions = ['Series', 'Season', 'Episode'].map(type => ({ Type: type, MetadataFetchers: ['TheMovieDb'], MetadataFetcherOrder: ['TheMovieDb'], ImageFetchers: ['TheMovieDb'], ImageFetcherOrder: ['TheMovieDb'] }));
+        await call('/Library/VirtualFolders?name=' + encodeURIComponent(libraryName) + '&collectionType=tvshows&paths=%2Fmedia%2Fanime&refreshLibrary=false',
+            { LibraryOptions: { TypeOptions: typeOptions } }, 204);
+    }
+    const libraries = await call('/Plugins/AnimeClick/Libraries');
+    const disposable = libraries.find(library => (library.Name ?? library.name) === libraryName);
+    assert.ok(disposable, 'The plugin lists the disposable library: ' + JSON.stringify(libraries));
+    assert.equal(disposable.State ?? disposable.state, 'inactive');
     const existingUsers = await call('/Users');
     const ordinary = existingUsers.find(user => user.Name === 'ordinary-smoke')
         || await call('/Users/New', { Name: 'ordinary-smoke' });
@@ -103,6 +120,9 @@ async function main() {
     await call('/Plugins/AnimeClick/Community/Export', undefined, 403);
     await call('/Plugins/AnimeClick/RunMissingTitlesTask', {}, 403);
     await call('/Plugins/AnimeClick/TestFanart', {}, 403);
+    await call('/Plugins/AnimeClick/Libraries', undefined, 403);
+    await call('/Plugins/AnimeClick/Libraries/Enable', { LibraryId: randomUUID() }, 403);
+    await call('/Plugins/AnimeClick/Showcase', undefined, 403);
     token = adminToken;
     assert.equal((await call('/Plugins/AnimeClick/TestFanart', {})).Success, false);
     const integratedConfig = await call('/Plugins/' + pluginId + '/Configuration');
@@ -138,20 +158,47 @@ async function main() {
             throw error;
         }
         await page.goto(new URL('/web/#/configurationpage?name=AnimeClick%20Plugin', origin).href);
-        await page.getByRole('heading', { name: 'Più storie. Meno impostazioni.' }).waitFor({ timeout: 30000 });
-        await page.waitForFunction(() => document.querySelector('#acLoadState')?.hidden);
+        // A fresh installation opens on the guided setup.
+        await page.getByRole('heading', { name: 'I tuoi anime, in italiano.' }).waitFor({ timeout: 30000 });
+        await page.screenshot({ path: 'test-results/runtime-setup.png', fullPage: true });
+        await page.getByRole('button', { name: 'Iniziamo' }).click();
+        await page.locator('#acSetupNext').click();
+        await page.getByRole('button', { name: 'Salva e continua' }).click();
+        const libraryBox = page.locator('#acSetupLibraries input[type=checkbox]').first();
+        await libraryBox.waitFor({ timeout: 30000 });
+        assert.equal(await libraryBox.isChecked(), true, 'Libraries named after anime are preselected');
+        await page.locator('#acSetupEnable').click();
+        await page.getByRole('dialog').getByRole('button', { name: 'Attiva', exact: true }).click();
+        await page.locator('#acSetupLibrariesResult').filter({ hasText: 'Fatto!' }).waitFor({ timeout: 30000 });
+        const folder = (await call('/Library/VirtualFolders')).find(item => item.Name === libraryName);
+        for (const type of ['Series', 'Season', 'Episode']) {
+            const options = folder.LibraryOptions.TypeOptions.find(option => option.Type === type);
+            assert.equal(options.MetadataFetcherOrder[0], 'AnimeClick', type + ' puts AnimeClick first');
+            assert.ok(options.MetadataFetchers.includes('TheMovieDb'), type + ' keeps the other providers');
+            assert.ok(options.ImageFetchers.includes('AnimeClick'), type + ' offers AnimeClick images');
+        }
+        await page.locator('#acSetupNext').click();
+        await page.locator('#acSetupFinish').click();
+        await page.locator('#acSetup').waitFor({ state: 'hidden' });
+        assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).SetupCompletedVersion, 2);
+        await page.locator('#acHomeLibraries').getByText(libraryName, { exact: true }).waitFor({ timeout: 30000 });
+        await page.waitForTimeout(800);
+        await page.screenshot({ path: 'test-results/runtime-home.png', fullPage: true });
         await page.getByRole('tab', { name: 'Preferenze', exact: true }).click();
         const expectedTitlePreference = !await page.locator('#acPreferItalianTitle').isChecked();
         await page.locator('#acPreferItalianTitle').setChecked(expectedTitlePreference);
         await page.locator('#acBtnSave').click();
-        await page.waitForFunction(() => document.querySelector('#acSaveBar').style.display === 'none');
+        await page.waitForFunction(() => document.querySelector('#acSaveBar').hidden);
         assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).PreferItalianTitle, expectedTitlePreference);
-        await page.getByRole('tab', { name: 'La tua libreria', exact: true }).click();
+        await page.getByRole('tab', { name: 'Libreria', exact: true }).click();
         await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.screenshot({ path: 'test-results/runtime-library.png', fullPage: true });
         await page.locator('#acBtnRunTitles').click();
-        await page.getByRole('dialog').getByRole('button', { name: 'Conferma', exact: true }).click();
+        await page.getByRole('dialog').getByRole('button', { name: 'Avvia', exact: true }).click();
         await page.locator('#acActivityBadge_titles').filter({ hasText: 'Completata' }).waitFor({ timeout: 30000 });
         assert.equal((await call('/Plugins/AnimeClick/Activities')).find(a => a.Key === 'titles').State, 'Completed');
+        await page.getByRole('tab', { name: 'Fonti', exact: true }).click();
+        await page.screenshot({ path: 'test-results/runtime-sources.png', fullPage: true });
         await page.getByRole('tab', { name: 'Comunità', exact: true }).click();
         assert.equal(await page.locator('#acEnableCommunitySharing').isChecked(), false);
         await page.locator('#acCommunityStatus').click();

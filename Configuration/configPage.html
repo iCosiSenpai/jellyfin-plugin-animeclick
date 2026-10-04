@@ -5,57 +5,25 @@
 <div id="AnimeClickConfigPage" data-role="page" class="page type-interior pluginConfigurationPage ac-page"
      data-require="emby-input,emby-button,emby-select,emby-checkbox">
     <div data-role="content"><div class="content-primary">
-        <div class="ac-shell" id="acConfigShell">
-            <header class="ac-masthead">
-                <div class="ac-brand">
-                    <img src="configurationpage?name=AnimeClickLogo&amp;v=1.2.2.0" class="ac-logo" alt="" />
-                    <div><strong>AnimeClick</strong><p class="ac-note">I tuoi anime, in italiano.</p></div>
-                </div>
-                <span class="ac-version" id="acVersion">v1.2.2.0</span>
-            </header>
-            <div id="acLoadState" class="ac-state" role="status" aria-live="polite">Caricamento delle impostazioni…</div>
-            <div class="ac-workspace">
-                <nav class="ac-tabs" id="acTabs" role="tablist" aria-label="AnimeClick" aria-orientation="vertical">
-                    <button type="button" class="ac-tab" id="acTabOverview" role="tab" data-panel="overview" aria-controls="acPanelOverview" aria-selected="true" tabindex="0">Inizio</button>
-                    <button type="button" class="ac-tab" id="acTabLibreria" role="tab" data-panel="libreria" aria-controls="acPanelLibreria" aria-selected="false" tabindex="-1">La tua libreria</button>
-                    <button type="button" class="ac-tab" id="acTabMetadati" role="tab" data-panel="metadati" aria-controls="acPanelMetadati" aria-selected="false" tabindex="-1">Preferenze</button>
-                    <button type="button" class="ac-tab" id="acTabSinossi" role="tab" data-panel="sinossi" aria-controls="acPanelSinossi" aria-selected="false" tabindex="-1">Fonti aggiuntive</button>
-                    <button type="button" class="ac-tab" id="acTabCommunity" role="tab" data-panel="community" aria-controls="acPanelCommunity" aria-selected="false" tabindex="-1">Comunità</button>
-                    <button type="button" class="ac-tab" id="acTabStrumenti" role="tab" data-panel="strumenti" aria-controls="acPanelStrumenti" aria-selected="false" tabindex="-1">Avanzate</button>
-                </nav>
-                <main class="ac-main" aria-busy="true">
-                    <div class="ac-panel active" data-panel="overview" id="acPanelOverview" role="tabpanel" aria-labelledby="acTabOverview" tabindex="0"></div>
-                    <div class="ac-panel" data-panel="libreria" id="acPanelLibreria" role="tabpanel" aria-labelledby="acTabLibreria" tabindex="0" hidden></div>
-                    <div class="ac-panel" data-panel="metadati" id="acPanelMetadati" role="tabpanel" aria-labelledby="acTabMetadati" tabindex="0" hidden></div>
-                    <div class="ac-panel" data-panel="sinossi" id="acPanelSinossi" role="tabpanel" aria-labelledby="acTabSinossi" tabindex="0" hidden></div>
-                    <div class="ac-panel" data-panel="community" id="acPanelCommunity" role="tabpanel" aria-labelledby="acTabCommunity" tabindex="0" hidden></div>
-                    <div class="ac-panel" data-panel="strumenti" id="acPanelStrumenti" role="tabpanel" aria-labelledby="acTabStrumenti" tabindex="0" hidden></div>
-                </main>
-            </div>
-            <div class="ac-stickybar" id="acSaveBar" style="display:none;" role="region" aria-label="Salva le preferenze">
-                <span class="ac-state" role="status">Hai modifiche da salvare</span>
-                <button type="button" class="ac-btn ac-btn-ghost" id="acBtnDiscard">Annulla</button>
-                <button type="button" class="ac-btn ac-btn-primary" id="acBtnSave">Salva modifiche</button>
-            </div>
-            <footer class="ac-footer">
-                <span>Fatto per chi ama gli anime.</span>
-                <a href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick#readme" target="_blank" rel="noopener noreferrer">Guida</a>
-                <a href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues" target="_blank" rel="noopener noreferrer">Segnala un problema</a>
-                <a href="https://buymeacoffee.com/iCosiSenpai" target="_blank" rel="noopener noreferrer">Offrimi un caffè</a>
-                <a href="https://www.paypal.com/donate/?hosted_button_id=5A4E26XC45GLQ" target="_blank" rel="noopener noreferrer">PayPal</a>
-            </footer>
+        <div id="acRoot" class="ac-app" lang="it">
+            <div class="ac-loadstate" role="status">Caricamento di AnimeClick…</div>
         </div>
     </div></div>
     <script>
     (function () {
-        var V = '1.2.2.0';
+        var V = '1.3.0.0';
+        var SCRIPTS = ['AnimeClickCoreJs', 'AnimeClickSettingsJs', 'AnimeClickLibraryJs', 'AnimeClickHomeJs', 'AnimeClickSetupJs', 'AnimeClickAppJs'];
         var pg = document.getElementById('AnimeClickConfigPage');
         function asset(name) { return 'configurationpage?name=' + name + '&v=' + V; }
         function failed() {
-            var state = pg.querySelector('#acLoadState');
-            state.textContent = 'Non riesco a caricare la pagina. Ricarica Jellyfin per riprovare.';
-            state.className = 'ac-state error';
+            var root = pg.querySelector('#acRoot');
+            var state = document.createElement('div');
+            state.className = 'ac-loadstate is-bad';
             state.setAttribute('role', 'alert');
+            state.textContent = 'Non riesco a caricare la pagina di AnimeClick. Ricarica Jellyfin per riprovare.';
+            while (root.firstChild) root.removeChild(root.firstChild);
+            root.removeAttribute('data-ac-built');
+            root.appendChild(state);
         }
         function ensureCss() {
             var id = 'ac-css-' + V;
@@ -65,8 +33,8 @@
             link.addEventListener('error', function () { link.remove(); failed(); });
             document.head.appendChild(link);
         }
-        function ensureJs(done) {
-            var id = 'ac-js-' + V;
+        function ensureScript(name, done) {
+            var id = 'ac-js-' + name + '-' + V;
             var existing = document.getElementById(id);
             if (existing) {
                 if (existing.dataset.loaded) done();
@@ -74,28 +42,21 @@
                 return;
             }
             var script = document.createElement('script');
-            script.id = id; script.src = asset('AnimeClickConfigJs');
+            script.id = id; script.src = asset(name); script.async = false;
             script.addEventListener('load', function () { script.dataset.loaded = '1'; done(); });
             script.addEventListener('error', function () { script.remove(); failed(); });
             document.head.appendChild(script);
         }
-        function ensureLibrary(done) {
-            var id = 'ac-library-js-' + V;
-            var existing = document.getElementById(id);
-            if (existing) {
-                if (existing.dataset.loaded) done();
-                else existing.addEventListener('load', done, { once: true });
-                return;
-            }
-            var script = document.createElement('script');
-            script.id = id; script.src = asset('AnimeClickLibraryJs');
-            script.addEventListener('load', function () { script.dataset.loaded = '1'; done(); });
-            script.addEventListener('error', function () { script.remove(); failed(); });
-            document.head.appendChild(script);
+        function ensureAll(index, done) {
+            if (index >= SCRIPTS.length) { done(); return; }
+            ensureScript(SCRIPTS[index], function () { ensureAll(index + 1, done); });
         }
         pg.addEventListener('pageshow', function () {
             ensureCss();
-            ensureLibrary(function () { ensureJs(function () { window.AC.config.show(pg); }); });
+            ensureAll(0, function () { window.AnimeClickUI.app.show(pg); });
+        });
+        pg.addEventListener('pagehide', function () {
+            if (window.AnimeClickUI && window.AnimeClickUI.app) window.AnimeClickUI.app.pageHidden();
         });
     })();
     </script>

@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           PROJECT_VERSION="$(dotnet msbuild AnimeClick.Plugin.csproj -nologo -getProperty:Version | tr -d '\r' | tail -n 1)"
           status=0
-          for file in Configuration/configPage.html Web/assets/animeclick-config.js PluginConfiguration.cs; do
+          for file in Configuration/configPage.html Web/assets/*.js PluginConfiguration.cs; do
             while IFS=: read -r line found; do
               if [[ "${found}" != "${PROJECT_VERSION}" ]]; then
                 echo "::error file=${file},line=${line}::version ${found} does not match ${PROJECT_VERSION}"

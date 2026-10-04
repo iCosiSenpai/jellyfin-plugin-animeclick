@@ -75,12 +75,20 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 EnableInMainMenu = true,
                 MenuIcon = "movie"
             },
-            // Shared assets (served via /web/configurationpage?name=...)
+            // Shared assets (served via /web/configurationpage?name=...). The page loads the scripts
+            // in this order: each one builds on the namespace the previous ones declared.
             new PluginPageInfo { Name = "AnimeClickCss", EmbeddedResourcePath = ns + ".Web.assets.animeclick.css" },
-            new PluginPageInfo { Name = "AnimeClickConfigJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-config.js" },
+            new PluginPageInfo { Name = "AnimeClickCoreJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-core.js" },
+            new PluginPageInfo { Name = "AnimeClickSettingsJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-settings.js" },
             new PluginPageInfo { Name = "AnimeClickLibraryJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-library.js" },
-            new PluginPageInfo { Name = "AnimeClickBanner", EmbeddedResourcePath = ns + ".assets.banner.png" },
-            new PluginPageInfo { Name = "AnimeClickLogo", EmbeddedResourcePath = ns + ".assets.logo.png" }
+            new PluginPageInfo { Name = "AnimeClickHomeJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-home.js" },
+            new PluginPageInfo { Name = "AnimeClickSetupJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-setup.js" },
+            new PluginPageInfo { Name = "AnimeClickAppJs", EmbeddedResourcePath = ns + ".Web.assets.animeclick-app.js" },
+            new PluginPageInfo { Name = "AnimeClickMascot", EmbeddedResourcePath = ns + ".Web.assets.mascot-360.png" },
+            new PluginPageInfo { Name = "AnimeClickMascotSmall", EmbeddedResourcePath = ns + ".Web.assets.mascot-96.png" },
+            new PluginPageInfo { Name = "AnimeClickLogoTmdb", EmbeddedResourcePath = ns + ".ProviderLogos.tmdb.svg" },
+            new PluginPageInfo { Name = "AnimeClickLogoFanart", EmbeddedResourcePath = ns + ".ProviderLogos.fanart.png" },
+            new PluginPageInfo { Name = "AnimeClickLogoTvdb", EmbeddedResourcePath = ns + ".ProviderLogos.thetvdb-dark.png" }
         ];
     }
 }

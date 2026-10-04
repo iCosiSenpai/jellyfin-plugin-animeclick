@@ -317,21 +317,12 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 });
             }
 
-            row.MissingTitleCount = reasons.Count;
-
-            // Three separate numbers, because they mean three different things to the user: what a
-            // recheck can still fix, what is only waiting for AnimeClick to publish, and what no
-            // request will ever change.
-            row.RecoverableTitleCount = reasons.Count(AnimeClickLibraryAudit.IsRecoverableByRecheck);
-            row.WaitingTitleCount = reasons.Count(AnimeClickLibraryAudit.IsWaitingForSource);
-            row.UnavailableTitleCount = row.MissingTitleCount
-                - row.RecoverableTitleCount
-                - row.WaitingTitleCount;
-            var reason = reasons.Count == 0
-                ? AnimeClickAuditReason.Ok
-                : AnimeClickLibraryAudit.Summarize(reasons);
-            row.Reason = reason.ToString();
-            row.ReasonLabel = AnimeClickLibraryAudit.Describe(reason);
+            row.ApplyReasons(reasons);
+            row.CheckableTitleCount = CountCheckable(
+                series,
+                episodes,
+                seasonId => seasonCardIds.TryGetValue(seasonId, out var card) ? card : null,
+                config);
             response.Series.Add(row);
         }
 
@@ -341,6 +332,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         response.RecoverableTitleCount = response.Series.Sum(item => item.RecoverableTitleCount);
         response.WaitingTitleCount = response.Series.Sum(item => item.WaitingTitleCount);
         response.UnavailableTitleCount = response.Series.Sum(item => item.UnavailableTitleCount);
+        response.CheckableTitleCount = response.Series.Sum(item => item.CheckableTitleCount);
         response.Totals = response.Series
             .GroupBy(item => item.Reason)
             .Select(group => new LibraryAuditReasonCount
@@ -486,10 +478,12 @@ public class AnimeClickDiagnosticsController : ControllerBase
             });
         }
 
-        result.MissingTitleCount = reasons.Count;
-        var reason = reasons.Count == 0 ? AnimeClickAuditReason.Ok : AnimeClickLibraryAudit.Summarize(reasons);
-        result.Reason = reason.ToString();
-        result.ReasonLabel = AnimeClickLibraryAudit.Describe(reason);
+        result.ApplyReasons(reasons);
+        result.CheckableTitleCount = CountCheckable(
+            series,
+            episodes,
+            seasonId => _libraryManager.GetItemById(seasonId) is Season season ? season.GetProviderId("AnimeClick") : null,
+            config);
         result.CardRowCount = result.Seasons.Sum(item => item.CardRowCount ?? 0);
         return Ok(result);
     }
@@ -707,6 +701,32 @@ public class AnimeClickDiagnosticsController : ControllerBase
     }
 
     public sealed class CancelActivityRequest { public string Key { get; set; } = string.Empty; }
+
+    /// <summary>
+    /// Episodes "Sistema tutti i titoli" will inspect in this series, by the task's own rule. The page
+    /// used to show every missing title instead, locked and unidentified ones included, so its number
+    /// could not match what the run actually checked.
+    /// </summary>
+    private int CountCheckable(
+        Series series,
+        IEnumerable<Episode> episodes,
+        Func<Guid, string?> seasonCard,
+        PluginConfiguration config)
+    {
+        var usesAnimeClick = new Lazy<bool>(() =>
+            AnimeClickRefreshMissingTitlesTask.EpisodesUseAnimeClick(_libraryManager.GetLibraryOptions(series)));
+        var animeClickId = series.GetProviderId("AnimeClick");
+        var tmdbId = series.GetProviderId("Tmdb");
+        var tvdbId = series.GetProviderId("Tvdb");
+        return episodes.Count(episode => AnimeClickRefreshMissingTitlesTask.IsCandidate(
+            episode,
+            animeClickId,
+            seasonCard(episode.SeasonId),
+            tmdbId,
+            tvdbId,
+            () => usesAnimeClick.Value,
+            config));
+    }
 
     /// <summary>
     /// True when this library asks AnimeClick for its metadata. A library that does not is none of
@@ -1620,6 +1640,9 @@ public sealed class LibraryAuditResponse
     /// <summary>Episodes a recheck can still fix.</summary>
     public int RecoverableTitleCount { get; set; }
 
+    /// <summary>Episodes "Sistema tutti i titoli" will inspect: not locked and with a source to ask.</summary>
+    public int CheckableTitleCount { get; set; }
+
     /// <summary>Episodes whose row exists but whose title AnimeClick has not published yet.</summary>
     public int WaitingTitleCount { get; set; }
 
@@ -1660,6 +1683,9 @@ public sealed class LibraryAuditSeriesItem
     /// <summary>Of the missing ones, those a recheck can still fix.</summary>
     public int RecoverableTitleCount { get; set; }
 
+    /// <summary>Of the missing ones, those "Sistema tutti i titoli" will inspect.</summary>
+    public int CheckableTitleCount { get; set; }
+
     /// <summary>Of the missing ones, those only waiting for AnimeClick to publish the title.</summary>
     public int WaitingTitleCount { get; set; }
 
@@ -1674,6 +1700,27 @@ public sealed class LibraryAuditSeriesItem
     public string ReasonLabel { get; set; } = string.Empty;
 
     public List<LibraryAuditSeasonItem> Seasons { get; set; } = [];
+
+    /// <summary>
+    /// Fills the counts and the headline cause from the episodes that still need a title. Shared by
+    /// the library-wide report and the single-series re-read: the latter used to set only the total,
+    /// so re-reading a series made its recoverable, waiting and unavailable counts drop to zero.
+    /// </summary>
+    internal void ApplyReasons(IReadOnlyCollection<AnimeClickAuditReason> reasons)
+    {
+        ArgumentNullException.ThrowIfNull(reasons);
+
+        // Three separate numbers, because they mean three different things to the user: what a
+        // recheck can still fix, what is only waiting for AnimeClick to publish, and what no
+        // request will ever change.
+        MissingTitleCount = reasons.Count;
+        RecoverableTitleCount = reasons.Count(AnimeClickLibraryAudit.IsRecoverableByRecheck);
+        WaitingTitleCount = reasons.Count(AnimeClickLibraryAudit.IsWaitingForSource);
+        UnavailableTitleCount = MissingTitleCount - RecoverableTitleCount - WaitingTitleCount;
+        var reason = reasons.Count == 0 ? AnimeClickAuditReason.Ok : AnimeClickLibraryAudit.Summarize(reasons);
+        Reason = reason.ToString();
+        ReasonLabel = AnimeClickLibraryAudit.Describe(reason);
+    }
 }
 
 public sealed class LibraryAuditSeasonItem

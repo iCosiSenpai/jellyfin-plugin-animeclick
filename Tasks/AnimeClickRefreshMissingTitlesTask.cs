@@ -89,17 +89,14 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
             {
                 IncludeItemTypes = [BaseItemKind.Episode], Recursive = true, IsVirtualItem = false
             }).OfType<Episode>()
-                .Where(episode => !IsNameLocked(episode) && NeedsTitle(episode))
-                .Where(episode => !string.IsNullOrWhiteSpace(episode.Series?.GetProviderId("AnimeClick"))
-                    || !string.IsNullOrWhiteSpace(episode.Season?.GetProviderId("AnimeClick"))
-                    || configuration.EnableEpisodeTitleFallback
-                        && _libraryManager.GetLibraryOptions(episode)?.TypeOptions?
-                            .FirstOrDefault(option => string.Equals(option.Type, "Episode", StringComparison.OrdinalIgnoreCase))?
-                            .MetadataFetchers?.Contains("AnimeClick", StringComparer.OrdinalIgnoreCase) == true &&
-                        (!string.IsNullOrWhiteSpace(configuration.TmdbApiKey)
-                            && !string.IsNullOrWhiteSpace(episode.Series?.GetProviderId("Tmdb"))
-                        || configuration.EnableTvdbSynopsis && !string.IsNullOrWhiteSpace(configuration.TvdbApiKey)
-                            && !string.IsNullOrWhiteSpace(episode.Series?.GetProviderId("Tvdb"))))
+                .Where(episode => IsCandidate(
+                    episode,
+                    episode.Series?.GetProviderId("AnimeClick"),
+                    episode.Season?.GetProviderId("AnimeClick"),
+                    episode.Series?.GetProviderId("Tmdb"),
+                    episode.Series?.GetProviderId("Tvdb"),
+                    () => EpisodesUseAnimeClick(_libraryManager.GetLibraryOptions(episode)),
+                    configuration))
                 .OrderBy(episode => episode.SeriesName, StringComparer.Ordinal)
                 .ThenBy(episode => episode.ParentIndexNumber).ThenBy(episode => episode.IndexNumber)
                 .ToList();
@@ -153,6 +150,45 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
             throw;
         }
     }
+
+    /// <summary>
+    /// Whether this task will inspect the episode: a title is needed, the name is not locked, and there is a
+    /// source to ask — an AnimeClick card on the series or season, or, with the alternative lookup enabled
+    /// in a library that uses AnimeClick for episodes, a configured TMDB or TheTVDB identity. The library
+    /// audit counts with the same rule, so the number on the page is the number this task processes.
+    /// </summary>
+    internal static bool IsCandidate(
+        Episode episode,
+        string? seriesAnimeClickId,
+        string? seasonAnimeClickId,
+        string? seriesTmdbId,
+        string? seriesTvdbId,
+        Func<bool> libraryUsesAnimeClickForEpisodes,
+        PluginConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(episode);
+        ArgumentNullException.ThrowIfNull(libraryUsesAnimeClickForEpisodes);
+        ArgumentNullException.ThrowIfNull(configuration);
+        if (IsNameLocked(episode) || !NeedsTitle(episode))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(seriesAnimeClickId) || !string.IsNullOrWhiteSpace(seasonAnimeClickId))
+        {
+            return true;
+        }
+
+        var alternativeIdentity = (!string.IsNullOrWhiteSpace(configuration.TmdbApiKey) && !string.IsNullOrWhiteSpace(seriesTmdbId))
+            || (configuration.EnableTvdbSynopsis && !string.IsNullOrWhiteSpace(configuration.TvdbApiKey)
+                && !string.IsNullOrWhiteSpace(seriesTvdbId));
+        return configuration.EnableEpisodeTitleFallback && alternativeIdentity && libraryUsesAnimeClickForEpisodes();
+    }
+
+    internal static bool EpisodesUseAnimeClick(MediaBrowser.Model.Configuration.LibraryOptions? options)
+        => options?.TypeOptions?
+            .FirstOrDefault(option => string.Equals(option.Type, "Episode", StringComparison.OrdinalIgnoreCase))?
+            .MetadataFetchers?.Contains("AnimeClick", StringComparer.OrdinalIgnoreCase) == true;
 
     /// <summary>True when Jellyfin must not let an automated refresh alter the title.</summary>
     internal static bool IsNameLocked(Episode episode)
