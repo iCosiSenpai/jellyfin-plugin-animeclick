@@ -51,6 +51,7 @@
       "animeClickId": "16714",
       "kind": "Movie",
       "providerIds": {
+        "AniList": "21519",
         "Tmdb": "372058"
       }
     },
@@ -206,6 +207,7 @@
       "animeClickId": "1533",
       "kind": "Series",
       "providerIds": {
+        "AniList": "4654",
         "Tmdb": "30980",
         "Tvdb": "83322"
       }
@@ -638,6 +640,7 @@
       "animeClickId": "24530",
       "kind": "Series",
       "providerIds": {
+        "AniList": "101921",
         "Tmdb": "83121",
         "Tvdb": "354198"
       }
