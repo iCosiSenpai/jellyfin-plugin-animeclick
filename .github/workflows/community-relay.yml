@@ -34,7 +34,8 @@ jobs:
     steps:
       - name: Wait for the one-time Cloudflare setup
         if: env.CLOUDFLARE_API_TOKEN == ''
-        run: echo "::notice::Relay not published: add the Cloudflare secrets described in community/README.md."
+        run: |
+          echo "::notice::Relay not published: add the Cloudflare secrets described in community/README.md."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.CLOUDFLARE_API_TOKEN != ''
       - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
