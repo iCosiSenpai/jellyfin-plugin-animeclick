@@ -15,6 +15,18 @@
 - **26 test Python** dello strumento e della revisione (con il controllo AniList di tipo e anno, aggiunto dopo che la semina ha trovato un film collegato all'ID AniList della serie TV): fixture, conflitti, file legacy allineato byte per byte, indirizzo del servizio solo `https` semplice, lettura di una scheda AnimeClick reale, schede richieste con un nome nell'indirizzo (un numero da solo risponde 404: trovato provando la revisione sui 169 abbinamenti della libreria del NAS), proposta alterata dopo l'apertura, scheda o ID inesistenti, dubbi senza rifiuto quando un sito non risponde o manca la chiave, approvazione che scrive entrambi i file.
 - **9 test del servizio** con KV, limitatore e GitHub simulati: fixture, campi estranei e corpi troppo grandi, una sola issue per proposta con conferme contate una volta per installazione, issue aperta da un plugin con token riutilizzata, limiti per raffica, per installazione e globali, GitHub irraggiungibile come errore temporaneo, nessun indirizzo salvato o pubblicato.
 
+## Esito sul NAS
+
+AnimeClick 1.4.0.0 Active, Jellyfin 12.1 healthy, stesso container e immagine. Tag sul commit `2440597`, CI riuscita su 12.0 e 12.1. ZIP pubblico verificato senza autenticazione: 522.678 byte, SHA-256 `8a12a048d380aaf8728c0b41b268c69dd461386092833b87d387f44cd342bf4d`, MD5 `3633329E5827A1214F598325D26CAFA1`; la DLL installata coincide con quella pubblicata. Il trigger di aggiornamento plugin all'avvio, sospeso per il riavvio, è stato ripristinato.
+
+La configurazione mantiene tutti i valori: cambia solo `ConfigurationVersion` (da 2 a 3) e compare `CommunitySharingMode = Ask`, ricavato dalla condivisione che era spenta; nessuna chiave toccata. Le 37 DLL degli altri plugin sono identiche. Il confronto dei 5.785 elementi della libreria prima e dopo l'installazione è **identico byte per byte**. Gli endpoint della comunità, provati in sola lettura, leggono l'elenco pubblico (170 abbinamenti, 168 già coincidenti con la libreria del NAS), calcolano l'anteprima della stagione 3 di Saiki con i suoi 2 episodi e segnalano che il servizio di invio senza account non è ancora attivo.
+
+Prima dell'installazione, su richiesta, sono state corrette due opere collegate alla scheda sbagliata: il film *KonoSuba: Legend of Crimson* (dalla serie TV 8873 alla scheda **24794**, AniList da 21202 a **102976**) e *Devil May Cry* del 2025 (dall'anime del 2007, 1161, alla scheda **52015**, AniList 1726 rimosso). Il confronto prima/dopo mostra cambiamenti solo su queste due opere e sui loro episodi: titoli, trame, generi e cast della scheda giusta, i titoli italiani AnimeClick per gli 8 episodi della prima stagione di DMC e la classificazione TV-MA della serie copiata da Jellyfin su stagioni ed episodi che non ne avevano. Fuori da esse cambiano solo i tag delle foto di alcune persone condivise.
+
+## Semina dell'elenco
+
+170 abbinamenti approvati dal proprietario ([#3](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/pull/3)): 151 serie e 18 film della sua libreria più la stagione 3 di Saiki K., controllati con `tools/community_review.py` contro AnimeClick, TMDB e AniList. Railgun, Chunibyo Ren, Lupin – Fujiko Mine e Mushoku Tensei S3 tengono solo l'ID AniList che li distingue; Index, Kaguya-sama e *Your Name.* perdono un ID AniList che indicava un'altra opera (questi tre ID restano da correggere nella libreria del NAS).
+
 ## Limiti
 
 - Il servizio della comunità richiede un account Cloudflare e i segreti descritti in `community/README.md`; finché non è pubblicato le proposte senza token restano in coda.
