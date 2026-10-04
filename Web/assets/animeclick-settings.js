@@ -24,7 +24,7 @@
         EnableCast: true, EnableThemeSongs: true, EnableIntegratedImages: true, EnableFanartImages: true,
         EnableAnimeClickImages: true, OverwriteNonItalianFields: false, EnableStudios: true,
         EnableCommunityRating: true, EnableCollections: false, EnableTvdbSynopsis: false,
-        EnableAiTranslation: true, EnableCommunityMappings: false, EnableCommunitySharing: false
+        EnableAiTranslation: true, EnableCommunityMappings: false
     };
     var NUMBERS = {
         MinPosterWidth: 400, EpisodeTranslationTimeoutSec: 90, TranslationCacheHours: 87600,
@@ -32,7 +32,7 @@
     };
     var TEXTS = {
         FanartPersonalApiKey: '', FanartProjectApiKey: '', TmdbApiKey: '', TvdbApiKey: '', AiModel: '',
-        EpisodeLayoutOverrides: '', UserAgent: '', BaseUrl: 'https://www.animeclick.it'
+        EpisodeLayoutOverrides: '', UserAgent: '', BaseUrl: 'https://www.animeclick.it', CommunitySharingMode: 'Ask'
     };
 
     function el(id) {
@@ -154,13 +154,6 @@
     }
 
     function validate() {
-        if (el('acEnableCommunitySharing').checked && !el('acCommunityGitHubToken').value.trim()
-            && (!saved.CommunityGitHubToken || el('acClearCommunityToken').checked)) {
-            AC.app.go('community');
-            el('acCommunityGitHubToken').focus();
-            return 'Per l’invio automatico serve il tuo token GitHub con il permesso di creare segnalazioni nel repository del plugin.';
-        }
-
         var invalid = bound().find(function (control) {
             return control.type === 'number' && (!control.value.trim() || !control.checkValidity());
         });
@@ -757,7 +750,10 @@
                     success ? 'L’ID AnimeClick è salvato e l’aggiornamento è partito.' : truncate(val(response, 'error') || 'Errore sconosciuto.', 300),
                     success ? 'ok' : 'warn'));
                 var community = val(response, 'communityMessage');
-                if (community && community !== 'Disattivata') identifyOut.appendChild(h('p', { class: 'ac-hint', text: community }));
+                var proposal = val(response, 'communityProposal');
+                if (success && proposal) renderShareOffer(identifyOut, itemId, proposal);
+                else if (community && community !== 'Disattivata') identifyOut.appendChild(h('p', { class: 'ac-hint', text: community }));
+                if (success && community && community !== 'Disattivata') AC.bus.emit('community-changed');
                 ui.toast(success ? 'Abbinamento salvato' : 'Identificazione incompleta', success ? 'success' : 'error');
                 if (success) AC.bus.emit('library-changed');
             }).catch(function (error) {
@@ -867,49 +863,174 @@
 
     /* ===== Comunità ===== */
 
+    var SHARING_CHOICES = [
+        { value: 'Ask', label: 'Chiedimi ogni volta' },
+        { value: 'Always', label: 'Condividi sempre' },
+        { value: 'Never', label: 'Non condividere' }
+    ];
+
+    var PROVIDER_NAMES = { Tmdb: 'TMDB', Tvdb: 'TheTVDB', AniList: 'AniList' };
+
+    function describeIds(ids) {
+        return Object.keys(ids || {}).sort().map(function (key) { return (PROVIDER_NAMES[key] || key) + ' ' + ids[key]; }).join(', ');
+    }
+
+    /** One line a person can check: what the proposal links to what. */
+    function describeMapping(mapping) {
+        var kind = val(mapping, 'kind');
+        var card = 'scheda AnimeClick ' + val(mapping, 'animeClickId');
+        if (kind === 'Season') {
+            var number = val(mapping, 'seasonNumber');
+            return (number === 0 ? 'Speciali' : 'Stagione ' + number) + ' (' + AC.util.plural(val(mapping, 'episodeCount'), 'episodio', 'episodi')
+                + ') della serie ' + describeIds(val(mapping, 'series')) + ' → ' + card;
+        }
+        return (kind === 'Movie' ? 'Film ' : 'Serie ') + describeIds(val(mapping, 'providerIds')) + ' → ' + card;
+    }
+
+    var PROPOSAL_STATES = {
+        Queued: ['In partenza', 'warn', 'clock'],
+        Sent: ['In revisione', '', 'eye'],
+        Approved: ['Approvata', 'ok', 'check'],
+        NotAccepted: ['Non accettata', 'bad', 'x'],
+        Failed: ['Non inviata', 'bad', 'alert']
+    };
+
+    function proposalBadge(state) {
+        var meta = PROPOSAL_STATES[state] || PROPOSAL_STATES.Queued;
+        return ui.badge(meta[0], meta[1], meta[2]);
+    }
+
+    /**
+     * Shown under a successful correction when the choice is «Chiedimi ogni volta». Nothing leaves the
+     * server until «Condividi» is pressed; «Non chiedere più» switches the choice to «Non condividere».
+     */
+    function renderShareOffer(host, itemId, proposal) {
+        var out = ui.liveStatus('acShareOfferResult');
+        var share = ui.button('Condividi', { id: 'acShareOffer', variant: 'primary', icon: 'share', small: true });
+        var later = ui.button('Non ora', { id: 'acShareLater', variant: 'ghost', small: true });
+        var never = ui.button('Non chiedere più', { id: 'acShareNever', variant: 'ghost', small: true });
+        var box = h('div', { id: 'acShareBox', class: 'ac-callout is-info ac-share-offer' }, icon('users'),
+            h('div', { class: 'ac-stack-s' },
+                h('strong', { text: 'Questa correzione può aiutare altri utenti' }),
+                h('p', { text: 'Condividi l’abbinamento con la comunità: dopo i controlli e una revisione arriverà a chi ha la stessa opera.' }),
+                h('p', { class: 'ac-hint', id: 'acShareSummary', text: describeMapping(proposal) }),
+                ui.details('Cosa viene inviato', h('pre', { class: 'ac-code', text: JSON.stringify(proposal, null, 2) })),
+                h('div', { class: 'ac-row' }, share, later, never),
+                out));
+        host.appendChild(box);
+        share.addEventListener('click', function () {
+            ui.setBusy(share, true, 'Invio…');
+            api.request('POST', 'Plugins/AnimeClick/Community/Share', { itemId: itemId }).then(function (result) {
+                replace(box, icon('check'), h('div', null, h('strong', { text: 'Grazie!' }), h('p', { text: val(result, 'message') || 'Proposta in coda.' })));
+                box.className = 'ac-callout is-ok';
+                AC.bus.emit('community-changed');
+            }).catch(function (error) {
+                ui.status(out, truncate(error.message, 240), 'bad');
+                ui.setBusy(share, false);
+            });
+        });
+        later.addEventListener('click', function () { box.remove(); });
+        never.addEventListener('click', function () {
+            ui.setBusy(never, true, 'Salvataggio…');
+            savePatch({ CommunitySharingMode: 'Never' }).then(function () {
+                box.remove();
+                ui.toast('Non te lo chiederò più. Puoi cambiare idea in Comunità.', 'success');
+            }).catch(function (error) {
+                ui.status(out, truncate(error.message, 240), 'bad');
+                ui.setBusy(never, false);
+            });
+        });
+    }
+
     function buildCommunity(view) {
         view.appendChild(ui.sectionHead('コミュニティ', 'Comunità', 'Abbinamenti condivisi',
-            'Quando correggi un abbinamento puoi aiutare anche gli altri a riconoscere la stessa opera. Ogni proposta viene revisionata prima di entrare nell’elenco approvato. Tutto è spento all’installazione.'));
+            'Quando correggi un abbinamento puoi aiutare tutti gli altri a riconoscere la stessa opera, senza account e senza condividere la tua libreria.'));
 
-        var choices = ui.card({ icon: 'users', title: 'Partecipazione', text: 'Due scelte indipendenti: usare l’elenco approvato e, se vuoi, contribuire.' });
+        var how = ui.card({ icon: 'sparkles', title: 'Come funziona' });
+        var step = function (number, title, text) {
+            return h('li', { class: 'ac-how-step' }, h('span', { class: 'ac-step-num', text: String(number) }),
+                h('div', null, h('strong', { text: title }), h('span', { class: 'ac-hint', text: text })));
+        };
+        how.body.appendChild(h('ol', { class: 'ac-how' },
+            step(1, 'Correggi', 'In Strumenti scegli la scheda giusta per una serie, un film o una stagione.'),
+            step(2, 'Condividi', 'Il plugin invia solo gli ID pubblici, dopo il tuo consenso.'),
+            step(3, 'Revisione', 'Controlli automatici e un clic del curatore del plugin.'),
+            step(4, 'Tutti', 'Chi ha la stessa opera riceve l’abbinamento giusto, al massimo entro un giorno.')));
+
+        var choices = ui.card({ icon: 'users', title: 'Le tue scelte', text: 'Due scelte indipendenti: ricevere gli abbinamenti e contribuire.' });
         choices.body.appendChild(ui.switches([
-            ui.switchRow('acEnableCommunityMappings', 'Usa gli abbinamenti approvati', 'Scarica da GitHub, al massimo una volta al giorno, un elenco di ID pubblici verificati. Aiuta a riconoscere le opere nuove tramite TMDB, TVDB o AniList.', { key: 'EnableCommunityMappings' }),
-            ui.switchRow('acEnableCommunitySharing', 'Condividi automaticamente le mie correzioni', 'Dopo una correzione pubblica su GitHub soltanto gli ID dell’opera. Spento: nessun invio.', { key: 'EnableCommunitySharing' })
+            ui.switchRow('acEnableCommunityMappings', 'Usa gli abbinamenti della comunità', 'Scarica una volta al giorno l’elenco approvato. Vale solo per serie, film e stagioni senza un ID AnimeClick: non cambia mai un abbinamento che hai già.', { key: 'EnableCommunityMappings' })
         ]));
-        choices.body.appendChild(ui.callout('Cosa viene pubblicato',
-            'Tipo (serie o film), ID AnimeClick e ID TMDB, TVDB o AniList, in una segnalazione pubblica legata al tuo account GitHub. Mai utenti, percorsi, file, indirizzo del server, trame o immagini. Spegnere l’opzione ferma gli invii futuri.', 'info', 'eye'));
-        choices.body.appendChild(ui.field('acCommunityGitHubToken', 'Token GitHub per l’invio', {
-            secret: true, spellcheck: false,
-            html: 'Un token del tuo account che possa creare issue in <a href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick" target="_blank" rel="noopener noreferrer">questo repository</a>. Resta nella configurazione del server e va solo ad api.github.com. Non serve per usare l’elenco approvato.'
+        choices.body.appendChild(ui.select('acCommunitySharingMode', 'Dopo una correzione', SHARING_CHOICES, {
+            key: 'CommunitySharingMode', hint: 'Con «Chiedimi ogni volta» non parte nulla finché non premi Condividi.'
         }));
-        choices.body.appendChild(ui.check('acClearCommunityToken', 'Rimuovi il token salvato', 'Viene rimosso quando salvi.'));
+        choices.body.appendChild(ui.callout('Cosa parte, e cosa mai',
+            'Tipo, ID AnimeClick e ID TMDB, TheTVDB o AniList; per una stagione anche il suo numero e quanti episodi contiene. Un codice casuale dell’installazione serve solo a limitare gli abusi e non viene pubblicato. Mai titoli, utenti, percorsi, file, indirizzo del server, trame o immagini.', 'info', 'eye'));
 
-        var queue = ui.card({ icon: 'share', title: 'Invii', text: 'Lo stato delle correzioni in attesa di essere pubblicate.' });
-        var statusButton = ui.button('Controlla invii', { id: 'acCommunityStatus', icon: 'refresh', variant: 'ghost', small: true });
-        var retryButton = ui.button('Riprova invii falliti', { id: 'acCommunityRetry', icon: 'undo', variant: 'ghost', small: true });
+        var mine = ui.card({ icon: 'share', title: 'Le tue proposte', text: 'Ogni proposta diventa una segnalazione pubblica nel repository del plugin.' });
+        var listHost = h('div', { id: 'acCommunityProposals', class: 'ac-stack-s', 'aria-live': 'polite' });
         var queueOut = ui.liveStatus('acCommunityResult');
-        function check(method, route, buttonNode) {
-            ui.setBusy(buttonNode, true, 'Controllo…');
-            api.request(method, 'Plugins/AnimeClick/Community/' + route).then(function (report) {
-                ui.status(queueOut, (val(report, 'pending') || 0) + ' in attesa · ' + (val(report, 'failed') || 0) + ' falliti. ' + (val(report, 'message') || ''));
-            }).catch(function (error) { ui.status(queueOut, error.message, 'bad'); })
-                .finally(function () { ui.setBusy(buttonNode, false); });
-        }
-        statusButton.addEventListener('click', function () { check('GET', 'Status', statusButton); });
-        retryButton.addEventListener('click', function () { check('POST', 'Retry', retryButton); });
-        queue.body.appendChild(h('div', { class: 'ac-row' }, statusButton, retryButton));
-        queue.body.appendChild(queueOut);
+        var statusButton = ui.button('Aggiorna', { id: 'acCommunityStatus', icon: 'refresh', variant: 'ghost', small: true });
+        var retryButton = ui.button('Riprova invii falliti', { id: 'acCommunityRetry', icon: 'undo', variant: 'ghost', small: true });
+        mine.body.appendChild(listHost);
+        mine.body.appendChild(h('div', { class: 'ac-row' }, statusButton, retryButton));
+        mine.body.appendChild(queueOut);
 
-        var preview = ui.card({ icon: 'eye', title: 'Guarda prima di condividere', text: 'Gli ID che una correzione invierebbe per il titolo scelto in Strumenti → Correggi un abbinamento. L’anteprima non pubblica nulla.' });
-        var previewButton = ui.button('Mostra l’anteprima del titolo scelto', { id: 'acCommunityPreview', icon: 'eye', variant: 'ghost', small: true });
+        function showStatus(report) {
+            var pending = val(report, 'pending') || 0, failed = val(report, 'failed') || 0;
+            ui.status(queueOut, (pending || failed ? pending + ' in partenza · ' + failed + ' non inviate. ' : '') + (val(report, 'message') || ''),
+                failed ? 'bad' : null);
+        }
+
+        function loadProposals() {
+            replace(listHost, ui.skeleton(48));
+            return Promise.all([
+                api.request('GET', 'Plugins/AnimeClick/Community/Proposals'),
+                api.request('GET', 'Plugins/AnimeClick/Community/Status')
+            ]).then(function (results) {
+                var rows = list(results[0]);
+                if (!rows.length) {
+                    replace(listHost, h('p', { class: 'ac-muted', text: 'Nessuna proposta per ora. Quando correggi un abbinamento in Strumenti, qui vedrai la sua revisione.' }));
+                } else {
+                    replace(listHost, h('ul', { class: 'ac-list' }, rows.map(function (row) {
+                        var url = val(row, 'url');
+                        return h('li', { class: 'ac-list-item' },
+                            h('div', null,
+                                h('strong', { text: describeMapping(val(row, 'mapping')) }),
+                                url && /^https:\/\/github\.com\/iCosiSenpai\/jellyfin-plugin-animeclick\/issues\/\d+$/.test(url)
+                                    ? h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', class: 'ac-hint', text: 'Segnalazione #' + val(row, 'issue') })
+                                    : null),
+                            proposalBadge(val(row, 'state')));
+                    })));
+                }
+                showStatus(results[1]);
+            }).catch(function (error) {
+                replace(listHost, h('p', { class: 'ac-status is-bad', text: truncate(error.message, 240) }));
+            });
+        }
+
+        statusButton.addEventListener('click', function () {
+            ui.setBusy(statusButton, true, 'Aggiornamento…');
+            loadProposals().finally(function () { ui.setBusy(statusButton, false); });
+        });
+        retryButton.addEventListener('click', function () {
+            ui.setBusy(retryButton, true, 'Riprovo…');
+            api.request('POST', 'Plugins/AnimeClick/Community/Retry').then(function () { return loadProposals(); })
+                .catch(function (error) { ui.status(queueOut, error.message, 'bad'); })
+                .finally(function () { ui.setBusy(retryButton, false); });
+        });
+        AC.bus.on('community-changed', function () { if (!view.hidden) loadProposals(); });
+        AC.bus.on('view', function (name) { if (name === 'community') loadProposals(); });
+
+        var previewButton = ui.button('Mostra cosa invierebbe il titolo scelto', { id: 'acCommunityPreview', icon: 'eye', variant: 'ghost', small: true });
         var previewOut = h('pre', { id: 'acCommunityPreviewData', class: 'ac-code', hidden: true });
         previewButton.addEventListener('click', function () {
             var id = el('acItemId').value.trim();
             previewOut.hidden = false;
-            if (!id) { previewOut.textContent = 'Scegli prima un film o una serie in Strumenti → Correggi un abbinamento.'; return; }
+            if (!id) { previewOut.textContent = 'Scegli prima un titolo in Strumenti → Correggi un abbinamento.'; return; }
             ui.setBusy(previewButton, true, 'Caricamento…');
             api.request('GET', 'Plugins/AnimeClick/Community/Preview?itemId=' + encodeURIComponent(id)).then(function (mapping) {
-                previewOut.textContent = JSON.stringify(mapping, null, 2);
+                previewOut.textContent = describeMapping(mapping) + '\n\n' + JSON.stringify(mapping, null, 2);
             }).catch(function (error) { previewOut.textContent = error.message; })
                 .finally(function () { ui.setBusy(previewButton, false); });
         });
@@ -927,12 +1048,21 @@
             }).catch(function (error) { ui.toast('Esportazione non riuscita: ' + error.message, 'error'); })
                 .finally(function () { ui.setBusy(exportButton, false); });
         });
-        preview.body.appendChild(h('div', { class: 'ac-row' }, previewButton, exportButton));
-        preview.body.appendChild(previewOut);
-        preview.body.appendChild(ui.hint('L’esportazione contiene solo gli ID pubblici dei titoli già collegati e resta sul tuo dispositivo.'));
 
-        view.appendChild(choices.card);
-        view.appendChild(h('div', { class: 'ac-cols-2' }, queue.card, preview.card));
+        var advanced = ui.details('Avanzate: invio con il tuo account GitHub, anteprima ed esportazione', [
+            ui.field('acCommunityGitHubToken', 'Token GitHub (facoltativo)', {
+                secret: true, spellcheck: false,
+                html: 'Non serve: senza token le proposte passano dal servizio della comunità. Con un token che possa creare issue in <a href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick" target="_blank" rel="noopener noreferrer">questo repository</a> le proposte partono a tuo nome. Resta nella configurazione del server e va solo ad api.github.com.'
+            }),
+            ui.check('acClearCommunityToken', 'Rimuovi il token salvato', 'Viene rimosso quando salvi.'),
+            h('div', { class: 'ac-row' }, previewButton, exportButton),
+            previewOut,
+            ui.hint('L’esportazione contiene solo gli ID pubblici dei titoli già collegati e resta sul tuo dispositivo.')
+        ]);
+
+        view.appendChild(how.card);
+        view.appendChild(h('div', { class: 'ac-cols-2' }, choices.card, mine.card));
+        view.appendChild(advanced);
     }
 
     /* ===== save bar ===== */
@@ -972,6 +1102,8 @@
         buildSources: buildSources,
         buildTools: buildTools,
         buildCommunity: buildCommunity,
+        describeMapping: describeMapping,
+        sharingChoices: SHARING_CHOICES,
         buildSaveBar: buildSaveBar,
         wire: wire,
         load: function (config) { loaded = true; loadForm(config); loadAiProviders(); },

@@ -114,6 +114,7 @@
         });
         if (focusTab && el('acTab_' + view)) el('acTab_' + view).focus();
         if (!loaded || setupOpen) return;
+        AC.bus.emit('view', view);
         if (previous === 'home' && view !== 'home') AC.home.leave();
         if (view === 'home') AC.home.enter();
         else if (view === 'library') AC.library.enter();
