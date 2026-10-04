@@ -99,8 +99,13 @@ class Review:
             self.verdict = "doubt"
 
 
+def card_url(animeclick_id):
+    # A bare number answers 404; any slug redirects to the canonical card, as the plugin relies on.
+    return ANIMECLICK + animeclick_id + "/x"
+
+
 def check_animeclick(review, mapping, get):
-    status, page = get(ANIMECLICK + mapping["animeClickId"])
+    status, page = get(card_url(mapping["animeClickId"]))
     if status == 404:
         review.add("bad", "Scheda AnimeClick", f"La scheda {mapping['animeClickId']} non esiste.")
         return None
