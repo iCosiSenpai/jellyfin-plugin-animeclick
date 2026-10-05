@@ -1,13 +1,17 @@
-// AnimeClick community relay: receives proposals from plugins without a GitHub account and opens
-// one public issue per proposal in the plugin repository. It stores no request bodies and no IP
-// addresses; installations are kept only as keyed hashes, to count confirmations and limit abuse.
-import { fingerprint, isValidRequest, issueBody, issueTitle, sha256Hex } from './proposal.js';
+// AnimeClick community relay: receives proposals from plugins without a GitHub account and keeps them
+// until the repository's intake workflow collects them, opens one public issue each and reports back.
+// The relay holds no GitHub credential; it stores no request bodies and no IP addresses, and keeps
+// installations only as keyed hashes, to count confirmations and limit abuse.
+import { fingerprint, isValidMapping, isValidRequest, sha256Hex } from './proposal.js';
 
 const MAX_BODY = 2048;
 const PER_INSTALLATION_PER_DAY = 20;
-const NEW_ISSUES_PER_DAY = 300;
+const NEW_PROPOSALS_PER_DAY = 300;
 const MAX_CONFIRMATIONS = 50;
+const MAX_PENDING_BATCH = 50;
 const DAY = 24 * 60 * 60;
+const ISSUE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/(\d{1,9})$/;
+const FINGERPRINT = /^[0-9a-f]{20}$/;
 
 const json = (status, body, headers = {}) => new Response(JSON.stringify(body), {
     status,
@@ -28,40 +32,27 @@ async function bump(kv, key) {
     return count + 1;
 }
 
-function github(env, path, init = {}) {
-    return fetch(`https://api.github.com/repos/${env.REPOSITORY}${path}`, {
-        ...init,
-        redirect: 'manual',
-        headers: {
-            authorization: `Bearer ${env.GITHUB_TOKEN}`,
-            accept: 'application/vnd.github+json',
-            'user-agent': 'AnimeClick-Community-Relay/1.0',
-            'x-github-api-version': '2022-11-28',
-            ...(init.body ? { 'content-type': 'application/json' } : {})
-        }
-    });
+/** Constant-time comparison of the intake secret, so its length and prefix cannot be probed. */
+async function authorized(request, env) {
+    const header = request.headers.get('authorization') || '';
+    if (!env.ADMIN_SECRET || !header.startsWith('Bearer ')) return false;
+    const [given, expected] = await Promise.all([sha256Hex(header.slice(7)), sha256Hex(env.ADMIN_SECRET)]);
+    let difference = 0;
+    for (let index = 0; index < expected.length; index++) difference |= given.charCodeAt(index) ^ expected.charCodeAt(index);
+    return difference === 0;
 }
 
-/** An issue another channel already opened for the same proposal, if GitHub can find it. */
-async function findIssue(env, print) {
-    const query = encodeURIComponent(`repo:${env.REPOSITORY} in:title mapping-${print}`);
-    const response = await fetch(`https://api.github.com/search/issues?q=${query}`, {
-        redirect: 'manual',
-        headers: { authorization: `Bearer ${env.GITHUB_TOKEN}`, accept: 'application/vnd.github+json', 'user-agent': 'AnimeClick-Community-Relay/1.0' }
-    });
-    if (!response.ok) return null;
-    const result = await response.json();
-    const issue = result.items && result.items[0];
-    return issue ? { issue: issue.number, url: issue.html_url } : null;
+async function readBody(request) {
+    const length = Number(request.headers.get('content-length') || 0);
+    if (length > MAX_BODY) return { error: json(413, { error: 'Richiesta troppo grande.' }) };
+    const text = await request.text();
+    if (text.length > MAX_BODY) return { error: json(413, { error: 'Richiesta troppo grande.' }) };
+    try { return { body: JSON.parse(text) }; } catch { return { error: json(400, { error: 'JSON non valido.' }) }; }
 }
 
 async function handleProposal(request, env) {
-    const length = Number(request.headers.get('content-length') || 0);
-    if (length > MAX_BODY) return json(413, { error: 'Proposta troppo grande.' });
-    const text = await request.text();
-    if (text.length > MAX_BODY) return json(413, { error: 'Proposta troppo grande.' });
-    let body;
-    try { body = JSON.parse(text); } catch { return json(400, { error: 'JSON non valido.' }); }
+    const { body, error } = await readBody(request);
+    if (error) return error;
     if (!isValidRequest(body)) return json(400, { error: 'Proposta non valida.' });
 
     // Bursts from one address are cut by Cloudflare's limiter; the address itself is never stored.
@@ -79,55 +70,100 @@ async function handleProposal(request, env) {
     }
 
     const print = await fingerprint(body.mapping);
-    const recordKey = `proposal:${print}`;
-    let record = await readJson(env.PROPOSALS, recordKey);
-    if (!record) {
-        const existing = await findIssue(env, print);
-        if (existing) record = { ...existing, installations: [] };
-    }
-
-    if (record) {
-        // Same proposal again: count a confirmation from a new installation, never a new issue.
-        if (!record.installations.includes(installation) && record.installations.length < MAX_CONFIRMATIONS) {
-            record.installations.push(installation);
-            await env.PROPOSALS.put(recordKey, JSON.stringify(record));
+    const published = await readJson(env.PROPOSALS, `proposal:${print}`);
+    if (published) {
+        // Already an issue: count the confirmation for the next report, never a second issue.
+        if (!published.installations.includes(installation) && published.installations.length < MAX_CONFIRMATIONS) {
+            published.installations.push(installation);
+            await env.PROPOSALS.put(`proposal:${print}`, JSON.stringify(published));
             await bump(env.PROPOSALS, installKey);
-            await github(env, `/issues/${record.issue}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ body: issueBody(body.mapping, record.installations.length) })
-            }).catch(() => null);
         }
-        return json(200, { issue: record.issue, url: record.url, duplicate: true });
+        return json(200, { issue: published.issue, url: published.url, duplicate: true });
     }
 
-    const globalKey = `issues:${day}`;
-    if ((Number(await env.PROPOSALS.get(globalKey)) || 0) >= NEW_ISSUES_PER_DAY) {
+    const pendingKey = `pending:${print}`;
+    const pending = await readJson(env.PROPOSALS, pendingKey);
+    if (pending) {
+        if (!pending.installations.includes(installation) && pending.installations.length < MAX_CONFIRMATIONS) {
+            pending.installations.push(installation);
+            await env.PROPOSALS.put(pendingKey, JSON.stringify(pending));
+            await bump(env.PROPOSALS, installKey);
+        }
+        return json(202, { queued: true, fingerprint: print, duplicate: true });
+    }
+
+    const globalKey = `proposals:${day}`;
+    if ((Number(await env.PROPOSALS.get(globalKey)) || 0) >= NEW_PROPOSALS_PER_DAY) {
         return json(429, { error: 'Il servizio ha raggiunto il limite di oggi: riprova domani.' }, { 'retry-after': String(DAY / 2) });
     }
 
-    const created = await github(env, '/issues', {
-        method: 'POST',
-        body: JSON.stringify({ title: issueTitle(body.mapping, print), body: issueBody(body.mapping, 1), labels: ['proposta'] })
-    });
-    if (!created.ok) return json(503, { error: 'GitHub non disponibile: riprova più tardi.' }, { 'retry-after': '600' });
-    const issue = await created.json();
-    record = { issue: issue.number, url: issue.html_url, installations: [installation] };
-    await env.PROPOSALS.put(recordKey, JSON.stringify(record));
+    await env.PROPOSALS.put(pendingKey, JSON.stringify({ mapping: body.mapping, installations: [installation], receivedAt: new Date().toISOString() }));
     await bump(env.PROPOSALS, globalKey);
     await bump(env.PROPOSALS, installKey);
-    return json(201, { issue: record.issue, url: record.url, duplicate: false });
+    return json(202, { queued: true, fingerprint: print, duplicate: false });
+}
+
+/** For the intake workflow: the proposals waiting for an issue. */
+async function handlePending(env) {
+    const listed = await env.PROPOSALS.list({ prefix: 'pending:', limit: MAX_PENDING_BATCH });
+    const proposals = [];
+    for (const key of listed.keys) {
+        const record = await readJson(env.PROPOSALS, key.name);
+        const print = key.name.slice('pending:'.length);
+        if (!record || !isValidMapping(record.mapping) || await fingerprint(record.mapping) !== print) {
+            await env.PROPOSALS.delete(key.name);
+            continue;
+        }
+        proposals.push({ fingerprint: print, mapping: record.mapping, confirmations: record.installations.length });
+    }
+    return json(200, { proposals });
+}
+
+/** For the intake workflow: the issue a pending proposal became. */
+async function handlePublished(request, env) {
+    const { body, error } = await readBody(request);
+    if (error) return error;
+    const match = body && typeof body.url === 'string' ? ISSUE_URL.exec(body.url) : null;
+    if (!body || !FINGERPRINT.test(body.fingerprint || '') || !match || Number(match[1]) !== body.issue) {
+        return json(400, { error: 'Pubblicazione non valida.' });
+    }
+    const pending = await readJson(env.PROPOSALS, `pending:${body.fingerprint}`);
+    const existing = await readJson(env.PROPOSALS, `proposal:${body.fingerprint}`);
+    const installations = [...new Set([...(existing?.installations || []), ...(pending?.installations || [])])];
+    await env.PROPOSALS.put(`proposal:${body.fingerprint}`, JSON.stringify({ issue: body.issue, url: body.url, installations }));
+    await env.PROPOSALS.delete(`pending:${body.fingerprint}`);
+    return json(200, { ok: true });
+}
+
+/** For plugins: whether a proposal already has its issue. */
+async function handleState(env, print) {
+    if (!FINGERPRINT.test(print)) return json(400, { error: 'Impronta non valida.' });
+    const published = await readJson(env.PROPOSALS, `proposal:${print}`);
+    if (published) return json(200, { state: 'published', issue: published.issue, url: published.url });
+    if (await env.PROPOSALS.get(`pending:${print}`)) return json(200, { state: 'pending' });
+    return json(404, { state: 'unknown' });
 }
 
 export default {
     async fetch(request, env) {
         const { pathname } = new URL(request.url);
-        if (pathname === '/' && request.method === 'GET') {
-            return new Response('AnimeClick community relay. Proposals: POST /v1/proposals\n', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
-        }
-        if (pathname !== '/v1/proposals') return json(404, { error: 'Non trovato.' });
-        if (request.method !== 'POST') return json(405, { error: 'Usa POST.' }, { allow: 'POST' });
         try {
-            return await handleProposal(request, env);
+            if (pathname === '/' && request.method === 'GET') {
+                return new Response('AnimeClick community relay. Proposals: POST /v1/proposals\n', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+            }
+            if (pathname === '/v1/proposals') {
+                return request.method === 'POST' ? await handleProposal(request, env) : json(405, { error: 'Usa POST.' }, { allow: 'POST' });
+            }
+            if (pathname.startsWith('/v1/proposals/') && request.method === 'GET') {
+                return await handleState(env, pathname.slice('/v1/proposals/'.length));
+            }
+            if (pathname === '/v1/pending' || pathname === '/v1/published') {
+                if (!(await authorized(request, env))) return json(401, { error: 'Non autorizzato.' });
+                if (pathname === '/v1/pending' && request.method === 'GET') return await handlePending(env);
+                if (pathname === '/v1/published' && request.method === 'POST') return await handlePublished(request, env);
+                return json(405, { error: 'Metodo non ammesso.' });
+            }
+            return json(404, { error: 'Non trovato.' });
         } catch {
             return json(503, { error: 'Servizio temporaneamente non disponibile.' }, { 'retry-after': '600' });
         }

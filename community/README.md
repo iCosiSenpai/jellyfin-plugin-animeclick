@@ -40,55 +40,49 @@ valida resta usabile se GitHub non risponde.
 
 ## Il servizio della comunità (`relay/`)
 
-Un Cloudflare Worker con un solo compito: ricevere le proposte dei plugin senza token e aprire una issue per ciascuna.
+Un Cloudflare Worker che non possiede credenziali GitHub: riceve le proposte dei plugin senza token e le tiene in
+coda finché il workflow **community intake** del repository, ogni 30 minuti, le preleva, apre una issue per
+ciascuna con il token automatico di GitHub Actions (autore `github-actions[bot]`), esegue i controlli e comunica
+al servizio il numero della issue. La lettura del dataset resta su GitHub.
 
 - `POST /v1/proposals` con `{ schemaVersion: 2, installation, pluginVersion, mapping }`, al massimo 2 KB.
   `installation` è un codice casuale dell'installazione: serve solo ai limiti e alle conferme, non viene pubblicato.
-- Risposte: `201`/`200 { issue, url, duplicate }`, `400`, `413`, `429` con `Retry-After`, `503`.
-- Una proposta già vista non apre una seconda issue: se arriva da un'altra installazione aggiunge una **conferma**
-  (riga «Conferme» nella issue). Le installazioni sono salvate solo come hash con chiave segreta.
+  Risposte: `202 { queued, fingerprint }`, `200 { issue, url, duplicate }` se la issue esiste già, `400`, `413`,
+  `429` con `Retry-After`, `503`.
+- `GET /v1/proposals/{impronta}`: `pending` o `published` con il link alla issue. I plugin lo chiedono una volta
+  all'ora per le proposte che non hanno ancora una issue.
+- `GET /v1/pending` e `POST /v1/published`: solo per il workflow, con il segreto `RELAY_ADMIN_SECRET`.
+- Una proposta già vista non apre una seconda issue: le conferme di installazioni diverse vengono contate (hash
+  con chiave segreta) e riportate nella issue.
 - Limiti: 10 richieste al minuto per indirizzo (limitatore di Cloudflare, indirizzo mai salvato), 20 proposte al
-  giorno per installazione, 300 issue nuove al giorno in tutto. Oltre, il plugin ritenta più tardi da solo.
-- Le issue contengono solo campi validati: nessun testo libero arriva al repository.
-- Nessun log delle richieste (`observability` disattivata).
+  giorno per installazione, 300 proposte nuove al giorno in tutto. Oltre, il plugin ritenta più tardi da solo.
+- Nessun log delle richieste.
 
-`npm test` in `relay/` prova il servizio con KV, limitatore e GitHub simulati.
+`npm test` in `relay/` prova il servizio con KV e limitatore simulati.
 
-### Attivazione (una volta, a cura del curatore del plugin)
+### Pubblicazione
 
-Finché il servizio non è attivo, il plugin tiene le proposte in coda e la pagina lo dice; chi ha un token GitHub può
-già inviare. Per attivarlo:
+`community/relay/deploy.py` pubblica il worker tramite l'API di Cloudflare, senza wrangler: riusa o crea il
+namespace KV, carica il codice con i suoi collegamenti, attiva l'indirizzo `workers.dev` e conserva i segreti già
+presenti. La prima volta genera `INSTALL_SALT` e `ADMIN_SECRET` e, con `--github-secret`, salva quest'ultimo nel
+repository come `RELAY_ADMIN_SECRET` (serve `gh` autenticato).
 
-1. **Cloudflare** (piano gratuito): crea un account, poi in *Storage & Databases → KV* crea il namespace
-   `animeclick-community` e copia il suo ID. Crea un token API con il modello *Edit Cloudflare Workers* e annota
-   l'Account ID.
-2. **GitHub, token del servizio**: crea un token *fine-grained* limitato al solo repository
-   `jellyfin-plugin-animeclick`, permesso **Issues: Read and write** e nient'altro, scadenza un anno. Le issue
-   risulteranno aperte dall'account che crea il token: per separarle dal tuo account personale puoi usare un account
-   dedicato con accesso al repository.
-3. **Segreti del repository** (*Settings → Secrets and variables → Actions*):
-   - segreti `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `RELAY_GITHUB_TOKEN` (il token del passo 2) e
-     `RELAY_INSTALL_SALT` (un testo casuale lungo, per esempio `openssl rand -hex 32`);
-   - variabile `RELAY_KV_ID` con l'ID del namespace KV;
-   - facoltativo, per i controlli TMDB delle proposte: segreto `TMDB_API_KEY`.
-4. Avvia il workflow **community relay** (*Actions → community relay → Run workflow*). Il log del passo di
-   pubblicazione mostra l'indirizzo, del tipo `https://animeclick-community.<nome>.workers.dev`.
-5. Pubblica l'indirizzo nel dataset e fai il commit:
+```bash
+CLOUDFLARE_API_TOKEN=… python3 community/relay/deploy.py --github-secret
+python3 tools/community_mappings.py --relay https://animeclick-community.<sottodominio>.workers.dev/v1/proposals
+git add community/mappings*.json && git commit -m "community: publish the relay" && git push
+```
 
-   ```bash
-   python3 tools/community_mappings.py --relay https://animeclick-community.<nome>.workers.dev/v1/proposals
-   git add community/mappings*.json && git commit -m "community: publish the relay" && git push
-   ```
-
-   Entro un giorno ogni plugin 1.4 o successivo inizia a usarlo, senza aggiornamenti. Per spostarlo basta
-   ripetere il passo 5 con il nuovo indirizzo.
-
-Ogni anno, prima della scadenza, rinnova `RELAY_GITHUB_TOKEN` e rilancia il workflow.
+Il token Cloudflare deve avere **Workers Scripts: Edit** e **Workers KV Storage: Edit** sull'account. Entro un giorno
+ogni plugin 1.4 o successivo inizia a usare il servizio, senza aggiornamenti; per spostarlo basta ripubblicare
+l'indirizzo nel dataset. Con un segreto `CLOUDFLARE_API_TOKEN` limitato ai Workers, il workflow **community relay**
+ripubblica il codice a ogni modifica, conservando i segreti. Facoltativo, per i controlli TMDB: segreto `TMDB_API_KEY`.
 
 ## Revisione e approvazione
 
-Il workflow **community review** gira su ogni issue con il marcatore `mapping-<impronta>` nel titolo, che arrivi
-dal servizio o da un plugin con token:
+Le proposte arrivate dal servizio vengono controllate dal workflow **community intake** appena aperte. Il workflow
+**community review** fa lo stesso per le issue aperte da un plugin con il token GitHub dell'amministratore e gestisce
+l'approvazione per tutte:
 
 1. Legge solo il blocco JSON, verifica che corrisponda all'impronta del titolo e alle regole dello schema.
 2. Controlla che la scheda AnimeClick esista e confronta tipo, anno ed episodi; con `TMDB_API_KEY` verifica anche

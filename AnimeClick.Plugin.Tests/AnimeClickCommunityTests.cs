@@ -244,6 +244,32 @@ public sealed class AnimeClickCommunityTests
     }
 
     [Fact]
+    public async Task AQueuedProposalLearnsItsIssueFromTheRelayLater()
+    {
+        var published = false;
+        using var rig = new Rig(new PluginConfiguration { CommunitySharingMode = "Always" },
+            relayResponse: () => new(HttpStatusCode.Accepted) { Content = new StringContent("{\"queued\":true,\"fingerprint\":\"x\"}") },
+            relayState: fingerprint => published
+                ? "{\"state\":\"published\",\"issue\":58,\"url\":\"https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/58\"}"
+                : "{\"state\":\"pending\"}");
+        await rig.Service.OfferAsync(rig.Movie(), CancellationToken.None);
+        await rig.Service.SendNextAsync(CancellationToken.None);
+        var queued = Assert.Single(await rig.Service.ProposalsAsync(CancellationToken.None));
+        Assert.Equal(("Sent", (int?)null), (queued.State, queued.Issue));
+
+        await rig.Service.ResolveQueuedIssuesAsync(CancellationToken.None);
+        Assert.Null(Assert.Single(await rig.Service.ProposalsAsync(CancellationToken.None)).Issue);
+
+        published = true;
+        await rig.Service.ResolveQueuedIssuesAsync(CancellationToken.None);
+        Assert.Null(Assert.Single(await rig.Service.ProposalsAsync(CancellationToken.None)).Issue); // once an hour at most
+        await rig.Cache.Cache.SetAsync<DateTimeOffset?>("community::issues-checked:v1", DateTimeOffset.UtcNow.AddHours(-2), CancellationToken.None);
+        await rig.Service.ResolveQueuedIssuesAsync(CancellationToken.None);
+        var resolved = Assert.Single(await rig.Service.ProposalsAsync(CancellationToken.None));
+        Assert.Equal((58, "https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/58"), (resolved.Issue, resolved.Url));
+    }
+
+    [Fact]
     public async Task ALinkOutsideTheRepositoryIsNeverKept()
     {
         using var rig = new Rig(new PluginConfiguration { CommunitySharingMode = "Always" },
@@ -419,7 +445,8 @@ public sealed class AnimeClickCommunityTests
         private readonly bool _ownsCache;
 
         public Rig(PluginConfiguration config, string? relay = Relay, string mappings = "", Func<HttpResponseMessage>? relayResponse = null,
-            string issueState = "{\"state\":\"open\"}", int episodes = 2, TemporaryAnimeClickCache? cache = null, IApplicationPaths? paths = null)
+            string issueState = "{\"state\":\"open\"}", int episodes = 2, TemporaryAnimeClickCache? cache = null, IApplicationPaths? paths = null,
+            Func<string, string>? relayState = null)
         {
             _ownsCache = cache is null;
             Cache = cache ?? new TemporaryAnimeClickCache();
@@ -443,6 +470,8 @@ public sealed class AnimeClickCommunityTests
                 }
 
                 if (url == AnimeClickCommunityService.DatasetUrl) return new(HttpStatusCode.OK) { Content = new StringContent(dataset) };
+                if (url.StartsWith(Relay + "/", StringComparison.Ordinal))
+                    return relayState is null ? new(HttpStatusCode.NotFound) : new(HttpStatusCode.OK) { Content = new StringContent(relayState(url[(Relay.Length + 1)..])) };
                 if (url.StartsWith("https://api.github.com/search/issues", StringComparison.Ordinal))
                     return new(HttpStatusCode.OK) { Content = new StringContent("{\"total_count\":0,\"items\":[]}") };
                 if (url.StartsWith("https://api.github.com/repos/", StringComparison.Ordinal))
