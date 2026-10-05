@@ -16,7 +16,14 @@
 - **31 test Python** (5 sul prelievo: issue aperta e controllata, verdetti, issue già esistente riusata, proposta alterata lasciata in coda) e **9 test del relay** (coda, conferme, prelievo solo con il segreto, stato pubblico, record corrotti scartati, limiti).
 - **29 test browser**: setup completo con AniList proposto nel passo Fonti e salvato con le chiavi; aggiornamenti dalla 1.2, dalla 1.3 e dalla 1.4 con i soli passi nuovi; scelta spenta rispettata e riaccesa da Fonti con lo stato aggiornato; nessun overflow a 320, 390 e 1280 px.
 
+## Servizio della comunità pubblicato
+
+Il 2026-10-05 `community/relay/deploy.py` ha pubblicato il servizio su `https://animeclick-community.lookatale95.workers.dev` (namespace KV e worker creati tramite l'API di Cloudflare, segreti generati e mai mostrati, chiave di prelievo salvata come `RELAY_ADMIN_SECRET`), e l'indirizzo è nel dataset (`7b0309a`). Verifiche dal vivo: pagina iniziale, proposta non valida rifiutata con `400`, stato di una proposta sconosciuta `404`, prelievo senza chiave `401`. Prova completa con la stagione 3 di Saiki: `202` in coda, workflow **community intake** che apre la [segnalazione #4](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/4) come `github-actions`, la controlla e la chiude come già approvata, e il servizio che dopo circa 20 secondi (ritardo di KV) risponde `published` con il link.
+
 ## Limiti
+
+- Il servizio vede il proprio stato con il ritardo di KV (fino a circa un minuto); il prelievo ogni 30 minuti e il controllo orario del plugin lo assorbono, e la ricerca per impronta evita le segnalazioni doppie.
+- GitHub sospende i workflow programmati di un repository pubblico dopo 60 giorni senza attività: in quel caso basta riattivare **community intake** dalla scheda Actions.
 
 - AniList non ha testi italiani: titoli e trame restano ad AnimeClick, TMDB e TheTVDB.
 - Le copertine AniList sono più piccole di quelle di TMDB e Fanart: per questo vengono dopo.
