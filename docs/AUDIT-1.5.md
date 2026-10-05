@@ -16,6 +16,12 @@
 - **31 test Python** (5 sul prelievo: issue aperta e controllata, verdetti, issue già esistente riusata, proposta alterata lasciata in coda) e **10 test del relay** (coda, contatore pubblico, conferme, prelievo solo con il segreto, stato pubblico, record corrotti scartati, limiti).
 - **29 test browser**: setup completo con AniList proposto nel passo Fonti e salvato con le chiavi; aggiornamenti dalla 1.2, dalla 1.3 e dalla 1.4 con i soli passi nuovi; scelta spenta rispettata e riaccesa da Fonti con lo stato aggiornato; nessun overflow a 320, 390 e 1280 px.
 
+## Esito sul NAS
+
+AnimeClick 1.5.0.0 Active, Jellyfin 12.1 healthy, stesso container e immagine. Tag sul commit `7648c7a`, CI riuscita su 12.0 e 12.1. ZIP pubblico verificato senza autenticazione: 533.910 byte, SHA-256 `0ea6245d08fc79603d5c20b6a1b004d9bd770136527f4fdd0791f908228ff0d9`, MD5 `4562B908044C78197BAF4F2980438D39`; la DLL installata coincide con quella pubblicata. Trigger di aggiornamento plugin all'avvio sospeso per il riavvio e ripristinato.
+
+La configurazione è identica (49 chiavi, nessun valore cambiato): la scelta su AniList non è ancora salvata, perché la chiede il passo di setup alla prima apertura della pagina. Le 37 DLL degli altri plugin sono identiche e la libreria (5.811 elementi) è **identica byte per byte** prima e dopo. È stata svuotata solo la voce di cache con l'elenco della comunità, letto prima che il servizio avesse un indirizzo: subito dopo il plugin indicava l'invio tramite il servizio, 170 abbinamenti disponibili e 168 già coincidenti con la libreria.
+
 ## Servizio della comunità pubblicato
 
 Il 2026-10-05 `community/relay/deploy.py` ha pubblicato il servizio su `https://animeclick-community.lookatale95.workers.dev` (namespace KV e worker creati tramite l'API di Cloudflare, segreti generati e mai mostrati, chiave di prelievo salvata come `RELAY_ADMIN_SECRET`), e l'indirizzo è nel dataset (`7b0309a`). Verifiche dal vivo: pagina iniziale, proposta non valida rifiutata con `400`, stato di una proposta sconosciuta `404`, prelievo senza chiave `401`. Prova completa con la stagione 3 di Saiki: `202` in coda, workflow **community intake** che apre la [segnalazione #4](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/4) come `github-actions`, la controlla e la chiude come già approvata, e il servizio che dopo circa 20 secondi (ritardo di KV) risponde `published` con il link.
