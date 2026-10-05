@@ -130,9 +130,13 @@ Le chiavi vengono salvate nella configurazione amministrativa Jellyfin. La tradu
 
 ### Plugin e identità del progetto
 
-**Copyright (C) 2026 Alessio Cosi (iCosiSenpai).** Il codice è distribuito sotto **[GNU GPL v3](LICENSE)**. Il plugin usa le librerie Jellyfin GPL-3.0-only; chi modifica e distribuisce il codice deve rispettare la stessa licenza e renderne disponibili i sorgenti.
+**Copyright (C) 2026 Alessio Cosi (iCosiSenpai).** Dalla versione 1.6.0.0 il codice è distribuito sotto **[GNU AGPL v3](LICENSE)**, con i termini aggiuntivi descritti in **[NOTICE](NOTICE)**; le versioni fino alla 1.5.0.0 restano sotto GPLv3. Il plugin usa le librerie Jellyfin GPL-3.0-only, che la sezione 13 delle due licenze permette di combinare con l'AGPL. Chi modifica e distribuisce il codice deve rispettare la stessa licenza e renderne disponibili i sorgenti; con l'AGPL questo vale anche per chi fa usare una versione modificata attraverso la rete, per esempio da un server Jellyfin condiviso.
 
-La GPL riguarda il software e non concede diritti sui marchi. Il nome del plugin, il logo, i banner e l'identità **iCosiSenpai** identificano questo progetto: non possono essere usati per presentare un fork come il progetto originale o come una versione approvata dall'autore. I file dell'identità visiva del progetto restano ridistribuibili con il programma secondo la GPL; un fork deve usare un proprio nome e una propria identità visiva. La riserva sui marchi è descritta in **[NOTICE](NOTICE)**, ai sensi della sezione 7(e) della GPLv3.
+Termini aggiuntivi (sezione 7 dell'AGPLv3), in sintesi:
+
+- **Attribuzione:** una versione modificata deve mantenere nella pagina del plugin la dicitura «Basato su AnimeClick Metadata Plugin di Alessio Cosi (iCosiSenpai)» con il collegamento a questo repository.
+- **Versioni modificate riconoscibili:** nome, GUID del plugin e User-Agent devono essere propri, così le richieste di un fork verso AnimeClick.it e le altre fonti non si confondono con quelle di questo progetto; le proposte inviate al servizio della comunità non possono presentarsi come provenienti da questo plugin.
+- **Marchi:** nome, logo, banner, **mascotte**, servizio della comunità e identità **iCosiSenpai** identificano questo progetto e non possono essere usati per presentare un fork come l'originale o come approvato dall'autore. I file restano ridistribuibili con il programma; un fork deve avere nome, identità visiva e mascotte propri.
 
 ### AnimeClick e autorizzazione allo scraping
 

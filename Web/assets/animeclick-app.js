@@ -54,8 +54,12 @@
         });
         root.appendChild(main);
         root.appendChild(AC.settings.buildSaveBar());
+        // The attribution and the source link are the plugin's «Appropriate Legal Notices» (AGPLv3,
+        // sections 7(b) and 13): a modified version has to keep them. See NOTICE, point 2.
         root.appendChild(h('footer', { class: 'ac-foot' },
-            h('span', null, 'Fatto con ', h('span', { 'aria-label': 'amore', text: '♥' }), ' per chi ama gli anime · Dati da AnimeClick.it'),
+            h('span', { id: 'acAttribution' }, 'Fatto con ', h('span', { 'aria-label': 'amore', text: '♥' }), ' per chi ama gli anime · Dati da AnimeClick.it · ',
+                'Basato su AnimeClick Metadata Plugin di Alessio Cosi (iCosiSenpai)'),
+            h('a', { id: 'acSourceLink', href: 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick', target: '_blank', rel: 'noopener noreferrer', text: 'Codice sorgente (AGPLv3)' }),
             h('a', { href: 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick#readme', target: '_blank', rel: 'noopener noreferrer', text: 'Guida' }),
             h('a', { href: 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues', target: '_blank', rel: 'noopener noreferrer', text: 'Segnala un problema' }),
             h('a', { href: 'https://buymeacoffee.com/iCosiSenpai', target: '_blank', rel: 'noopener noreferrer', text: 'Offrimi un caffè' }),

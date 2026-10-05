@@ -5,51 +5,105 @@ Copyright (C) 2026 Alessio Cosi (iCosiSenpai)
 1. LICENZA DEL SOFTWARE
 ================================================================================
 
-Questo programma è software libero: puoi ridistribuirlo e/o modificarlo secondo
-i termini della GNU General Public License versione 3, come pubblicata dalla
-Free Software Foundation.
+Dalla versione 1.6.0.0 questo programma è distribuito secondo i termini della
+GNU Affero General Public License versione 3 (AGPLv3), come pubblicata dalla
+Free Software Foundation, con i termini aggiuntivi del punto 2. Le versioni
+fino alla 1.5.0.0 sono state distribuite sotto GPLv3 e restano sotto quella
+licenza.
 
 Questo programma è distribuito nella speranza che sia utile, ma SENZA ALCUNA
 GARANZIA; senza nemmeno la garanzia implicita di COMMERCIABILITÀ o IDONEITÀ PER
-UN PARTICOLARE SCOPO. Consulta la GNU General Public License per i dettagli.
+UN PARTICOLARE SCOPO. Consulta la GNU Affero General Public License per i
+dettagli.
 
 Il testo completo della licenza si trova nel file LICENSE, oppure su
-<https://www.gnu.org/licenses/gpl-3.0.html>.
+<https://www.gnu.org/licenses/agpl-3.0.html>.
 
-La licenza è GPLv3 e non può essere resa più restrittiva: il plugin è costruito
-sulle librerie Jellyfin.Controller e Jellyfin.Model, distribuite come
-GPL-3.0-only, e ne implementa le interfacce.
+Il plugin è costruito sulle librerie Jellyfin.Controller, Jellyfin.Common e
+Jellyfin.Model, distribuite come GPL-3.0-only. La sezione 13 della GPLv3 e la
+sezione 13 della AGPLv3 consentono di combinare le due licenze: le librerie
+Jellyfin restano sotto GPLv3, questo programma sotto AGPLv3.
+
+Che cosa aggiunge la AGPL. Chi esegue una versione modificata di questo
+programma e permette ad altri di usarla attraverso una rete — per esempio un
+server Jellyfin accessibile ad altri utenti — deve offrire loro il codice
+sorgente corrispondente di quella versione. La pagina del plugin riporta per
+questo il collegamento al codice sorgente.
 
 ================================================================================
-2. NOME E LOGO — DIRITTI NON CONCESSI (GPLv3 sezione 7, lettera e)
+2. TERMINI AGGIUNTIVI (AGPLv3, sezione 7)
 ================================================================================
 
-La GPL riguarda il codice, non il marchio. Ai sensi della sezione 7, lettera e)
-della GPLv3, che consente di «rifiutare la concessione di diritti in materia di
+Ai sensi della sezione 7 della AGPLv3, al materiale di questo programma si
+applicano i seguenti termini aggiuntivi.
+
+a) Attribuzione (sezione 7, lettera b). Le versioni modificate devono
+   mantenere, nella pagina di configurazione del plugin o in un punto
+   equivalente sempre visibile all'amministratore che la usa, la dicitura:
+
+     «Basato su AnimeClick Metadata Plugin di Alessio Cosi (iCosiSenpai)
+      — https://github.com/iCosiSenpai/jellyfin-plugin-animeclick»
+
+   Questa dicitura fa parte delle «Appropriate Legal Notices» del programma.
+
+b) Versioni modificate riconoscibili (sezione 7, lettera c). È vietato
+   presentare in modo ingannevole l'origine di questo materiale. Chi
+   distribuisce o mette in rete una versione modificata deve contrassegnarla
+   come diversa dall'originale, e in particolare deve:
+
+     - usare un nome del plugin diverso da quelli del punto 3;
+     - usare un identificativo del plugin (GUID) diverso da
+       1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11;
+     - usare uno User-Agent HTTP proprio, che non contenga
+       «AnimeClick-Jellyfin-Plugin», «AnimeClick-Community» né l'indirizzo di
+       questo repository: le richieste di un'opera derivata verso AnimeClick.it,
+       TMDB, TheTVDB, AniList, Fanart o il servizio della comunità non devono
+       potersi confondere con quelle di questo progetto;
+     - non inviare proposte al servizio della comunità di questo progetto
+       presentandole come provenienti da questo plugin;
+     - non usare numeri di versione o etichette che possano essere scambiati
+       per una release di questo progetto.
+
+c) Marchi (sezione 7, lettera e): vedi il punto 3.
+
+Questi termini non limitano i diritti che la licenza concede di usare,
+studiare, modificare e ridistribuire il codice: chiedono che il lavoro altrui
+resti riconoscibile e che il proprio sia distinguibile.
+
+================================================================================
+3. NOME, LOGO E MASCOTTE — DIRITTI NON CONCESSI (sezione 7, lettera e)
+================================================================================
+
+La licenza riguarda il codice, non il marchio. Ai sensi della sezione 7,
+lettera e), che consente di «rifiutare la concessione di diritti in materia di
 marchi», NON vengono concessi diritti sull'uso dei seguenti segni distintivi:
 
-  - il nome «AnimeClick Metadata Plugin» e la sua forma abbreviata
-    «AnimeClick Plugin»;
+  - il nome «AnimeClick Metadata Plugin» e le sue forme abbreviate
+    «AnimeClick Plugin», «AnimeClick Metadata» e «AnimeClick per Jellyfin»;
   - il logo e il banner del progetto (assets/logo.png, assets/banner.png,
     assets/logo ALT.png, assets/banner-alt.png, assets/banner-plugin-interno.png);
+  - la mascotte del plugin (Web/assets/mascot-360.png, Web/assets/mascot-96.png)
+    e il personaggio che raffigura;
+  - il nome e l'indirizzo del servizio della comunità
+    (animeclick-community, animeclick-community.lookatale95.workers.dev);
   - il nome utente e l'identità «iCosiSenpai».
 
 Che cosa significa in pratica. I file immagine restano parte del programma e si
-ridistribuiscono con esso secondo la GPL: la licenza del software non viene
-limitata in alcun modo, come la GPL stessa richiede. Ciò che non è concesso è
-l'uso di quei segni per **identificare o promuovere** un'opera diversa da
-questa. Chi pubblica una versione modificata deve quindi presentarla con un
-proprio nome e una propria identità visiva, e non può far credere che si tratti
-di questo progetto o che ne sia approvata.
+ridistribuiscono con esso secondo la licenza: la licenza del software non viene
+limitata in alcun modo. Ciò che non è concesso è l'uso di quei segni per
+**identificare o promuovere** un'opera diversa da questa. Chi pubblica una
+versione modificata deve quindi presentarla con un proprio nome, una propria
+identità visiva e una propria mascotte, e non può far credere che si tratti di
+questo progetto o che ne sia approvata.
 
-Restano naturalmente lecite le citazioni descrittive e veritiere, per esempio
-«basato su AnimeClick Metadata Plugin».
+Restano naturalmente lecite le citazioni descrittive e veritiere, come la
+dicitura di attribuzione del punto 2.
 
 «AnimeClick» nel nome è un riferimento descrittivo alla fonte dei dati: il
-marchio AnimeClick.it appartiene ai suoi titolari, vedi il punto 4.
+marchio AnimeClick.it appartiene ai suoi titolari, vedi il punto 5.
 
 ================================================================================
-3. AUTORIZZAZIONE ALLO SCRAPING — PERSONALE E NON TRASFERIBILE
+4. AUTORIZZAZIONE ALLO SCRAPING — PERSONALE E NON TRASFERIBILE
 ================================================================================
 
 Lo staff di AnimeClick.it ha autorizzato **questo progetto** a eseguire scraping
@@ -62,15 +116,16 @@ di ottenere il proprio consenso dai titolari del sito e di rispettarne le
 condizioni d'uso. Le protezioni tecniche descritte nel README — passo minimo fra
 le richieste, cache locale, nessuna importazione dei commenti come contenuto
 editoriale, nessun uso massivo o commerciale — vanno mantenute in qualunque
-opera derivata.
+opera derivata, che deve anche presentarsi ad AnimeClick.it con un proprio
+User-Agent (punto 2, lettera b).
 
 ================================================================================
-4. COMPONENTI E FONTI DI TERZI
+5. COMPONENTI E FONTI DI TERZI
 ================================================================================
 
 Il plugin usa questi componenti, ciascuno con la propria licenza:
 
-  - Jellyfin.Controller, Jellyfin.Model .......... GPL-3.0-only
+  - Jellyfin.Controller, Jellyfin.Common, Jellyfin.Model ... GPL-3.0-only
     Copyright (C) Jellyfin Contributors
   - HtmlAgilityPack .............................. MIT
   - Microsoft.Extensions.* ....................... MIT
@@ -107,7 +162,7 @@ I servizi AI eventualmente configurati dall'utente sono soggetti ai propri
 termini: le chiavi API e i relativi costi sono responsabilità di chi li usa.
 
 ================================================================================
-5. HTML AGILITY PACK — LICENZA DELLA DLL INCLUSA
+6. HTML AGILITY PACK — LICENZA DELLA DLL INCLUSA
 ================================================================================
 
 HtmlAgilityPack 1.11.71

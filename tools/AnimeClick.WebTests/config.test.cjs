@@ -259,6 +259,9 @@ test('home opens on the showcase and dashboard, and the tabs work with the keybo
         await page.locator('#acHomeHealthBody .ac-ring').first().waitFor();
         assert.equal(await page.locator('#acView_home input:visible').count(), 0);
         await page.locator('#acHomeLibraries').getByText('Anime', { exact: true }).waitFor();
+        // AGPLv3 sections 7(b) and 13: the attribution and the source link stay on the page.
+        assert.match(await page.locator('#acAttribution').innerText(), /Basato su AnimeClick Metadata Plugin di Alessio Cosi \(iCosiSenpai\)/);
+        assert.equal(await page.locator('#acSourceLink').getAttribute('href'), 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick');
         await page.getByRole('tab', { name: 'Inizio', exact: true }).focus();
         await page.keyboard.press('ArrowRight');
         assert.equal(await page.locator('#acTab_library').getAttribute('aria-selected'), 'true');

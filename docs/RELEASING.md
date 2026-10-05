@@ -16,7 +16,7 @@ Il tag genera una **draft** dopo il successo dei test backend e web. Il pacchett
 ## Verifica e pubblicazione
 
 1. Scaricare `AnimeClick.Plugin.zip` dalla draft tramite un account autenticato.
-2. Verificare l’integrità ZIP e i quattro file previsti: `AnimeClick.Plugin.dll`, `HtmlAgilityPack.dll`, `LICENSE`, `NOTICE`. Non distribuire le DLL Jellyfin.
+2. Verificare l’integrità ZIP e i cinque file previsti: `AnimeClick.Plugin.dll`, `HtmlAgilityPack.dll`, `meta.json`, `LICENSE`, `NOTICE`. Il `name` di `meta.json` deve essere quello del plugin («AnimeClick Plugin»), non quello del pacchetto nel catalogo: Jellyfin raggruppa le versioni per nome e, se differiscono, dopo un aggiornamento carica sia la vecchia sia la nuova (issue #2). Non distribuire le DLL Jellyfin.
 3. Calcolare MD5 maiuscolo per il catalogo e SHA-256 come verifica supplementare. MD5 è il formato del catalogo Jellyfin, non una firma di autenticità.
 4. Pubblicare la draft come release stabile/latest.
 5. Scaricare l’asset dall’URL pubblico **senza autenticazione** e confrontare il checksum con quello dell’asset verificato.
