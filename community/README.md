@@ -41,14 +41,20 @@ valida resta usabile se GitHub non risponde.
 ## Il servizio della comunità (`relay/`)
 
 Un Cloudflare Worker che non possiede credenziali GitHub: riceve le proposte dei plugin senza token e le tiene in
-coda finché il workflow **community intake** del repository, ogni 30 minuti, le preleva, apre una issue per
-ciascuna con il token automatico di GitHub Actions (autore `github-actions[bot]`), esegue i controlli e comunica
-al servizio il numero della issue. La lettura del dataset resta su GitHub.
+coda finché il workflow **community intake** del repository le preleva, apre una issue per ciascuna con il token
+automatico di GitHub Actions (autore `github-actions[bot]`), esegue i controlli e comunica al servizio il numero
+della issue. La lettura del dataset resta su GitHub.
+
+Il workflow non ha un orario su GitHub, perché GitHub sospende i workflow programmati di un repository pubblico dopo
+60 giorni senza commit. Lo avvia il NAS del curatore: ogni 10 minuti legge `GET /v1/queue` (solo un numero) e, se
+c'è qualcosa in coda, lancia il workflow con `gh workflow run`. Se il NAS è spento le proposte aspettano; il
+workflow si può sempre avviare anche a mano da *Actions*.
 
 - `POST /v1/proposals` con `{ schemaVersion: 2, installation, pluginVersion, mapping }`, al massimo 2 KB.
   `installation` è un codice casuale dell'installazione: serve solo ai limiti e alle conferme, non viene pubblicato.
   Risposte: `202 { queued, fingerprint }`, `200 { issue, url, duplicate }` se la issue esiste già, `400`, `413`,
   `429` con `Retry-After`, `503`.
+- `GET /v1/queue`: quante proposte aspettano, e nient'altro.
 - `GET /v1/proposals/{impronta}`: `pending` o `published` con il link alla issue. I plugin lo chiedono una volta
   all'ora per le proposte che non hanno ancora una issue.
 - `GET /v1/pending` e `POST /v1/published`: solo per il workflow, con il segreto `RELAY_ADMIN_SECRET`.

@@ -13,7 +13,7 @@
 ## Verifiche eseguite
 
 - **426 test backend** (23 su AniList, uno sul link recuperato dal relay): lettura di una risposta reale ridotta; ID accettato solo con tipo e anno coerenti, sui casi trovati nella libreria del NAS (film collegato alla serie TV, spot al posto di un film, terza stagione al posto della prima); campi completati solo se vuoti, valori e regista di AnimeClick conservati, preferenze spente rispettate, foto dei doppiatori solo dalla CDN di AniList; catena dei sequel con anno restituito solo a parità di episodi, mai con un cour diverso, con due sequel TV, con uno speciale in mezzo o con un ID che non indica la prima stagione; anno già noto o fonte spenta lasciati intatti; immagini fidate e rifiutate; copertina e banner proposti solo per un'opera coerente; richiesta con lo User-Agent del plugin, risposta in cache e ID inesistente ricordato.
-- **31 test Python** (5 sul prelievo: issue aperta e controllata, verdetti, issue già esistente riusata, proposta alterata lasciata in coda) e **9 test del relay** (coda, conferme, prelievo solo con il segreto, stato pubblico, record corrotti scartati, limiti).
+- **31 test Python** (5 sul prelievo: issue aperta e controllata, verdetti, issue già esistente riusata, proposta alterata lasciata in coda) e **10 test del relay** (coda, contatore pubblico, conferme, prelievo solo con il segreto, stato pubblico, record corrotti scartati, limiti).
 - **29 test browser**: setup completo con AniList proposto nel passo Fonti e salvato con le chiavi; aggiornamenti dalla 1.2, dalla 1.3 e dalla 1.4 con i soli passi nuovi; scelta spenta rispettata e riaccesa da Fonti con lo stato aggiornato; nessun overflow a 320, 390 e 1280 px.
 
 ## Servizio della comunità pubblicato
@@ -23,7 +23,7 @@ Il 2026-10-05 `community/relay/deploy.py` ha pubblicato il servizio su `https://
 ## Limiti
 
 - Il servizio vede il proprio stato con il ritardo di KV (fino a circa un minuto); il prelievo ogni 30 minuti e il controllo orario del plugin lo assorbono, e la ricerca per impronta evita le segnalazioni doppie.
-- GitHub sospende i workflow programmati di un repository pubblico dopo 60 giorni senza attività: in quel caso basta riattivare **community intake** dalla scheda Actions.
+- Il workflow di prelievo non ha un orario su GitHub, così non può essere sospeso dopo 60 giorni senza commit: lo avvia ogni 10 minuti il NAS del curatore (timer `systemd` utente con `animeclick-intake.sh`) solo quando `GET /v1/queue` segnala proposte in attesa. Se il NAS è spento le proposte aspettano in coda. Provato dal vivo: lo script, eseguito da `systemd`, ha avviato il workflow, che ha letto la coda con la propria chiave.
 
 - AniList non ha testi italiani: titoli e trame restano ad AnimeClick, TMDB e TheTVDB.
 - Le copertine AniList sono più piccole di quelle di TMDB e Fanart: per questo vengono dopo.
