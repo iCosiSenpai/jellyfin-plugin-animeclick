@@ -1496,5 +1496,6 @@
       }
     }
   ],
+  "relay": "https://animeclick-community.lookatale95.workers.dev/v1/proposals",
   "schemaVersion": 2
 }
