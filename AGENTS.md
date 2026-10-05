@@ -55,6 +55,9 @@ pacchetto nel catalogo: Jellyfin raggruppa le versioni per nome (issue #2).
 
 - La versione a quattro parti vive nel `.csproj`, in `configPage.html`, in `animeclick-core.js` e nello User-Agent di
   `PluginConfiguration.cs`; la CI controlla che coincidano. Procedura completa in `docs/RELEASING.md`.
+- **Ogni release va pubblicata anche nel catalogo** `iCosiSenpai/iCosiSenpai-Plugins` (`manifest.json`), dopo aver
+  verificato l'asset pubblico: è una regola del proprietario, non un passo facoltativo. Il catalogo contiene solo
+  versioni per Jellyfin 12 o successivo; non rimettere versioni 0.x per Jellyfin 10.x, che sono obsolete.
 - Test: `dotnet test AnimeClick.Plugin.Tests/AnimeClick.Plugin.Tests.csproj -c Release`, in
   `tools/AnimeClick.WebTests` `npm test`, `python3 -m unittest discover -s tools/tests` e, in `community/relay`,
   `npm test`. Le schermate finiscono in `test-results/` (ignorata da git).

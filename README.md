@@ -31,7 +31,7 @@ I nomi propri, gli ID e i dati numerici non vengono tradotti. Se manca un dato o
 
 ## Installazione
 
-**Richiede almeno Jellyfin 12.0 (.NET 10); verificato su Jellyfin 12.0 e 12.1.** Non è compatibile con Jellyfin 10.11. La compatibilità con nuove versioni major va verificata.
+**Il plugin funziona solo con Jellyfin 12.0 o successivo (.NET 10); verificato su Jellyfin 12.0 e 12.1.** Le vecchie versioni 0.x per Jellyfin 10.x sono obsolete: non sono più distribuite né aggiornate, e sono state tolte dal catalogo e dalle release. Per continuare a usare AnimeClick aggiorna prima Jellyfin alla 12, poi il plugin dal catalogo. La compatibilità con nuove versioni major di Jellyfin va verificata.
 
 ### Dal catalogo Jellyfin (consigliata)
 
@@ -43,13 +43,13 @@ I nomi propri, gli ID e i dati numerici non vengono tradotti. Se manca un dato o
    ```
 
 3. Salva, apri **Catalogo** e seleziona **AnimeClick Metadata**.
-4. Installa la versione compatibile con il tuo Jellyfin, riavvia il server e apri le impostazioni del plugin.
+4. Installa l'ultima versione, riavvia il server e apri le impostazioni del plugin.
 
-Questo è il metodo ufficiale e consigliato: Jellyfin gestisce l'installazione e gli aggiornamenti disponibili nel catalogo. Il manifest contiene attualmente la versione 1.0 per Jellyfin 12; le release 1.1 e 1.2 sono disponibili su GitHub ma non sono ancora pubblicate nel catalogo. Le funzionalità descritte qui si riferiscono alla serie 1.2.
+Questo è il metodo ufficiale e consigliato: Jellyfin gestisce l'installazione e gli aggiornamenti, e ogni nuova release viene pubblicata nel catalogo. Il catalogo contiene solo le versioni per Jellyfin 12, dalla 1.0 in poi. Dalla 1.6 un aggiornamento dal catalogo sostituisce la versione precedente senza lasciarla caricata accanto alla nuova.
 
 ### Installazione manuale (alternativa)
 
-Per provare una release non ancora nel catalogo o installare una versione specifica:
+Per installare una versione specifica senza catalogo:
 
 1. Scarica `AnimeClick.Plugin.zip` dall'[ultima release](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest).
 2. Ferma Jellyfin e conserva una copia della configurazione e del plugin precedente.
