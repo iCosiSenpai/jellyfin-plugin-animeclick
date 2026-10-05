@@ -58,7 +58,7 @@ async function main() {
     const plugins = await call('/Plugins');
     const plugin = plugins.find(p => p.Id?.replaceAll('-', '').toLowerCase() === pluginId.replaceAll('-', ''));
     assert.ok(plugin, 'Plugin is absent: ' + JSON.stringify(plugins));
-    assert.equal(plugin?.Version, '1.5.0.0');
+    assert.equal(plugin?.Version, '1.6.0.0');
     assert.equal(plugin.Status, 'Active');
     const configPage = (await call('/web/ConfigurationPages')).find(page => page.Name === 'AnimeClick Plugin');
     assert.equal(configPage?.EnableInMainMenu, true);

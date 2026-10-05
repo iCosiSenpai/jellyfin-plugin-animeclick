@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0.0
+
+Corretto il doppio caricamento dopo un aggiornamento (issue #2): lo ZIP contiene un `meta.json` con il nome del plugin, così Jellyfin tiene tutte le versioni sotto lo stesso nome e rimuove la vecchia, e all'avvio il plugin segna come superate le proprie copie più vecchie. Licenza AGPLv3 con termini aggiuntivi (attribuzione, versioni modificate riconoscibili, marchi e mascotte); attribuzione e link al codice sorgente nella pagina del plugin.
+
+- [Note complete](docs/releases/1.6.0.0.md)
+- [Audit e verifiche](docs/AUDIT-1.6.md)
+
 ## 1.5.0.0
 
 AniList come fonte senza chiave insieme a TMDB: cast giapponese con i personaggi, studio di animazione, date, stato, voto, trailer, copertina e banner, solo nei campi vuoti. L'anno di una stagione senza date arriva dalla catena dei sequel di AniList, se gli episodi coincidono. Gli ID AniList che non corrispondono per tipo o anno vengono ignorati. Nuovo passo AniList nel setup.

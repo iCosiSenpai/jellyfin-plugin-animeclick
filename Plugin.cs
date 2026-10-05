@@ -1,10 +1,10 @@
 // AnimeClick Metadata Plugin for Jellyfin
 // Copyright (C) 2026 Alessio Cosi (iCosiSenpai)
 //
-// Software libero sotto GNU General Public License v3: vedi LICENSE.
-// Nome e logo del progetto non sono concessi in licenza, ai sensi della sezione 7(e)
-// della GPLv3, e l'autorizzazione allo scraping di AnimeClick.it non è trasferibile
-// a opere derivate: vedi NOTICE.
+// Software libero sotto GNU Affero General Public License v3 (dalla versione 1.6.0.0; le
+// versioni precedenti restano sotto GPLv3): vedi LICENSE. Termini aggiuntivi ai sensi della
+// sezione 7 — attribuzione, versioni modificate riconoscibili, nome, logo e mascotte non
+// concessi — e autorizzazione allo scraping di AnimeClick.it non trasferibile: vedi NOTICE.
 
 using System;
 using System.Collections.Generic;
@@ -24,6 +24,14 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         : base(applicationPaths, xmlSerializer)
     {
         Instance = this;
+
+        // Issue #2: an update can leave the previous copy next to this one, and Jellyfin would load both.
+        var assembly = GetType().Assembly;
+        AnimeClick.Plugin.Services.AnimeClickPluginVersions.SupersedeOlderCopies(
+            applicationPaths.PluginsPath,
+            Id,
+            assembly.GetName().Version ?? new Version(0, 0),
+            System.IO.Path.GetDirectoryName(assembly.Location));
 
         // Migrate only the superseded default model, then force the persisted values into
         // usable ranges. SaveConfiguration persists the normalized result while preserving

@@ -91,7 +91,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          zip -j AnimeClick.Plugin.zip publish/AnimeClick.Plugin.dll publish/HtmlAgilityPack.dll LICENSE NOTICE
+          # meta.json carries the plugin's own name, so Jellyfin keeps every version under one name and
+          # removes the older copy after an update instead of loading both (issue #2).
+          python3 tools/release_meta.py publish/meta.json "$(sed -n 3p "docs/releases/${VERSION}.md" | sed 's/\*\*//g' | cut -c1-300)"
+          zip -j AnimeClick.Plugin.zip publish/AnimeClick.Plugin.dll publish/HtmlAgilityPack.dll publish/meta.json LICENSE NOTICE
           unzip -t AnimeClick.Plugin.zip
           md5sum AnimeClick.Plugin.zip
           sha256sum AnimeClick.Plugin.zip

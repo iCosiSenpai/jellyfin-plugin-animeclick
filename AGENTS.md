@@ -44,6 +44,13 @@ e non si modifica a mano: le versioni ≤ 1.3 lo leggono ancora. Il relay non ha
 il workflow `community-intake.yml`, che non va programmato su GitHub (60 giorni di inattività lo sospenderebbero): lo
 avvia il NAS. Si ripubblica con `community/relay/deploy.py` (vedi `community/README.md`).
 
+## Licenza
+
+Dalla 1.6.0.0 il codice è AGPLv3 con i termini aggiuntivi di `NOTICE` (sezione 7). L'attribuzione e il collegamento
+al codice sorgente nel piè di pagina (`#acAttribution`, `#acSourceLink`) sono obbligatori e un test li verifica: non
+toglierli. Il `meta.json` dello ZIP (`tools/release_meta.py`) deve portare il `Name` del plugin, mai il nome del
+pacchetto nel catalogo: Jellyfin raggruppa le versioni per nome (issue #2).
+
 ## Versione e verifiche
 
 - La versione a quattro parti vive nel `.csproj`, in `configPage.html`, in `animeclick-core.js` e nello User-Agent di

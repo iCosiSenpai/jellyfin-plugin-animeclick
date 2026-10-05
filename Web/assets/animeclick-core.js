@@ -3,7 +3,7 @@
     'use strict';
 
     var AC = window.AnimeClickUI = window.AnimeClickUI || {};
-    AC.version = '1.5.0.0';
+    AC.version = '1.6.0.0';
     AC.pluginId = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
 
     /* ===== DOM ===== */
