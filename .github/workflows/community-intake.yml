@@ -1,11 +1,13 @@
 name: community intake
 
-# Collects the proposals queued by the community relay every 30 minutes, opens one issue each with
-# the workflow token (so the relay holds no GitHub credential), runs the automatic checks and reports
-# the issue back to the relay. Approval stays a label on the issue, handled by community-review.yml.
+# Collects the proposals queued by the community relay, opens one issue each with the workflow token
+# (so the relay holds no GitHub credential), runs the automatic checks and reports the issue back to
+# the relay. Approval stays a label on the issue, handled by community-review.yml.
+#
+# Deliberately not scheduled here: GitHub suspends scheduled workflows of a public repository after
+# 60 days without commits. The maintainer's NAS checks the relay's public queue size every 10 minutes
+# and starts this workflow only when something waits; it can also be started by hand.
 on:
-  schedule:
-    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:

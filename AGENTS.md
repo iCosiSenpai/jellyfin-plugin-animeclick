@@ -41,7 +41,8 @@ servizio (`community/relay/src/proposal.js`) e gli strumenti (`tools/community_m
 tutte e tre insieme a `community/schema-v2.json` e agli esempi di `community/fixtures/proposals.json`, che i test di
 ciascuna leggono. `community/mappings.json` (schema 1) si rigenera con `python3 tools/community_mappings.py --write`
 e non si modifica a mano: le versioni ≤ 1.3 lo leggono ancora. Il relay non ha credenziali GitHub: le issue le apre
-il workflow `community-intake.yml`; si ripubblica con `community/relay/deploy.py` (vedi `community/README.md`).
+il workflow `community-intake.yml`, che non va programmato su GitHub (60 giorni di inattività lo sospenderebbero): lo
+avvia il NAS. Si ripubblica con `community/relay/deploy.py` (vedi `community/README.md`).
 
 ## Versione e verifiche
 

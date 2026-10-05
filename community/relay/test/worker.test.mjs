@@ -83,6 +83,14 @@ test('a proposal waits for the intake, which sees it once with its confirmations
     assert.ok(!stored.includes(INSTALL_A) && !stored.includes('203.0.113.9'), 'neither installation nor address is stored in clear');
 });
 
+test('the queue size is public and reveals nothing else', async () => {
+    assert.deepEqual(await (await call('/v1/queue')).json(), { pending: 0 });
+    await send(saiki);
+    await send({ kind: 'Movie', animeClickId: '1', providerIds: { Tmdb: '1' } });
+    const queue = await (await call('/v1/queue')).json();
+    assert.deepEqual(queue, { pending: 2 });
+});
+
 test('once published, plugins get the issue and nobody opens a second one', async () => {
     await send(saiki);
     const print = await fingerprint(saiki);

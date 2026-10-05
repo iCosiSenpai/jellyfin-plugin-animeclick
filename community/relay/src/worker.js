@@ -135,6 +135,12 @@ async function handlePublished(request, env) {
     return json(200, { ok: true });
 }
 
+/** Public and harmless: how many proposals wait, so a scheduler starts the intake only when needed. */
+async function handleQueue(env) {
+    const listed = await env.PROPOSALS.list({ prefix: 'pending:', limit: MAX_PENDING_BATCH });
+    return json(200, { pending: listed.keys.length });
+}
+
 /** For plugins: whether a proposal already has its issue. */
 async function handleState(env, print) {
     if (!FINGERPRINT.test(print)) return json(400, { error: 'Impronta non valida.' });
@@ -154,6 +160,7 @@ export default {
             if (pathname === '/v1/proposals') {
                 return request.method === 'POST' ? await handleProposal(request, env) : json(405, { error: 'Usa POST.' }, { allow: 'POST' });
             }
+            if (pathname === '/v1/queue' && request.method === 'GET') return await handleQueue(env);
             if (pathname.startsWith('/v1/proposals/') && request.method === 'GET') {
                 return await handleState(env, pathname.slice('/v1/proposals/'.length));
             }
