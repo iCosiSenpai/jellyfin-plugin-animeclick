@@ -60,6 +60,8 @@ al servizio il numero della issue. La lettura del dataset resta su GitHub.
 
 `npm test` in `relay/` prova il servizio con KV e limitatore simulati.
 
+Il servizio è attivo dal 2026-10-05 su `https://animeclick-community.lookatale95.workers.dev`.
+
 ### Pubblicazione
 
 `community/relay/deploy.py` pubblica il worker tramite l'API di Cloudflare, senza wrangler: riusa o crea il
