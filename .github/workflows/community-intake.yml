@@ -1,0 +1,36 @@
+name: community intake
+
+# Collects the proposals queued by the community relay every 30 minutes, opens one issue each with
+# the workflow token (so the relay holds no GitHub credential), runs the automatic checks and reports
+# the issue back to the relay. Approval stays a label on the issue, handled by community-review.yml.
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency: community-intake
+
+jobs:
+  intake:
+    runs-on: ubuntu-latest
+    env:
+      RELAY_ADMIN_SECRET: ${{ secrets.RELAY_ADMIN_SECRET }}
+    steps:
+      - name: Wait for the relay
+        if: env.RELAY_ADMIN_SECRET == ''
+        run: |
+          echo "::notice::No RELAY_ADMIN_SECRET yet: publish the relay with community/relay/deploy.py --github-secret."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.RELAY_ADMIN_SECRET != ''
+        with:
+          persist-credentials: false
+      - name: Turn queued proposals into checked issues
+        if: env.RELAY_ADMIN_SECRET != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+        run: python3 tools/community_intake.py

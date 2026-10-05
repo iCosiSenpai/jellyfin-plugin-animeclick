@@ -8,48 +8,43 @@ const fixtures = JSON.parse(readFileSync(new URL('../../fixtures/proposals.json'
 const saiki = fixtures.valid.find(example => example.name === 'season-saiki-final').mapping;
 const INSTALL_A = 'a'.repeat(32);
 const INSTALL_B = 'b'.repeat(32);
+const SECRET = 'intake-secret-for-tests';
+const ISSUE = 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/';
 
-let env, calls, issues, limited;
+let env, limited;
 
 function kv() {
     const store = new Map();
     return {
         store,
         get: async key => (store.has(key) ? store.get(key) : null),
-        put: async (key, value) => { store.set(key, value); }
+        put: async (key, value) => { store.set(key, value); },
+        delete: async key => { store.delete(key); },
+        list: async ({ prefix, limit }) => ({ keys: [...store.keys()].filter(key => key.startsWith(prefix)).slice(0, limit).map(name => ({ name })) })
     };
 }
 
 beforeEach(() => {
-    calls = [];
-    issues = [];
     limited = false;
     env = {
         REPOSITORY: 'iCosiSenpai/jellyfin-plugin-animeclick',
-        GITHUB_TOKEN: 'fake-relay-token',
         INSTALL_SALT: 'salt',
+        ADMIN_SECRET: SECRET,
         PROPOSALS: kv(),
         IP_LIMITER: { limit: async () => ({ success: !limited }) }
     };
-    globalThis.fetch = async (url, init = {}) => {
-        calls.push({ url: String(url), method: init.method || 'GET', body: init.body, headers: init.headers });
-        if (String(url).startsWith('https://api.github.com/search/issues')) return Response.json({ total_count: 0, items: [] });
-        if (init.method === 'POST') {
-            const number = 100 + issues.length;
-            issues.push(JSON.parse(init.body));
-            return Response.json({ number, html_url: `https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/${number}` }, { status: 201 });
-        }
-        if (init.method === 'PATCH') return Response.json({});
-        return new Response('not found', { status: 404 });
-    };
+    globalThis.fetch = async () => { throw new Error('the relay must not call any other service'); };
 });
 
+const call = (path, init = {}) => worker.fetch(new Request('https://relay.example' + path, init), env);
+
 function send(mapping, installation = INSTALL_A, extra = {}) {
-    const body = JSON.stringify({ schemaVersion: 2, installation, pluginVersion: '1.4.0.0', mapping, ...extra });
-    return worker.fetch(new Request('https://relay.example/v1/proposals', {
-        method: 'POST', body, headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.9' }
-    }), env);
+    const body = JSON.stringify({ schemaVersion: 2, installation, pluginVersion: '1.5.0.0', mapping, ...extra });
+    return call('/v1/proposals', { method: 'POST', body, headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.9' } });
 }
+
+const admin = (path, init = {}) => call(path, { ...init, headers: { ...(init.headers || {}), authorization: 'Bearer ' + SECRET } });
+const publish = (print, issue) => admin('/v1/published', { method: 'POST', body: JSON.stringify({ fingerprint: print, issue, url: ISSUE + issue }) });
 
 test('every valid fixture is accepted with the shared canonical text and fingerprint', async () => {
     for (const example of fixtures.valid) {
@@ -59,64 +54,63 @@ test('every valid fixture is accepted with the shared canonical text and fingerp
     }
 });
 
-test('every invalid fixture is rejected before anything is stored or sent', async () => {
+test('every invalid fixture is rejected before anything is stored', async () => {
     for (const example of fixtures.invalid) {
-        const response = await send(example.mapping);
-        assert.equal(response.status, 400, example.name);
+        assert.equal((await send(example.mapping)).status, 400, example.name);
     }
-    assert.equal(calls.length, 0);
     assert.equal(env.PROPOSALS.store.size, 0);
 });
 
 test('extra request fields, a wrong installation code and oversized bodies are refused', async () => {
     assert.equal((await send(saiki, INSTALL_A, { title: 'Saiki' })).status, 400);
     assert.equal((await send(saiki, 'not-a-hex-code')).status, 400);
-    const huge = await worker.fetch(new Request('https://relay.example/v1/proposals', { method: 'POST', body: 'x'.repeat(5000) }), env);
-    assert.equal(huge.status, 413);
-    assert.equal(calls.length, 0);
+    assert.equal((await call('/v1/proposals', { method: 'POST', body: 'x'.repeat(5000) })).status, 413);
+    assert.equal(env.PROPOSALS.store.size, 0);
 });
 
-test('a new proposal opens one issue with only validated fields and returns its link', async () => {
-    const response = await send(saiki);
-    assert.equal(response.status, 201);
-    const result = await response.json();
-    assert.deepEqual(result, { issue: 100, url: 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/100', duplicate: false });
-    const [issue] = issues;
+test('a proposal waits for the intake, which sees it once with its confirmations', async () => {
+    const first = await send(saiki);
+    assert.equal(first.status, 202);
     const print = await fingerprint(saiki);
-    assert.equal(issue.title, `[Proposta] Season · AnimeClick 26035 · mapping-${print}`);
-    assert.ok(issue.body.includes(canonical(saiki)));
-    assert.ok(issue.body.includes('Conferme: 1 installazione'));
-    assert.ok(!issue.body.includes(INSTALL_A) && !issue.body.includes('203.0.113.9'), 'neither installation nor address is published');
-    const created = calls.find(call => call.method === 'POST');
-    assert.equal(created.headers.authorization, 'Bearer fake-relay-token');
-    assert.equal(created.url, 'https://api.github.com/repos/iCosiSenpai/jellyfin-plugin-animeclick/issues');
-    assert.ok(![...env.PROPOSALS.store.values()].some(value => value.includes('203.0.113.9')), 'the address is never stored');
+    assert.deepEqual(await first.json(), { queued: true, fingerprint: print, duplicate: false });
+    assert.equal((await send(saiki)).status, 202);
+    assert.equal((await send(saiki, INSTALL_B)).status, 202);
+
+    const pending = await (await admin('/v1/pending')).json();
+    assert.deepEqual(pending, { proposals: [{ fingerprint: print, mapping: saiki, confirmations: 2 }] });
+    assert.deepEqual(await (await call('/v1/proposals/' + print)).json(), { state: 'pending' });
+    const stored = [...env.PROPOSALS.store.values()].join('\n');
+    assert.ok(!stored.includes(INSTALL_A) && !stored.includes('203.0.113.9'), 'neither installation nor address is stored in clear');
 });
 
-test('the same proposal never opens a second issue and counts each installation once', async () => {
+test('once published, plugins get the issue and nobody opens a second one', async () => {
     await send(saiki);
-    const again = await send(saiki);
-    assert.equal(again.status, 200);
-    assert.equal((await again.json()).duplicate, true);
-    assert.equal(calls.filter(call => call.method === 'PATCH').length, 0, 'the same installation is not a confirmation');
-
-    const confirmed = await send(saiki, INSTALL_B);
-    assert.deepEqual(await confirmed.json(), { issue: 100, url: 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/100', duplicate: true });
-    const patch = calls.find(call => call.method === 'PATCH');
-    assert.equal(patch.url, 'https://api.github.com/repos/iCosiSenpai/jellyfin-plugin-animeclick/issues/100');
-    assert.ok(JSON.parse(patch.body).body.includes('Conferme: 2 installazioni'));
-    assert.equal(issues.length, 1);
+    const print = await fingerprint(saiki);
+    assert.equal((await publish(print, 41)).status, 200);
+    assert.deepEqual(await (await admin('/v1/pending')).json(), { proposals: [] });
+    assert.deepEqual(await (await call('/v1/proposals/' + print)).json(), { state: 'published', issue: 41, url: ISSUE + 41 });
+    assert.deepEqual(await (await send(saiki, INSTALL_B)).json(), { issue: 41, url: ISSUE + 41, duplicate: true });
+    assert.equal((await call('/v1/proposals/' + 'f'.repeat(20))).status, 404);
+    assert.equal((await call('/v1/proposals/not-a-print')).status, 400);
 });
 
-test('an issue opened directly with a token is reused instead of duplicated', async () => {
-    const original = globalThis.fetch;
-    globalThis.fetch = async (url, init = {}) => String(url).startsWith('https://api.github.com/search/issues')
-        ? Response.json({ total_count: 1, items: [{ number: 7, html_url: 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues/7' }] })
-        : original(url, init);
-    const response = await send(saiki);
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).issue, 7);
-    assert.equal(issues.length, 0);
+test('the intake endpoints need the secret and validate what they are told', async () => {
+    assert.equal((await call('/v1/pending')).status, 401);
+    assert.equal((await call('/v1/pending', { headers: { authorization: 'Bearer wrong' } })).status, 401);
+    assert.equal((await call('/v1/published', { method: 'POST', body: '{}' })).status, 401);
+    const print = await fingerprint(saiki);
+    assert.equal((await admin('/v1/published', { method: 'POST', body: JSON.stringify({ fingerprint: print, issue: 5, url: 'https://evil.example/issues/5' }) })).status, 400);
+    assert.equal((await admin('/v1/published', { method: 'POST', body: JSON.stringify({ fingerprint: print, issue: 6, url: ISSUE + 5 }) })).status, 400);
+    assert.equal((await admin('/v1/published', { method: 'POST', body: JSON.stringify({ fingerprint: 'x', issue: 5, url: ISSUE + 5 }) })).status, 400);
+    delete env.ADMIN_SECRET;
+    assert.equal((await admin('/v1/pending')).status, 401, 'without a configured secret nothing is served');
+});
+
+test('a corrupted pending record is dropped instead of reaching the repository', async () => {
+    await env.PROPOSALS.put('pending:' + 'a'.repeat(20), JSON.stringify({ mapping: { kind: 'Series', animeClickId: '1', providerIds: { Tmdb: '1' } }, installations: [] }));
+    await env.PROPOSALS.put('pending:' + 'b'.repeat(20), 'not json');
+    assert.deepEqual(await (await admin('/v1/pending')).json(), { proposals: [] });
+    assert.equal(env.PROPOSALS.store.size, 0);
 });
 
 test('bursts, the daily installation limit and the global cap answer 429 with a retry time', async () => {
@@ -128,25 +122,18 @@ test('bursts, the daily installation limit and the global cap answer 429 with a 
 
     for (let index = 0; index < 20; index++) {
         const mapping = { kind: 'Movie', animeClickId: String(1000 + index), providerIds: { Tmdb: String(5000 + index) } };
-        assert.equal((await send(mapping)).status, 201);
+        assert.equal((await send(mapping)).status, 202);
     }
     assert.equal((await send(saiki)).status, 429, 'the 21st proposal of the day from one installation waits');
 
     const day = new Date().toISOString().slice(0, 10);
-    await env.PROPOSALS.put(`issues:${day}`, '300');
+    await env.PROPOSALS.put(`proposals:${day}`, '300');
     assert.equal((await send(saiki, INSTALL_B)).status, 429, 'the global daily cap protects the repository');
 });
 
-test('a GitHub outage is reported as temporary so the plugin retries', async () => {
-    globalThis.fetch = async url => String(url).includes('/search/') ? Response.json({ total_count: 0, items: [] }) : new Response('down', { status: 502 });
-    const response = await send(saiki);
-    assert.equal(response.status, 503);
-    assert.ok(Number(response.headers.get('retry-after')) > 0);
-    assert.equal(env.PROPOSALS.store.size, 0, 'nothing is recorded for a proposal that was not published');
-});
-
-test('only POST /v1/proposals is served', async () => {
-    assert.equal((await worker.fetch(new Request('https://relay.example/v1/proposals'), env)).status, 405);
-    assert.equal((await worker.fetch(new Request('https://relay.example/other', { method: 'POST' }), env)).status, 404);
-    assert.equal((await worker.fetch(new Request('https://relay.example/'), env)).status, 200);
+test('only the documented routes are served', async () => {
+    assert.equal((await call('/v1/proposals')).status, 405);
+    assert.equal((await call('/other', { method: 'POST' })).status, 404);
+    assert.equal((await call('/')).status, 200);
+    assert.equal((await admin('/v1/pending', { method: 'POST' })).status, 405);
 });

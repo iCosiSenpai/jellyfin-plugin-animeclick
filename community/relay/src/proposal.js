@@ -77,15 +77,3 @@ export async function sha256Hex(text) {
 export async function fingerprint(mapping) {
     return (await sha256Hex(canonical(mapping))).slice(0, 20);
 }
-
-/** Same title the plugin writes when it sends directly with a token. */
-export function issueTitle(mapping, print) {
-    return `[Proposta] ${mapping.kind} · AnimeClick ${mapping.animeClickId} · mapping-${print}`;
-}
-
-export function issueBody(mapping, confirmations) {
-    return 'Proposta di abbinamento condivisa dal plugin con il consenso dell’amministratore. '
-        + 'Contiene solo identificativi pubblici; i controlli automatici la verificano prima della revisione.\n\n'
-        + '```json\n' + canonical(mapping) + '\n```\n\n'
-        + `Conferme: ${confirmations} ${confirmations === 1 ? 'installazione' : 'installazioni'} (arrivata dal servizio della comunità).\n`;
-}

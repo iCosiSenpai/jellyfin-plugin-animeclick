@@ -49,6 +49,7 @@ public sealed class AnimeClickCommunityService(IHttpClientFactory factory, Anime
     private const string ProposalsKey = "community::proposals:v1";
     private const string InstallationKey = "community::installation:v1";
     private const string StatesCheckedKey = "community::states-checked:v1";
+    private const string IssuesCheckedKey = "community::issues-checked:v1";
     private const string DatasetKey = "community::dataset:v2";
     private const int MaximumOutbox = 100;
     private const int MaximumProposals = 200;
@@ -299,6 +300,7 @@ public sealed class AnimeClickCommunityService(IHttpClientFactory factory, Anime
             try
             {
                 await SendNextAsync(stoppingToken).ConfigureAwait(false);
+                await ResolveQueuedIssuesAsync(stoppingToken).ConfigureAwait(false);
                 await RefreshProposalStatesAsync(stoppingToken).ConfigureAwait(false);
                 await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken).ConfigureAwait(false);
             }
@@ -499,6 +501,51 @@ public sealed class AnimeClickCommunityService(IHttpClientFactory factory, Anime
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
                 catch (Exception) { /* The state is informative only; the next daily check tries again. */ }
+            }
+
+            await SaveProposalsAsync(proposals, token).ConfigureAwait(false);
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>
+    /// The relay queues a proposal and the repository's intake workflow opens its issue later. Once an
+    /// hour, up to ten proposals still without an issue ask the relay which one they became.
+    /// </summary>
+    internal async Task ResolveQueuedIssuesAsync(CancellationToken token)
+    {
+        var checkedAt = await _state.GetAsync<DateTimeOffset?>(IssuesCheckedKey, token).ConfigureAwait(false);
+        if (checkedAt is not null && DateTimeOffset.UtcNow - checkedAt.Value < TimeSpan.FromHours(1)) return;
+        await _state.SetAsync<DateTimeOffset?>(IssuesCheckedKey, DateTimeOffset.UtcNow, token).ConfigureAwait(false);
+        var relay = (await GetDatasetAsync(token).ConfigureAwait(false))?.Relay;
+        if (relay is null) return;
+        await _gate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            var proposals = await LoadProposalsAsync(token).ConfigureAwait(false);
+            var waiting = proposals.Where(proposal => proposal.State == "Sent" && proposal.Issue is null).Take(10).ToList();
+            if (waiting.Count == 0) return;
+            using var client = factory.CreateClient(AnimeClickHttp.ClientName);
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("AnimeClick-Community/2.0");
+            foreach (var proposal in waiting)
+            {
+                try
+                {
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    timeout.CancelAfter(TimeSpan.FromSeconds(10));
+                    using var response = await client.GetAsync(relay.TrimEnd('/') + "/" + proposal.Fingerprint,
+                        HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+                    if (!response.IsSuccessStatusCode) continue;
+                    using var state = JsonDocument.Parse(await ReadBoundedAsync(response, timeout.Token).ConfigureAwait(false));
+                    var sent = Sent(state.RootElement, "issue", "url");
+                    if (sent.Issue is not null)
+                    {
+                        proposal.Issue = sent.Issue;
+                        proposal.Url = sent.Url;
+                    }
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (Exception) { /* Informative only: the next hourly check tries again. */ }
             }
 
             await SaveProposalsAsync(proposals, token).ConfigureAwait(false);
