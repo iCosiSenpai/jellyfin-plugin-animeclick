@@ -38,6 +38,8 @@ public class AnimeClickAnime
     public List<AnimeClickRelation> Relations { get; set; } = [];
     public List<AnimeClickThemeSong> ThemeSongs { get; set; } = [];
     public List<AnimeClickTrailer> Trailers { get; set; } = [];
+    public bool PeopleLoaded { get; set; }
+    public bool RelationsLoaded { get; set; }
     public bool MultimediaLoaded { get; set; }
     public Dictionary<string, string> ProviderIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 

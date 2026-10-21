@@ -10,7 +10,7 @@ const NEW_PROPOSALS_PER_DAY = 300;
 const MAX_CONFIRMATIONS = 50;
 const MAX_PENDING_BATCH = 50;
 const DAY = 24 * 60 * 60;
-const ISSUE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/(\d{1,9})$/;
+const ISSUE_URL = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/issues\/(\d{1,9})$/;
 const FINGERPRINT = /^[0-9a-f]{20}$/;
 
 const json = (status, body, headers = {}) => new Response(JSON.stringify(body), {
@@ -110,7 +110,7 @@ async function handlePending(env) {
     for (const key of listed.keys) {
         const record = await readJson(env.PROPOSALS, key.name);
         const print = key.name.slice('pending:'.length);
-        if (!record || !isValidMapping(record.mapping) || await fingerprint(record.mapping) !== print) {
+        if (!record || !Array.isArray(record.installations) || !isValidMapping(record.mapping) || await fingerprint(record.mapping) !== print) {
             await env.PROPOSALS.delete(key.name);
             continue;
         }
@@ -124,7 +124,8 @@ async function handlePublished(request, env) {
     const { body, error } = await readBody(request);
     if (error) return error;
     const match = body && typeof body.url === 'string' ? ISSUE_URL.exec(body.url) : null;
-    if (!body || !FINGERPRINT.test(body.fingerprint || '') || !match || Number(match[1]) !== body.issue) {
+    if (!body || !FINGERPRINT.test(body.fingerprint || '') || !match || Number(match[2]) !== body.issue
+        || (env.REPOSITORY && match[1].toLowerCase() !== String(env.REPOSITORY).toLowerCase())) {
         return json(400, { error: 'Pubblicazione non valida.' });
     }
     const pending = await readJson(env.PROPOSALS, `pending:${body.fingerprint}`);

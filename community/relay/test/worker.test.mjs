@@ -108,6 +108,7 @@ test('the intake endpoints need the secret and validate what they are told', asy
     assert.equal((await call('/v1/published', { method: 'POST', body: '{}' })).status, 401);
     const print = await fingerprint(saiki);
     assert.equal((await admin('/v1/published', { method: 'POST', body: JSON.stringify({ fingerprint: print, issue: 5, url: 'https://evil.example/issues/5' }) })).status, 400);
+    assert.equal((await admin('/v1/published', { method: 'POST', body: JSON.stringify({ fingerprint: print, issue: 5, url: 'https://github.com/other/repo/issues/5' }) })).status, 400);
     assert.equal((await admin('/v1/published', { method: 'POST', body: JSON.stringify({ fingerprint: print, issue: 6, url: ISSUE + 5 }) })).status, 400);
     assert.equal((await admin('/v1/published', { method: 'POST', body: JSON.stringify({ fingerprint: 'x', issue: 5, url: ISSUE + 5 }) })).status, 400);
     delete env.ADMIN_SECRET;
@@ -115,7 +116,9 @@ test('the intake endpoints need the secret and validate what they are told', asy
 });
 
 test('a corrupted pending record is dropped instead of reaching the repository', async () => {
+    const print = await fingerprint(saiki);
     await env.PROPOSALS.put('pending:' + 'a'.repeat(20), JSON.stringify({ mapping: { kind: 'Series', animeClickId: '1', providerIds: { Tmdb: '1' } }, installations: [] }));
+    await env.PROPOSALS.put('pending:' + print, JSON.stringify({ mapping: saiki, installations: 'not-an-array' }));
     await env.PROPOSALS.put('pending:' + 'b'.repeat(20), 'not json');
     assert.deepEqual(await (await admin('/v1/pending')).json(), { proposals: [] });
     assert.equal(env.PROPOSALS.store.size, 0);

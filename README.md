@@ -1,130 +1,161 @@
 # AnimeClick Metadata per Jellyfin
 
-[![Release](https://img.shields.io/github/v/release/iCosiSenpai/jellyfin-plugin-animeclick?label=release)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest) [![Build](https://img.shields.io/github/actions/workflow/status/iCosiSenpai/jellyfin-plugin-animeclick/build.yml?branch=main)](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/actions/workflows/build.yml) [![Jellyfin](https://img.shields.io/badge/Jellyfin-12.0%2B-7b68ee)](#installazione) [![Licenza](https://img.shields.io/github/license/iCosiSenpai/jellyfin-plugin-animeclick)](LICENSE)
-
 <p align="center">
-  <img src="assets/logo.png" alt="Logo di AnimeClick Metadata Plugin, sviluppato da iCosiSenpai" width="140" />
+  <img src="assets/logo.png" alt="Logo di AnimeClick Metadata Plugin, sviluppato da iCosiSenpai" width="150" />
 </p>
 
-**Un solo plugin per gli anime in italiano:** titoli, trame, episodi e immagini nella tua libreria Jellyfin, con AnimeClick come prima fonte dei metadati.
+<p align="center">
+  <strong>Tutti i tuoi anime in italiano su Jellyfin.</strong><br />
+  Titoli, trame, episodi, cast, generi e locandine ad alta definizione con un solo plugin, guidato da <strong>AnimeClick.it</strong>.
+</p>
 
-[Installa dal catalogo](#dal-catalogo-jellyfin-consigliata) · [Configuralo](#configurazione) · [Segnala un problema](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues)
+<p align="center">
+  <a href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest"><img src="https://img.shields.io/github/v/release/iCosiSenpai/jellyfin-plugin-animeclick?label=release" alt="Release" /></a>
+  <a href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/iCosiSenpai/jellyfin-plugin-animeclick/build.yml?branch=main" alt="Build" /></a>
+  <a href="#installazione"><img src="https://img.shields.io/badge/Jellyfin-12.0%2B-7b68ee" alt="Jellyfin 12.0+" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/iCosiSenpai/jellyfin-plugin-animeclick" alt="Licenza" /></a>
+</p>
 
-## Il plugin e le fonti integrate
+<p align="center">
+  <a href="#installazione">Installa in 1 minuto</a> ·
+  <a href="#primo-avvio">Primo avvio</a> ·
+  <a href="#il-pannello-di-controllo">Pannello di controllo</a> ·
+  <a href="#come-lavorano-le-fonti">Fonti integrate</a> ·
+  <a href="#comunit%C3%A0">Comunità</a> ·
+  <a href="#domande-frequenti">Domande frequenti</a> ·
+  <a href="https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues">Segnala un problema</a>
+</p>
 
-Nelle librerie dedicate agli anime puoi attivare **AnimeClick come unico provider remoto di metadati e immagini**, dalla versione 1.2. Non servono i plugin separati TMDB, TheTVDB o Fanart per usare queste integrazioni.
+---
 
-| Fonte | A cosa serve | Cosa occorre |
-|---|---|---|
-| **AnimeClick** | Prima scelta per titoli, trame, generi, tag e altri metadati italiani | Nessuna chiave API |
-| **TMDB** | Identificazione delle opere, completamento dei dati mancanti e immagini alla risoluzione originale | [Chiave API TMDB](https://developer.themoviedb.org/docs/getting-started) |
-| **Fanart** | Locandine, sfondi anche 4K, loghi, banner e artwork delle stagioni | [Chiave personale Fanart](https://fanart.tv/get-an-api-key/), sufficiente anche da sola |
-| **TheTVDB** | Fonte aggiuntiva per titoli e trame | [Chiave API TheTVDB](https://thetvdb.com/dashboard) e opzione **Usa TheTVDB** |
-| **AniList** | Cast giapponese con i personaggi, studio di animazione, date, voto, trailer, copertina e banner; l'anno di ogni stagione per collegare i sequel | Nessuna chiave: opzione **Usa AniList** in Fonti |
-| **Traduzione AI** | Traduzione dei testi disponibili soltanto in inglese | Servizio abilitato, modello scelto e credenziali richieste dal servizio |
+## Perché usare AnimeClick Metadata
 
-I metadati vengono completati **campo per campo**: AnimeClick → altre fonti in italiano → testi inglesi tradotti. Cast, studio, date, voto e trailer: AnimeClick → AniList → TMDB. Le immagini seguono l'ordine **Fanart → TMDB → AniList → locandina AnimeClick**. Le fonti aggiuntive funzionano solo se configurate.
+Organizzare una libreria anime in italiano su Jellyfin richiede spesso di combinare più plugin diversi, ritrovandosi comunque con titoli in inglese, trame mancanti o stagioni accorpate male. **AnimeClick Metadata** risolve il problema alla radice:
 
-AniList non scrive testi (è solo in inglese) e un suo ID viene usato soltanto se tipo (film o serie) e anno coincidono con l'opera: un ID lasciato da un altro plugin che indica uno spot o un'altra stagione viene ignorato. Quando Jellyfin non sa in che anno è andata in onda una stagione, il plugin lo ricava dalla catena dei sequel di AniList, ma solo se quella stagione ha lo stesso numero di episodi della libreria.
+- **L'enciclopedia italiana degli anime come prima fonte:** importa titoli italiani, trame, generi, tag, sigle (opening ed ending) e titoli degli episodi direttamente da **AnimeClick.it**, senza bisogno di chiavi o registrazioni.
+- **Un solo plugin per tutta la libreria anime:** integra già al suo interno **AniList**, **TMDB**, **TheTVDB** e **Fanart.tv**. Non devi installare altri plugin separati per avere il cast giapponese, lo studio d'animazione, i trailer, i loghi o gli sfondi in 4K.
+- **Traduzione AI automatica quando manca l'italiano (opzionale):** se un episodio appena uscito ha il titolo o la trama solo in inglese, il plugin può tradurlo automaticamente in italiano tramite il servizio AI che preferisci (in cloud o in locale sul tuo server).
+- **Sicuro e rispettoso della tua collezione:** non inventa mai titoli o trame quando un dato manca, rispetta sempre i campi che hai bloccato manualmente in Jellyfin e verifica che tipo di opera, anno e numero di episodi coincidano prima di collegare una scheda o una stagione.
 
-I nomi propri, gli ID e i dati numerici non vengono tradotti. Se manca un dato o l'abbinamento è ambiguo, il campo resta invariato: il plugin non inventa titoli o trame.
+---
 
 ## Installazione
 
-**Il plugin funziona solo con Jellyfin 12.0 o successivo (.NET 10); verificato su Jellyfin 12.0 e 12.1.** Le vecchie versioni 0.x per Jellyfin 10.x sono obsolete: non sono più distribuite né aggiornate, e sono state tolte dal catalogo e dalle release. Per continuare a usare AnimeClick aggiorna prima Jellyfin alla 12, poi il plugin dal catalogo. La compatibilità con nuove versioni major di Jellyfin va verificata.
+> [!IMPORTANT]
+> **Requisiti:** il plugin funziona esclusivamente con **Jellyfin 12.0 o successivo** (.NET 10), verificato su Jellyfin 12.0 e 12.1. Le vecchie versioni `0.x` per Jellyfin 10.x sono obsolete e non più supportate: se usi ancora Jellyfin 10, aggiorna prima il server alla versione 12 e poi installa il plugin dal catalogo.
 
 ### Dal catalogo Jellyfin (consigliata)
 
-1. Apri **Dashboard → Plugin → Repository** e premi **Aggiungi**.
-2. Come nome inserisci **iCosiSenpai Plugins** e come URL copia il manifest ufficiale:
+È il metodo più semplice: Jellyfin scarica il plugin da solo e ti avvisa a ogni nuovo aggiornamento.
 
-   ```text
-   https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json
-   ```
+1. Apri Jellyfin e vai in **Dashboard → Plugin → Repository**, quindi premi il pulsante **Aggiungi** (`+`).
+2. Compila i due campi così:
+   - **Nome repository:** `iCosiSenpai Plugins`
+   - **URL repository:**
+     ```text
+     https://raw.githubusercontent.com/iCosiSenpai/iCosiSenpai-Plugins/main/manifest.json
+     ```
+3. Premi **Salva**, apri la scheda **Catalogo** in alto e cerca **AnimeClick Metadata**.
+4. Premi **Installa**, **riavvia Jellyfin** e apri le impostazioni del plugin dalla Dashboard.
 
-3. Salva, apri **Catalogo** e seleziona **AnimeClick Metadata**.
-4. Installa l'ultima versione, riavvia il server e apri le impostazioni del plugin.
+<details>
+<summary><strong>Installazione manuale da file ZIP (alternativa senza catalogo)</strong></summary>
 
-Questo è il metodo ufficiale e consigliato: Jellyfin gestisce l'installazione e gli aggiornamenti, e ogni nuova release viene pubblicata nel catalogo. Il catalogo contiene solo le versioni per Jellyfin 12, dalla 1.0 in poi. Dalla 1.6 un aggiornamento dal catalogo sostituisce la versione precedente senza lasciarla caricata accanto alla nuova.
+Se preferisci installare manualmente una versione specifica:
 
-### Installazione manuale (alternativa)
+1. Scarica il pacchetto `AnimeClick.Plugin.zip` dall'[ultima release ufficiale](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest).
+2. Ferma Jellyfin e conserva una copia di sicurezza della tua configurazione.
+3. Se avevi installato versioni precedenti a mano, sposta le vecchie cartelle di AnimeClick **fuori dalla cartella `plugins`**. Estrai il contenuto dello ZIP in un'unica sottocartella dentro `plugins` (usa sempre lo ZIP ufficiale, che include `AnimeClick.Plugin.dll`, `HtmlAgilityPack.dll`, `meta.json`, `LICENSE` e `NOTICE`).
+4. Riavvia Jellyfin e apri le impostazioni del plugin dalla Dashboard.
 
-Per installare una versione specifica senza catalogo:
+</details>
 
-1. Scarica `AnimeClick.Plugin.zip` dall'[ultima release](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/releases/latest).
-2. Ferma Jellyfin e conserva una copia della configurazione e del plugin precedente.
-3. Sposta le vecchie copie di AnimeClick **fuori dalla directory `plugins`**. Estrai lo ZIP in una sola sottocartella di quella directory.
-4. Riavvia Jellyfin e apri le impostazioni del plugin dalla dashboard.
+---
 
-Usa il pacchetto ZIP: contiene il plugin, HtmlAgilityPack, LICENSE e NOTICE. Non copiare le DLL del server dalla cartella di compilazione.
+## Primo avvio
 
-## Configurazione
+La prima volta che apri la pagina del plugin troverai una **configurazione guidata** in tre passaggi rapidi:
 
-Alla prima apertura il plugin parte con un **setup guidato** di pochi passi:
+1. **Collega le fonti:** inserisci la chiave gratuita **TMDB** (consigliata per riconoscere subito le opere e scaricare le immagini originali) e, se vuoi, la chiave personale **Fanart.tv** o un servizio di **Traduzione AI**. Puoi verificarne il funzionamento all'istante con un clic.
+2. **Scegli le tue preferenze:** le opzioni consigliate per avere la libreria in italiano sono già selezionate. Puoi disattivare liberamente ciò che non ti interessa.
+3. **Attiva nelle librerie anime:** spunta le librerie che contengono i tuoi anime e premi **Attiva nelle librerie scelte**. AnimeClick diventerà il primo fornitore di metadati per serie, stagioni, episodi e film in quelle librerie, lasciando intatte le altre cartelle del tuo server.
 
-1. **Fonti**: inserisci la chiave TMDB (consigliata) e, se vuoi, quella personale Fanart. Puoi verificarle subito.
-2. **Preferenze**: le scelte consigliate sono già attive; spegni quello che non ti interessa.
-3. **Librerie**: scegli le librerie con i tuoi anime e premi **Attiva nelle librerie scelte**. AnimeClick diventa il primo provider dei metadati di serie, stagioni, episodi e film e si aggiunge alle immagini; gli altri provider restano attivi e le altre librerie non vengono toccate. Nulla cambia senza conferma.
+> [!TIP]
+> **Nessuna sorpresa dopo gli aggiornamenti:** l'installazione non modifica né avvia scansioni automatiche sulla tua libreria senza il tuo permesso. Inoltre, quando una nuova versione introduce una funzione che richiede una tua scelta, il setup guidato ti mostrerà **solo il singolo passo nuovo**, senza farti rifare la configurazione da capo.
 
-Puoi saltare il setup e riaprirlo quando vuoi da **Strumenti**. Quando un aggiornamento importante richiede una scelta, il plugin mostra soltanto i passi nuovi.
+---
 
-Dopo il setup trovi tutto nelle sezioni della pagina:
+## Il pannello di controllo
 
-- **Preferenze**: cosa importare, raggruppato per identità italiana, episodi, arricchimento, immagini e opzioni invasive.
-- **Fonti**: TMDB, Fanart, TheTVDB e traduzione AI, con stato, verifica e l'ordine con cui vengono consultate. Per tradurre dall'inglese abilita il servizio AI, premi **Elenca modelli** e scegli un modello.
-- **Inizio**: lo stato delle librerie, con **Attiva AnimeClick** per quelle in cui manca. Se preferisci usare AnimeClick come **unico** provider remoto delle librerie anime, togli gli altri provider dalle impostazioni della libreria in Jellyfin; lettori NFO, immagini locali ed estrattori possono restare.
+Una volta completato il primo avvio, la pagina del plugin ti mette a disposizione quattro aree pensate per gestire la collezione in modo visivo e immediato:
 
-Le modifiche si salvano dalla barra **Salva** in fondo alla pagina.
+### 1. Inizio (Vetrina e Cruscotto)
+Mostra in primo piano la **vetrina degli ultimi anime aggiornati** con locandina, trama e generi, affiancata dal **cruscotto della collezione**: vedi subito la percentuale della tua libreria già in italiano, lo stato delle fonti collegate, le librerie attive e le eventuali attività in corso.
 
-Senza traduzione AI vengono usati i testi già italiani. Per le serie, Fanart usa l'ID TheTVDB; per i film, l'ID TMDB. Gli ID esterni verificati vengono recuperati dalle integrazioni, senza altri plugin.
+### 2. Libreria e «Sistema tutti i titoli»
+Esplora tutti gli anime della tua collezione in una **griglia di locandine** che indica chiaramente dove mancano titoli o trame in italiano. Cliccando su un anime puoi ispezionare stagione per stagione lo stato di ogni episodio.
+- **L'analisi è in sola lettura:** controllare la libreria non modifica alcun dato finché non sei tu a chiederlo.
+- **Sistema tutti i titoli:** con un clic il plugin passa in rassegna gli episodi con nomi vuoti, generici (come *"Episodio 12"* o il nome del file) oppure rimasti in inglese. Cerca prima il titolo italiano su AnimeClick e nelle fonti collegate; se trova solo il titolo inglese coerente con quell'episodio e hai attivato l'AI, lo traduce in italiano. Scrive **esclusivamente il titolo**, senza toccare trame, immagini, numerazione o campi bloccati, e puoi seguire o interrompere il lavoro dal riquadro **Attività**.
 
-L'installazione non avvia una riparazione della libreria. I blocchi dei metadati continuano a essere rispettati; la sostituzione delle immagini esistenti si richiede esplicitamente nel refresh Jellyfin.
+### 3. Correggi un abbinamento
+Se un film o una serie ha un titolo ambiguo e non è stato abbinato alla scheda giusta, apri **Strumenti → Correggi un abbinamento** (oppure premi **Correggi abbinamento** direttamente dalla scheda dell'anime in *Libreria*):
+- Scegli l'opera dalla tua libreria e cerca il nome su AnimeClick, oppure incolla direttamente l'indirizzo della scheda di AnimeClick.it.
+- **Anche per singola stagione:** se una stagione ha una scheda tutta sua su AnimeClick (come accade spesso per i sequel o gli archi finali), seleziona la stagione nel menu **Cosa correggere**: la serie principale terrà la sua scheda e quella stagione userà la scheda dedicata.
 
-## Inizio e libreria
+### 4. Preferenze e Fonti
+Tutte le impostazioni sono raccolte in schede ordinate (**Preferenze** e **Fonti**), dove puoi accendere o spegnere ogni singolo elemento (titoli, trame, generi, cast, sigle, collezioni), scegliere il modello di traduzione AI con il pulsante **Elenca modelli** e salvare con la barra in fondo alla pagina. Se vuoi usare AnimeClick come **unico** provider remoto per le librerie anime, ti basta disattivare gli altri provider remoti dalle impostazioni della libreria di Jellyfin (lasciando attivi lettori NFO o immagini locali se li usi).
 
-**Inizio** apre sulla vetrina degli ultimi anime aggiornati da AnimeClick, con locandine, trama e generi, e su un cruscotto: quanta parte della collezione è già in italiano, le attività in corso, le fonti collegate, le librerie e le cose da fare.
+---
 
-**Libreria** mostra ogni anime con la sua locandina e lo stato di titoli e trame. L'analisi legge i metadati locali **senza modificarli**; filtri, ricerca e ordinamento portano subito a quello che manca, e un clic apre il dettaglio con stagioni, cause, episodi e azioni. **Aggiorna analisi** rilegge la situazione.
+## Come lavorano le fonti
 
-**Sistema tutti i titoli** cerca su AnimeClick e poi nelle fonti configurate. Completa nomi vuoti, generici come “Episodio 12” o derivati dal file e converte i titoli riconoscibilmente inglesi: prima cerca un titolo italiano coerente con quello originale, poi traduce quello inglese della fonte se l’AI è configurata. Se non trova una fonte coerente, può tradurre il titolo inglese già valido, evitando di prendere il titolo di un’altra stagione. Conserva i titoli italiani e quelli dalla lingua incerta. Scrive **solo il nome**, rispettando i campi bloccati e le modifiche manuali intervenute durante la ricerca: numerazione, ID, trame e immagini restano invariati.
+Il plugin unisce il meglio di più servizi **campo per campo**, dando sempre la precedenza ad AnimeClick per la lingua italiana:
 
-Il riquadro **Attività** mostra fase, avanzamento e contatori degli elementi verificati, aggiornati, saltati o in errore. Puoi lasciare la pagina e ritrovare il lavoro in corso, oppure premere **Interrompi**. I refresh delle sinossi già consegnati a Jellyfin possono comunque terminare; lo stato delle attività si azzera al riavvio del server.
+| Fonte | Cosa porta nella tua libreria | Richiede una chiave? |
+|---|---|---|
+| **AnimeClick.it** | Titoli italiani, trame, generi, tag, sigle, relazioni e titoli degli episodi | **No** *(sempre attiva)* |
+| **AniList** | Cast giapponese con personaggi, studio d'animazione, date, voti, trailer, copertine, banner e collegamento automatico delle stagioni sequel | **No** *(si attiva in Fonti / Setup)* |
+| **TMDB** | Riconoscimento preciso delle opere, completamento di trame/titoli e locandine o sfondi a risoluzione originale | Sì ([Chiave gratuita TMDB](https://developer.themoviedb.org/docs/getting-started)) |
+| **Fanart.tv** | Sfondi fino al 4K, loghi trasparenti (ClearLogo), banner e artwork dedicati per le stagioni | Sì ([Chiave personale gratuita Fanart](https://fanart.tv/get-an-api-key/)) |
+| **TheTVDB** | Fonte aggiuntiva per titoli e trame degli episodi in italiano o in inglese | Sì ([Chiave API TheTVDB](https://thetvdb.com/dashboard), opzionale) |
+| **Traduzione AI** | Traduzione automatica in italiano delle trame e dei titoli disponibili solo in inglese | Credenziali del servizio scelto (o gratis in locale con Ollama) |
 
-L'analisi indica cosa controllare, senza garantire che una fonte abbia il dato. Il recupero conserva la numerazione locale e non assegna i metadati di un singolo episodio ai file che ne contengono più di uno.
+**Ordine di priorità automatico:**
+- **Testi (titoli, trame, generi):** `AnimeClick` → altre fonti in italiano (`TheTVDB` / `TMDB`) → traduzione AI dei testi inglesi (`TMDB` / `TheTVDB`). I nomi propri, gli ID e i numeri non vengono mai alterati.
+- **Informazioni sull'opera (cast, studio, date, voto, trailer):** `AnimeClick` → `AniList` → `TMDB` (solo nei campi ancora vuoti).
+- **Immagini e locandine:** `Fanart.tv` → `TMDB` → `AniList` → locandina `AnimeClick` (con filtro automatico sulle locandine a bassa risoluzione).
 
-## Correggere un abbinamento
-
-Apri **Strumenti → Correggi un abbinamento** (oppure **Correggi abbinamento** dal dettaglio di un anime in Libreria), scegli il film o la serie e cerca la scheda giusta su AnimeClick, o incolla il suo link. Il plugin verifica la scheda, salva l'ID e prosegue l'aggiornamento in background.
-
-Se una stagione ha una scheda AnimeClick sua (un sequel, un arco finale), dopo aver scelto la serie seleziona la stagione in **Cosa correggere**: la serie conserva la propria scheda e la stagione usa quella indicata. In alternativa puoi scrivere l'ID nel campo **AnimeClick** dell'editor metadati della stagione in Jellyfin.
+---
 
 ## Comunità
 
-Le correzioni di ciascuno possono sistemare la libreria di tutti, **senza account e senza condividere la libreria**.
+Quando correggi l'abbinamento di un anime o di una stagione, il tuo intervento può aiutare tutti gli altri utenti del plugin — **senza creare account e senza esporre alcun dato del tuo server**.
 
-- **Ricevere**: con **Usa gli abbinamenti della comunità** il plugin scarica una volta al giorno l'elenco approvato. Vale solo per serie, film e stagioni che non hanno ancora un ID AnimeClick e non cambia mai un abbinamento esistente. Una stagione viene collegata solo se la tua libreria ha lo stesso numero di stagione **e** lo stesso numero di episodi della proposta: chi ha suddiviso la serie diversamente non riceve una scheda sbagliata.
-- **Condividere**: dopo una correzione il plugin chiede **Condividi · Non ora · Non chiedere più** e mostra esattamente cosa partirebbe. Nel setup e in **Comunità** puoi scegliere tra *Chiedimi ogni volta* (predefinito), *Condividi sempre* e *Non condividere*.
+- **Ricevere gli abbinamenti approvati:** attivando **Usa gli abbinamenti della comunità**, il plugin scarica una volta al giorno la lista curata degli abbinamenti. Viene usata **solo** per gli anime o le stagioni che non hanno ancora un ID AnimeClick e non sovrascrive mai le tue scelte. Per le stagioni, l'abbinamento viene applicato solo se sia il numero di stagione sia il numero di episodi nella tua libreria coincidono esattamente con quelli registrati.
+- **Condividere una correzione:** dopo aver corretto un abbinamento, il plugin ti mostra in trasparenza i soli codici numerici che verrebbero inviati e ti lascia scegliere tra **Condividi**, **Non ora** o **Non chiedere più** (puoi cambiare la preferenza in ogni momento nella scheda **Comunità**).
+- **Privacy garantita:** partono **esclusivamente ID numerici pubblici** (ID AnimeClick, TMDB, TheTVDB o AniList, più numero di stagione e conteggio episodi). Non vengono mai inviati titoli, nomi di file, cartelle, indirizzi IP, utenti, trame o immagini. Ogni proposta supera verifiche automatiche e la revisione del curatore prima di entrare nella lista comune. Per tutti i dettagli tecnici consulta [community/README.md](community/README.md).
 
-Partono solo identificativi pubblici: tipo, ID AnimeClick e ID TMDB, TheTVDB o AniList; per una stagione anche il suo numero e quanti episodi contiene. Mai titoli, utenti, percorsi, file, indirizzo del server, trame o immagini. Le proposte passano dal servizio della comunità, che apre una segnalazione pubblica nel repository; chi preferisce può inviarle a proprio nome con un token GitHub (in **Comunità → Avanzate**).
+---
 
-Ogni proposta passa controlli automatici (la scheda esiste, tipo, anno ed episodi coerenti con TMDB) e l'approvazione del curatore del plugin prima di arrivare a tutti. Lo stato delle tue proposte è in **Comunità**, i numeri della comunità in **Inizio**. [Come funziona nel dettaglio](community/README.md).
+## Domande frequenti
 
-## Problemi e assistenza
-
-| Problema | Cosa controllare |
+| Situazione | Come risolvere |
 |---|---|
-| Titolo non riconosciuto | Attivazione nella libreria (**Inizio → Librerie**); poi **Strumenti → Correggi un abbinamento** |
-| Titoli o trame mancanti | **Libreria**, chiavi in **Fonti** e configurazione della traduzione |
-| Un campo non cambia | Blocchi Jellyfin e preferenze del plugin; la riparazione titoli conserva i nomi italiani o dalla lingua incerta |
-| Pagina vuota dopo un aggiornamento | Riavvio di Jellyfin, ricaricamento senza cache e assenza di copie duplicate del plugin |
+| **Un anime non viene riconosciuto o ha la scheda sbagliata** | Verifica in **Inizio → Librerie** che AnimeClick sia attivo per quella libreria, poi apri **Strumenti → Correggi un abbinamento** e seleziona la scheda corretta. |
+| **Mancano i titoli o le trame di alcuni episodi** | Apri la scheda **Libreria** per vedere cosa manca e avvia **Sistema tutti i titoli**. Se su AnimeClick l'episodio non ha ancora una trama, verifica in **Fonti** di aver inserito la chiave TMDB e, per gli episodi disponibili solo in inglese, di aver configurato la **Traduzione AI**. |
+| **Un titolo o una trama non cambia anche aggiornando i metadati** | Controlla nell'editor metadati di Jellyfin che il campo non abbia il lucchetto attivo (**Bloccato**). Ricorda inoltre che *Sistema tutti i titoli* conserva per prudenza i titoli già in italiano o dalla lingua incerta. |
+| **La pagina del plugin resta bianca dopo un aggiornamento** | Riavvia il server Jellyfin e ricarica la pagina del browser svuotando la cache (`Ctrl+F5` o `Cmd+Shift+R`). Se avevi installato vecchie versioni manualmente, assicurati che non ci siano cartelle duplicate dentro `plugins`. |
+| **Dove vengono salvate le chiavi e cosa viene inviato all'AI?** | Le chiavi API restano salvate nella configurazione amministrativa del tuo server Jellyfin e non lasciano il server, salvo verso il rispettivo servizio. La traduzione AI invia al fornitore scelto esclusivamente il testo inglese da tradurre (eventuali costi dipendono dal fornitore scelto). |
 
-Per [segnalare un problema](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues), indica versione di Jellyfin e del plugin, link AnimeClick, numerazione degli episodi e risultato atteso. Rimuovi chiavi, token e percorsi privati dai log.
+Hai trovato un bug o un caso particolare? **[Apri una segnalazione su GitHub](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues)** indicando la versione di Jellyfin, la versione del plugin, il link della scheda AnimeClick, come sono numerati gli episodi e il risultato che ti aspettavi *(ricorda sempre di rimuovere chiavi API, token e percorsi personali dai log prima di incollarli)*.
 
-Le chiavi vengono salvate nella configurazione amministrativa Jellyfin. La traduzione invia al servizio scelto solo i testi da tradurre, senza file o informazioni sugli utenti, e può avere costi secondo il fornitore.
+---
 
-## Documentazione
+## Documentazione tecnica
 
-[Novità delle versioni](CHANGELOG.md) · [Audit e verifiche 1.2.2](docs/AUDIT-1.2.2.md) · [Procedura di rilascio](docs/RELEASING.md) · [Pipeline di test](.github/workflows/build.yml)
+[Novità delle versioni (Changelog)](CHANGELOG.md) · [Audit e verifiche 1.6.1](docs/AUDIT-1.6.1.md) · [Procedura di rilascio](docs/RELEASING.md) · [Pipeline di test e CI](.github/workflows/build.yml)
+
+---
 
 ## Copyright, fonti e licenze
 

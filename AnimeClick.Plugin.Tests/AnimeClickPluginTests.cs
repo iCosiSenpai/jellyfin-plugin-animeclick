@@ -1643,6 +1643,16 @@ public class AnimeClickPluginTests
     Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("K-On!!", 2010)], 2010, requireYearMatch: false) is not null,
         "And it is still accepted when the year agrees.");
 
+    // But a declared sequel that aired years later is not this season: the card the traversal
+    // started from covers more than one. Ascendance of a Bookworm keeps 2019, 2020 and 2022 on one
+    // card and declares only the 2026 continuation, whose titles ended up on the 2020 episodes.
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("Honzuki no Gekokujou - Ryoushu no Youjo", 2026)], 2020, requireYearMatch: false) is null,
+        "A 2026 sequel must not answer for the season the library dates 2020.");
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("Clannad After Story", 2008)], 2009, requireYearMatch: false)?.Year == 2008,
+        "A declared sequel keeps the year of tolerance for a winter cour.");
+    Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear([Rel("K-On!!", null)], 2010, requireYearMatch: false) is not null,
+        "A declared sequel with no year of its own cannot be contradicted, so it still stands.");
+
     // Ambiguity that the year cannot break stays ambiguous.
     var twins = new[] { Rel("Franchise 2", 2020), Rel("Franchise 3", 2020) };
     Assert(AnimeClickSeasonResolver.SelectUniqueByAirYear(twins, 2020, requireYearMatch: false) is null,

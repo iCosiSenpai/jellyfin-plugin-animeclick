@@ -138,13 +138,13 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
         }
 
         // Fetch cast & staff if enabled and not already cached
-        if (configuration.EnableCast && anime.People.Count == 0)
+        if (configuration.EnableCast && !anime.PeopleLoaded && anime.People.Count == 0)
         {
             await FetchPeopleAsync(anime, configuration, cancellationToken);
         }
 
         // Fetch relations if enabled and not already cached
-        if (configuration.EnableCollections && anime.Relations.Count == 0)
+        if (configuration.EnableCollections && !anime.RelationsLoaded && anime.Relations.Count == 0)
         {
             await FetchRelationsAsync(anime, configuration, cancellationToken);
         }
@@ -299,6 +299,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
             // request and covers the titles whose /multimedia page has no OP/ED block.
             var staffSongs = _parser.ParseStaffThemeSongs(staffHtml);
             anime.AddThemeSongs(staffSongs);
+            anime.PeopleLoaded = true;
 
             _logger.LogInformation("AnimeClick cast: {Actors} doppiatori, {Staff} staff, {Songs} sigle da /staff per {Title}",
                 actors.Count, staff.Count, staffSongs.Count, anime.Title);
@@ -323,6 +324,7 @@ public class AnimeClickSeriesProvider : IRemoteMetadataProvider<Series, SeriesIn
             var html = await _client.GetStringAsync(animeUrl + "/relazioni", configuration, cancellationToken);
             var relations = _parser.ParseRelationsPage(html, baseUrl);
             anime.Relations.AddRange(relations);
+            anime.RelationsLoaded = true;
 
             _logger.LogInformation("AnimeClick relazioni: {Count} opere collegate per {Title}",
                 relations.Count, anime.Title);

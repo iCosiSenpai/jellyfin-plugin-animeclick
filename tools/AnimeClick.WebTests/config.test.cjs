@@ -462,6 +462,11 @@ test('a saved AI credential cannot silently move to another destination', async 
         await page.getByText(/inserisci la nuova chiave/).first().waitFor();
         assert.equal(state.writes.length, 0);
         assert.equal(state.config.AiEndpoint, defaults.AiEndpoint);
+
+        await page.locator('#acAiEndpoint').fill('http://localhost:11434/api/chat');
+        await saveAndWait(page);
+        assert.equal(state.config.AiEndpoint, 'http://localhost:11434/api/chat');
+        assert.equal(state.config.AiApiKey, '');
     } finally { await page.close(); }
 });
 
@@ -797,6 +802,9 @@ test('Fanart keys are editable, verified and preserved alongside the single-prov
         await page.locator('#acTestResult_fanart').filter({ hasText: '90 immagini' }).waitFor();
         assert.deepEqual(state.fanartTest, { personalApiKey: 'edited-fanart-personal', projectApiKey: 'edited-fanart-project' });
         assert.equal(await page.locator('#acSourceState_fanart').innerText(), 'Connessa');
+        await page.locator('#acFanartPersonalApiKey').fill('edited-fanart-personal-2');
+        assert.equal(await page.locator('#acSourceState_fanart').innerText(), 'Da verificare');
+        await page.locator('#acFanartPersonalApiKey').fill('edited-fanart-personal');
         assert.equal(state.writes.length, 0);
         await saveAndWait(page);
         assert.equal(state.config.FanartPersonalApiKey, 'edited-fanart-personal');

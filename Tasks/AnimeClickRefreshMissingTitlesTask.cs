@@ -85,6 +85,7 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
                 progress.Report(100);
                 return;
             }
+            var usesAnimeClickBySeries = new Dictionary<Guid, bool>();
             var candidates = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = [BaseItemKind.Episode], Recursive = true, IsVirtualItem = false
@@ -95,7 +96,21 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
                     episode.Season?.GetProviderId("AnimeClick"),
                     episode.Series?.GetProviderId("Tmdb"),
                     episode.Series?.GetProviderId("Tvdb"),
-                    () => EpisodesUseAnimeClick(_libraryManager.GetLibraryOptions(episode)),
+                    () =>
+                    {
+                        if (episode.SeriesId != Guid.Empty && usesAnimeClickBySeries.TryGetValue(episode.SeriesId, out var cachedUses))
+                        {
+                            return cachedUses;
+                        }
+
+                        var uses = EpisodesUseAnimeClick(_libraryManager.GetLibraryOptions(episode));
+                        if (episode.SeriesId != Guid.Empty)
+                        {
+                            usesAnimeClickBySeries[episode.SeriesId] = uses;
+                        }
+
+                        return uses;
+                    },
                     configuration))
                 .OrderBy(episode => episode.SeriesName, StringComparer.Ordinal)
                 .ThenBy(episode => episode.ParentIndexNumber).ThenBy(episode => episode.IndexNumber)

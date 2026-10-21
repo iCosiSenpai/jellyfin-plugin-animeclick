@@ -218,6 +218,45 @@ public sealed class AnimeClickRepairLedger : IDisposable
         => _entries.TryGetValue(itemId, out attempt!);
 
     /// <summary>
+    /// Clears recorded repair verdicts for an item whose identity changed, so it is immediately
+    /// eligible again without waiting for the suppression window to expire.
+    /// </summary>
+    public void Forget(Guid itemId)
+    {
+        if (itemId == Guid.Empty || Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        if (_entries.TryRemove(itemId, out _))
+        {
+            ScheduleFlush();
+        }
+    }
+
+    public void Forget(IEnumerable<Guid> itemIds)
+    {
+        if (itemIds is null || Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        var removed = false;
+        foreach (var itemId in itemIds)
+        {
+            if (itemId != Guid.Empty && _entries.TryRemove(itemId, out _))
+            {
+                removed = true;
+            }
+        }
+
+        if (removed)
+        {
+            ScheduleFlush();
+        }
+    }
+
+    /// <summary>
     /// True when the last attempt tells the audit not to offer this item again yet.
     /// </summary>
     public bool IsSuppressed(Guid itemId, DateTimeOffset now, out AnimeClickRepairAttempt attempt)

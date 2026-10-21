@@ -29,25 +29,60 @@ public sealed class AnimeClickEpisodeLayoutResolver
     }
 
     public AnimeClickEpisodeLibraryLayout? Resolve(string? episodePath)
+        => ResolveWithRuntime(episodePath).Layout;
+
+    /// <summary>
+    /// Reads both the series episode layout and the current episode's probed runtime from a single
+    /// <see cref="ILibraryManager.FindByPath"/> lookup.
+    /// </summary>
+    public (AnimeClickEpisodeLibraryLayout? Layout, double? RuntimeMinutes) ResolveWithRuntime(string? episodePath)
     {
         if (string.IsNullOrWhiteSpace(episodePath))
         {
-            return null;
+            return (null, null);
         }
 
         try
         {
             var currentEpisode = _libraryManager.FindByPath(episodePath, isFolder: false) as Episode;
-            var series = currentEpisode?.Series;
-            if (series is null)
+            if (currentEpisode is null)
             {
-                return null;
+                return (null, null);
             }
 
-            var episodes = series.GetEpisodes(
-                    null!,
-                    new MediaBrowser.Controller.Dto.DtoOptions(false),
-                    shouldIncludeMissingEpisodes: false)
+            var ticks = currentEpisode.RunTimeTicks;
+            var runtimeMinutes = ticks is > 0 ? TimeSpan.FromTicks(ticks.Value).TotalMinutes : (double?)null;
+            var series = currentEpisode.SeriesId != Guid.Empty
+                ? _libraryManager.GetItemById(currentEpisode.SeriesId) as Series
+                : null;
+            if (series is null && MediaBrowser.Controller.Entities.BaseItem.LibraryManager is not null)
+            {
+                series = currentEpisode.Series;
+            }
+
+            if (series is null)
+            {
+                return (null, runtimeMinutes);
+            }
+
+            var rawEpisodes = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
+            {
+                AncestorIds = [series.Id],
+                IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Episode],
+                Recursive = true,
+                IsVirtualItem = false
+            });
+            if ((rawEpisodes is null || rawEpisodes.Count == 0)
+                && MediaBrowser.Controller.Entities.BaseItem.LibraryManager is not null)
+            {
+                rawEpisodes = series.GetEpisodes(
+                        null!,
+                        new MediaBrowser.Controller.Dto.DtoOptions(false),
+                        shouldIncludeMissingEpisodes: false)
+                    .ToList();
+            }
+
+            var episodes = (rawEpisodes ?? [])
                 .OfType<Episode>()
                 .DistinctBy(episode => episode.Id)
                 .Where(episode => episode.ParentIndexNumber is > 0 && episode.IndexNumber is >= 0)
@@ -100,14 +135,15 @@ public sealed class AnimeClickEpisodeLayoutResolver
                     airYears.Count > 0 ? airYears.Min() : null);
             }
 
-            return seasons.Count == 0
+            var layout = seasons.Count == 0
                 ? null
                 : new AnimeClickEpisodeLibraryLayout(series.Id, seasons, new Dictionary<string, string>(series.ProviderIds));
+            return (layout, runtimeMinutes);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "AnimeClick: unable to inspect Jellyfin episode layout for {Path}", episodePath);
-            return null;
+            return (null, null);
         }
     }
 

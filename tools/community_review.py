@@ -142,17 +142,18 @@ def check_tmdb(review, mapping, card, get, key):
     if status == 404:
         review.add("bad", "TMDB", f"L’ID {ids['Tmdb']} non esiste su TMDB.")
         return
-    if status != 200:
+    work = parse_json_dict(text) if status == 200 else None
+    if work is None:
         review.add("warn", "TMDB", f"Non verificabile adesso (risposta {status or 'assente'}).")
         return
-    work = json.loads(text)
     name = work.get("title") or work.get("name") or "?"
     date = work.get("release_date") or work.get("first_air_date") or ""
     year = int(date[:4]) if date[:4].isdigit() else None
     detail = f"«{name}» · {year or 'anno ?'}"
     if mapping["kind"] == "Season":
         season_status, season_text = get(f"https://api.themoviedb.org/3/tv/{ids['Tmdb']}/season/{mapping['seasonNumber']}{suffix}", auth)
-        episodes = len(json.loads(season_text).get("episodes", [])) if season_status == 200 else None
+        season_payload = parse_json_dict(season_text) if season_status == 200 else None
+        episodes = len(season_payload.get("episodes", [])) if season_payload is not None and isinstance(season_payload.get("episodes"), list) else None
         if episodes is None:
             review.add("warn", "TMDB", detail + f": la stagione {mapping['seasonNumber']} non c’è con questa numerazione.")
         elif episodes != mapping["episodeCount"]:
@@ -168,6 +169,16 @@ def check_tmdb(review, mapping, card, get, key):
 
 ANILIST = "https://graphql.anilist.co"
 ANILIST_QUERY = "query($id:Int){Media(id:$id,type:ANIME){format seasonYear title{romaji}}}"
+
+
+def parse_json_dict(text):
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def post_json(url, payload):
@@ -189,11 +200,13 @@ def check_anilist(review, mapping, card, post):
     if not anilist:
         return
     status, text = post(ANILIST, {"query": ANILIST_QUERY, "variables": {"id": int(anilist)}})
-    media = (json.loads(text).get("data") or {}).get("Media") if status in (200, 404) and text else None
-    if status == 404 or (status == 200 and media is None):
+    payload = parse_json_dict(text) if status in (200, 404) else None
+    data = payload.get("data") if payload and isinstance(payload.get("data"), dict) else None
+    media = data.get("Media") if data and isinstance(data.get("Media"), dict) else None
+    if status == 404 or (status == 200 and payload is not None and media is None):
         review.add("bad", "AniList", f"L’ID {anilist} non esiste su AniList.")
         return
-    if status != 200:
+    if status != 200 or media is None:
         review.add("warn", "AniList", f"Non verificabile adesso (risposta {status or 'assente'}).")
         return
     detail = f"«{(media.get('title') or {}).get('romaji') or '?'}» · {media.get('format') or '?'} · {media.get('seasonYear') or 'anno ?'}"

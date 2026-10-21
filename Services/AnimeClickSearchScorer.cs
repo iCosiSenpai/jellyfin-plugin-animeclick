@@ -129,6 +129,10 @@ public static class AnimeClickSearchScorer
         var score = 0;
         var queryNormalized = NormalizeForScore(query);
         var titleNormalized = NormalizeForScore(result.Title);
+        if (string.IsNullOrEmpty(queryNormalized) || string.IsNullOrEmpty(titleNormalized))
+        {
+            return 0;
+        }
 
         if (titleNormalized == queryNormalized)
         {

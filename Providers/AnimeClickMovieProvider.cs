@@ -138,7 +138,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         }
 
         // Fetch cast & staff if enabled and not already cached
-        if (configuration.EnableCast && anime.People.Count == 0)
+        if (configuration.EnableCast && !anime.PeopleLoaded && anime.People.Count == 0)
         {
             await FetchPeopleAsync(anime, configuration, cancellationToken);
         }
@@ -289,6 +289,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             // request and covers the titles whose /multimedia page has no OP/ED block.
             var staffSongs = _parser.ParseStaffThemeSongs(staffHtml);
             anime.AddThemeSongs(staffSongs);
+            anime.PeopleLoaded = true;
 
             _logger.LogInformation("AnimeClick cast: {Actors} doppiatori, {Staff} staff, {Songs} sigle da /staff per {Title}",
                 actors.Count, staff.Count, staffSongs.Count, anime.Title);

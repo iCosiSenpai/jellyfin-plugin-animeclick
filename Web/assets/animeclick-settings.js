@@ -63,6 +63,7 @@
 
     function loadForm(config) {
         saved = config;
+        verified = {};
         bound().forEach(function (control) { writeControl(control, config); });
 
         var aiKey = el('acAiApiKey');
@@ -100,10 +101,15 @@
                 throw new Error('L’indirizzo del servizio AI deve essere HTTPS (o HTTP verso la tua rete) e non può contenere credenziali, query o frammenti.');
             }
             var fresh = normalizeAiEndpoint(config.AiEndpoint);
-            if (!enteredKey && config.AiApiKey && !el('acClearAiKey').checked && fresh != null && normalized !== fresh) {
-                // Another administrator may have saved a new profile after this page loaded: never
-                // pair their freshly saved key with the destination shown here.
-                throw new Error('Il profilo AI è cambiato sul server: ricarica la pagina o reinserisci la chiave.');
+            if (!enteredKey && config.AiApiKey && !el('acClearAiKey').checked) {
+                if (aiEndpointIsLocal()) {
+                    config.AiApiKey = '';
+                    config.OllamaCloudApiKey = '';
+                } else if (fresh != null && normalized !== fresh) {
+                    // Another administrator may have saved a new profile after this page loaded: never
+                    // pair their freshly saved key with the destination shown here.
+                    throw new Error('Il profilo AI è cambiato sul server: ricarica la pagina o reinserisci la chiave.');
+                }
             }
             config.AiEndpoint = normalized;
         } else {
@@ -636,17 +642,27 @@
         var host = el('acSelectedItem');
         var year = val(item, 'productionYear') || val(item, 'year');
         replace(host,
-            ui.poster({ id: val(item, 'id'), name: val(item, 'name'), hasPrimaryImage: item.hasPrimaryImage }, { height: 120 }),
+            ui.poster({ id: val(item, 'id'), name: val(item, 'name'), hasPrimaryImage: val(item, 'hasPrimaryImage') }, { height: 120 }),
             h('div', null,
                 h('strong', { text: val(item, 'name') || 'Titolo selezionato' }),
                 h('p', { class: 'ac-muted', text: (val(item, 'type') === 'Movie' ? 'Film' : 'Serie') + (year ? ' · ' + year : '') })),
-            ui.button('Cambia', { small: true, variant: 'ghost', onClick: function () { identify.item = null; el('acItemId').value = ''; renderSelection(); el('acItemSearch').focus(); } }));
+            ui.button('Cambia', { small: true, variant: 'ghost', onClick: function () {
+                identify.item = null;
+                el('acItemId').value = '';
+                el('acAnimeClickId').value = '';
+                clear(el('acAnimeClickCandidates'));
+                clear(el('acIdentifyResult'));
+                renderSelection();
+                el('acItemSearch').focus();
+            } }));
         host.hidden = false;
         clear(el('acItemCandidates'));
+        clear(el('acAnimeClickCandidates'));
+        clear(el('acIdentifyResult'));
+        el('acAnimeClickId').value = '';
         var lookup = el('acAnimeClickSearch');
-        if (lookup && !lookup.value) lookup.value = val(item, 'name') || '';
+        if (lookup) lookup.value = val(item, 'name') || '';
         if (val(item, 'type') !== 'Movie') loadSeasons(item);
-        AC.bus.emit('identify-item', item);
     }
 
     /**
@@ -806,7 +822,7 @@
         probe.body.appendChild(h('div', { class: 'ac-cols-3' },
             ui.field('acFallbackAnimeId', 'ID AnimeClick', { placeholder: 'Es. 72/naruto', spellcheck: false }),
             ui.field('acFallbackSeason', 'Stagione', { type: 'number', min: '0', hint: '0 per gli speciali.' }),
-            ui.field('acFallbackEpisode', 'Episodio', { type: 'number', min: '1' })));
+            ui.field('acFallbackEpisode', 'Episodio', { type: 'number', min: '0' })));
         el2(probe.body, 'acFallbackSeason').value = '1';
         el2(probe.body, 'acFallbackEpisode').value = '1';
         probe.body.appendChild(h('div', { class: 'ac-row' }, probeButton));
@@ -1121,15 +1137,26 @@
     }
 
     function wire() {
+        var sourceFields = {
+            acTmdbApiKey: 'tmdb',
+            acFanartPersonalApiKey: 'fanart', acFanartProjectApiKey: 'fanart',
+            acTvdbApiKey: 'tvdb', acEnableTvdbSynopsis: 'tvdb',
+            acAiProvider: 'ai', acAiModel: 'ai', acAiApiKey: 'ai', acAiEndpoint: 'ai', acClearAiKey: 'ai', acEnableAiTranslation: 'ai'
+        };
+        function onEdit(event) {
+            var source = event && event.target && sourceFields[event.target.id];
+            if (source) delete verified[source];
+            markDirty();
+        }
         bound().forEach(function (control) {
-            control.addEventListener('input', markDirty);
-            control.addEventListener('change', markDirty);
+            control.addEventListener('input', onEdit);
+            control.addEventListener('change', onEdit);
         });
         ['acAiApiKey', 'acAiEndpoint', 'acCommunityGitHubToken'].forEach(function (id) {
-            el(id).addEventListener('input', markDirty);
+            el(id).addEventListener('input', onEdit);
         });
         ['acClearAiKey', 'acClearCommunityToken'].forEach(function (id) {
-            el(id).addEventListener('change', markDirty);
+            el(id).addEventListener('change', onEdit);
         });
         el('acAiEndpoint').addEventListener('input', updateProviderHint);
     }
@@ -1141,17 +1168,14 @@
         buildTools: buildTools,
         buildCommunity: buildCommunity,
         describeMapping: describeMapping,
-        sharingChoices: SHARING_CHOICES,
         buildSaveBar: buildSaveBar,
         wire: wire,
         load: function (config) { loaded = true; loadForm(config); loadAiProviders(); },
-        unload: function () { loaded = false; saved = null; dirty = false; },
-        reload: function () { if (saved) loadForm(saved); },
+        unload: function () { loaded = false; saved = null; dirty = false; verified = {}; },
         save: save,
         savePatch: savePatch,
         saved: function () { return saved; },
         isDirty: function () { return dirty; },
-        isLoaded: function () { return loaded; },
         sourceState: sourceState,
         startIdentify: startIdentify,
         runTest: function (source, payload) {

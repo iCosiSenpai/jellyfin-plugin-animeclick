@@ -4,7 +4,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AnimeClick.Plugin.Configuration;
+using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Services;
+using Jellyfin.Data.Enums;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
@@ -35,6 +37,8 @@ public class AnimeClickIdentifyController : ControllerBase
     private readonly MediaBrowser.Model.IO.IFileSystem _fileSystem;
     private readonly ILogger<AnimeClickIdentifyController> _logger;
     private readonly AnimeClickCommunityService? _community;
+    private readonly AnimeClickCacheService? _cache;
+    private readonly AnimeClickRepairLedger? _repairLedger;
 
     public const string ProviderKey = "AnimeClick";
 
@@ -45,7 +49,9 @@ public class AnimeClickIdentifyController : ControllerBase
         AnimeClickHtmlParser parser,
         MediaBrowser.Model.IO.IFileSystem fileSystem,
         ILogger<AnimeClickIdentifyController> logger,
-        AnimeClickCommunityService? community = null)
+        AnimeClickCommunityService? community = null,
+        AnimeClickCacheService? cache = null,
+        AnimeClickRepairLedger? repairLedger = null)
     {
         _libraryManager = libraryManager;
         _providerManager = providerManager;
@@ -54,6 +60,8 @@ public class AnimeClickIdentifyController : ControllerBase
         _fileSystem = fileSystem;
         _logger = logger;
         _community = community;
+        _cache = cache;
+        _repairLedger = repairLedger;
     }
 
     /// <summary>Validates the selected work, saves its ID, then lets Jellyfin refresh in the background.</summary>
@@ -76,17 +84,23 @@ public class AnimeClickIdentifyController : ControllerBase
 
         // No mutation until AnimeClick confirms a real detail page. HTTP 200 alone can be an ad.
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        var url = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
+        AnimeClickAnime validatedAnime;
         try
         {
-            var url = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
             var html = await _client.GetStringAsync(url, configuration, cancellationToken).ConfigureAwait(false);
-            _parser.ParseAnimePage(url, html);
+            validatedAnime = _parser.ParseAnimePage(url, html);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "AnimeClick identification could not validate the selected page");
             return StatusCode(502, new { error = "Impossibile verificare la scheda AnimeClick. Nessuna modifica salvata: controlla il link e riprova." });
+        }
+
+        if (_cache is not null && !string.IsNullOrWhiteSpace(validatedAnime.Title))
+        {
+            await _cache.SetAsync("anime::" + url, validatedAnime, cancellationToken).ConfigureAwait(false);
         }
 
         // The item may have been locked while the network request was in flight.
@@ -97,6 +111,7 @@ public class AnimeClickIdentifyController : ControllerBase
             return Conflict(new { error = "L’abbinamento è cambiato durante la verifica. Ricarica la scheda e riprova." });
         item.SetProviderId(ProviderKey, animeClickId);
         await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
+        await ResetStaleDescendantsAndLedgerAsync(item, previousId, animeClickId, cancellationToken).ConfigureAwait(false);
         AnimeClickCommunityOffer? communityOffer = null;
         if (_community is not null)
         {
@@ -215,6 +230,70 @@ public class AnimeClickIdentifyController : ControllerBase
         });
     }
 
+
+    private async Task ResetStaleDescendantsAndLedgerAsync(
+        BaseItem item,
+        string? previousId,
+        string newAnimeClickId,
+        CancellationToken cancellationToken)
+    {
+        _repairLedger?.Forget(item.Id);
+        if (item is not (Series or Season))
+        {
+            return;
+        }
+
+        var previousStable = AnimeClickClient.TryNormalizeAnimeClickId(previousId, out var normalizedPrevious)
+            ? AnimeClickClient.GetStableIdentity(normalizedPrevious)
+            : string.Empty;
+        var nextStable = AnimeClickClient.GetStableIdentity(newAnimeClickId);
+        var identityChanged = !string.Equals(previousStable, nextStable, StringComparison.OrdinalIgnoreCase);
+
+        try
+        {
+            var childTypes = item is Series
+                ? new[] { BaseItemKind.Season, BaseItemKind.Episode }
+                : new[] { BaseItemKind.Episode };
+            var children = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = childTypes,
+                Recursive = true,
+                ParentId = item.Id,
+                IsVirtualItem = false
+            });
+            if (children is null || children.Count == 0)
+            {
+                return;
+            }
+
+            _repairLedger?.Forget(children.Select(child => child.Id));
+            if (!identityChanged)
+            {
+                return;
+            }
+
+            foreach (var child in children)
+            {
+                if (child.IsLocked || string.IsNullOrWhiteSpace(child.GetProviderId(ProviderKey)))
+                {
+                    continue;
+                }
+
+                child.ProviderIds.Remove(ProviderKey);
+                await _libraryManager
+                    .UpdateItemAsync(child, child.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "AnimeClick: unable to reset descendant provider IDs for {ItemId}", item.Id);
+        }
+    }
 
     private static ImageType? ParseImageType(string s)
     {

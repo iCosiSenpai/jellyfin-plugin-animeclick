@@ -135,7 +135,7 @@
         var side = h('div', { class: 'ac-setup-side' });
         var cardNode = h('section', { class: 'ac-setup-card', 'aria-labelledby': 'acSetupTitle' }, main, side);
         replace(host, progressList, cardNode);
-        step.render(main, side, cardNode);
+        step.render(main, side);
         var heading = el('acSetupTitle');
         if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
         host.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -461,7 +461,7 @@
         mascot(side, 'Una tua correzione può sistemare la libreria di tanti altri!');
     }
 
-    function renderDone(main, side, cardNode) {
+    function renderDone(main, side) {
         heading('完了', 'Fatto', mode === 'update' ? 'Tutto aggiornato!' : 'Tutto pronto!',
             'Al prossimo aggiornamento dei metadati Jellyfin userà AnimeClick. Gli anime aggiornati compariranno nella vetrina di Inizio.')
             .forEach(function (node) { if (node) main.appendChild(node); });
@@ -489,7 +489,6 @@
         row.appendChild(go);
         main.appendChild(row);
         mascot(side, 'Buona visione! ✨');
-        if (cardNode) cardNode.classList.add('is-done');
     }
 
     AC.setup = {

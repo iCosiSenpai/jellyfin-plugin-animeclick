@@ -124,6 +124,22 @@ public sealed class AnimeClickAniListMetadata(AnimeClickAniListResolver aniList)
         return merged;
     }
 
+    /// <summary>Cache-only counterpart of <see cref="WithSeasonYearAsync"/> for the local library audit.</summary>
+    public async Task<IReadOnlyDictionary<int, int>?> WithCachedSeasonYearAsync(IReadOnlyDictionary<int, int>? knownYears,
+        IReadOnlyDictionary<string, string>? seriesIds, int seasonNumber, int? episodeCount,
+        PluginConfiguration configuration, CancellationToken token)
+    {
+        if (!configuration.EnableAniListMetadata || seasonNumber < 2 || episodeCount is not > 0
+            || knownYears?.GetValueOrDefault(seasonNumber) is > 0 || seriesIds is null || AniListId(seriesIds) is not { } rootId)
+            return knownYears;
+        var year = await SeasonYearAsync(rootId, seasonNumber, episodeCount.Value,
+            id => aniList.GetCachedMediaAsync(id, configuration, token)).ConfigureAwait(false);
+        if (year is null) return knownYears;
+        var merged = knownYears is null ? new Dictionary<int, int>() : new Dictionary<int, int>(knownYears);
+        merged[seasonNumber] = year.Value;
+        return merged;
+    }
+
     internal static async Task<int?> SeasonYearAsync(int rootId, int seasonNumber, int episodeCount, Func<int, Task<AnimeClickAniListMedia?>> load)
     {
         var current = await load(rootId).ConfigureAwait(false);

@@ -1,15 +1,21 @@
+using System.Net;
 using System.Net.Http;
+using System.Text;
+using AnimeClick.Plugin.Api;
 using AnimeClick.Plugin.Configuration;
+using AnimeClick.Plugin.Models;
 using AnimeClick.Plugin.Providers;
 using AnimeClick.Plugin.Services;
 using AnimeClick.Plugin.Tasks;
 using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -140,7 +146,7 @@ public class AnimeClickOrchestrationTests
     {
         using var temporary = new TemporaryAnimeClickCache();
         await temporary.Cache.SetAsync(
-            "seasonMap:v6::123/root::2::2024",
+            "seasonMap:v7::123/root::2::2024",
             "456/sequel",
             CancellationToken.None);
 
@@ -195,6 +201,7 @@ public class AnimeClickOrchestrationTests
         {
             (Key: $"episodes:raw:v6::{longId}::24:2", Prefix: "episodes:raw:v6::123/"),
             (Key: $"episodes:raw:v5::{longId}::24:2", Prefix: "episodes:raw:v5::123/"),
+            (Key: $"seasonMap:v7::{longId}::2::2024", Prefix: "seasonMap:v7::123/"),
             (Key: $"seasonMap:v6::{longId}::2::2024", Prefix: "seasonMap:v6::123/"),
             (Key: $"seasonMap:v5::{longId}::2::2024", Prefix: "seasonMap:v5::123/"),
             (Key: $"translation:v4::{longId}::episode.overview::en-it::hash", Prefix: "translation:v4::123/"),
@@ -912,6 +919,270 @@ public class AnimeClickOrchestrationTests
         Assert.Equal("AnimeClick", task.Category);
         Assert.Equal("AnimeClickRepairMissingSynopses", task.Key);
         Assert.NotEmpty(task.GetDefaultTriggers());
+    }
+
+    [Fact]
+    public void RefreshSchedulerFindsSeriesFolderByPathWhenNotFoundAsFile()
+    {
+        var series = new Series
+        {
+            Id = Guid.NewGuid(),
+            Path = "/library/Frieren",
+            Overview = EnglishOverview
+        };
+        var libraryManager = TestDoubles.Proxy<ILibraryManager>((method, args) =>
+        {
+            if (method.Name == nameof(ILibraryManager.FindByPath)
+                && args is { Length: 2 }
+                && args[0] is string path
+                && args[1] is bool isFolder)
+            {
+                return path == series.Path && isFolder ? series : null;
+            }
+
+            return TestDoubles.DefaultReturn(method);
+        });
+        var queued = new List<QueuedRefresh>();
+        var scheduler = CreateScheduler(libraryManager, queued);
+
+        Assert.True(scheduler.TryCaptureOverviewByPath(series.Path, out var captured));
+        Assert.Equal(EnglishOverview, captured);
+        Assert.True(scheduler.TryQueueByPathIfUnchanged(
+            series.Path,
+            MetadataField.Overview,
+            "background-translation-completed",
+            captured,
+            "series-work-key"));
+        Assert.Single(queued);
+        Assert.Equal(series.Id, queued[0].Id);
+    }
+
+    [Fact]
+    public void EpisodeLayoutResolverCombinesLayoutAndRuntimeInSingleLookup()
+    {
+        var series = new Series { Id = Guid.NewGuid(), Name = "Frieren" };
+        var season1 = new Season { Id = Guid.NewGuid(), SeriesId = series.Id, IndexNumber = 1 };
+        var episode1 = new Episode
+        {
+            Id = Guid.NewGuid(),
+            SeriesId = series.Id,
+            SeasonId = season1.Id,
+            ParentIndexNumber = 1,
+            IndexNumber = 1,
+            Path = "/library/Frieren/S01E01.mkv",
+            RunTimeTicks = TimeSpan.FromMinutes(24).Ticks
+        };
+        var findByPathCalls = 0;
+        var libraryManager = TestDoubles.Proxy<ILibraryManager>((method, args) =>
+        {
+            if (method.Name == nameof(ILibraryManager.FindByPath))
+            {
+                findByPathCalls++;
+                return episode1;
+            }
+
+            if (method.Name == nameof(ILibraryManager.GetItemById) && args is [Guid id, ..])
+            {
+                return id == series.Id ? series : id == season1.Id ? season1 : null;
+            }
+
+            if (method.Name == nameof(ILibraryManager.GetItemList))
+            {
+                return new List<BaseItem> { episode1 };
+            }
+
+            return TestDoubles.DefaultReturn(method);
+        });
+
+        var resolver = new AnimeClickEpisodeLayoutResolver(
+            libraryManager,
+            NullLogger<AnimeClickEpisodeLayoutResolver>.Instance);
+        var (layout, runtimeMinutes) = resolver.ResolveWithRuntime(episode1.Path);
+
+        Assert.NotNull(layout);
+        Assert.Equal(24d, runtimeMinutes);
+        Assert.Equal(1, findByPathCalls);
+    }
+
+    [Fact]
+    public async Task SeasonProviderPreservesManualSeasonCardAndSkipsSeriesPlotWhenBoundToSeriesCard()
+    {
+        using var temporary = new TemporaryAnimeClickCache();
+        await temporary.Cache.SetAsync(
+            "anime::https://www.animeclick.it/anime/26035/sequel",
+            new AnimeClickAnime
+            {
+                Id = "26035/sequel",
+                Title = "Stagione Finale",
+                Overview = ItalianOverview
+            },
+            CancellationToken.None);
+        await temporary.Cache.SetAsync(
+            "anime::https://www.animeclick.it/anime/16615/root",
+            new AnimeClickAnime
+            {
+                Id = "16615/root",
+                Title = "Serie Principale",
+                Overview = "Trama dell'intera serie che non va copiata sulla singola stagione."
+            },
+            CancellationToken.None);
+
+        var httpClientFactory = TestDoubles.Proxy<IHttpClientFactory>();
+        var client = new AnimeClickClient(httpClientFactory, NullLogger<AnimeClickClient>.Instance);
+        var parser = new AnimeClickHtmlParser();
+        var resolver = new AnimeClickSeasonResolver(
+            client,
+            temporary.Cache,
+            parser,
+            NullLogger<AnimeClickSeasonResolver>.Instance);
+        var provider = new AnimeClickSeasonProvider(
+            resolver,
+            NullLogger<AnimeClickSeasonProvider>.Instance,
+            httpClientFactory,
+            integrated: null,
+            client: client,
+            cache: temporary.Cache,
+            parser: parser);
+
+        var distinctSeasonInfo = new SeasonInfo
+        {
+            Name = "Stagione 3",
+            IndexNumber = 3,
+            ProviderIds = new Dictionary<string, string> { ["AnimeClick"] = "26035/sequel" },
+            SeriesProviderIds = new Dictionary<string, string> { ["AnimeClick"] = "16615/root" }
+        };
+        var distinctResult = await provider.GetMetadata(distinctSeasonInfo, CancellationToken.None);
+        Assert.True(distinctResult.HasMetadata);
+        Assert.Equal("26035/sequel", distinctResult.Item.GetProviderId("AnimeClick"));
+        Assert.Equal(3, distinctResult.Item.IndexNumber);
+        Assert.Equal(ItalianOverview, distinctResult.Item.Overview);
+
+        var sameCardSeasonInfo = new SeasonInfo
+        {
+            Name = "Stagione 1",
+            IndexNumber = 1,
+            ProviderIds = new Dictionary<string, string> { ["AnimeClick"] = "16615/root" },
+            SeriesProviderIds = new Dictionary<string, string> { ["AnimeClick"] = "16615/root" }
+        };
+        var sameCardResult = await provider.GetMetadata(sameCardSeasonInfo, CancellationToken.None);
+        Assert.True(sameCardResult.HasMetadata);
+        Assert.Equal("16615/root", sameCardResult.Item.GetProviderId("AnimeClick"));
+        Assert.Equal(1, sameCardResult.Item.IndexNumber);
+        Assert.True(string.IsNullOrEmpty(sameCardResult.Item.Overview));
+    }
+
+    [Fact]
+    public async Task IdentifyAndRefreshCachesValidatedCardClearsStaleChildIdsAndForgetsLedger()
+    {
+        using var temporary = new TemporaryAnimeClickCache();
+        var ledger = CreateLedger(temporary);
+
+        var series = new Series { Id = Guid.NewGuid(), Name = "Serie" };
+        series.SetProviderId("AnimeClick", "111/wrong");
+
+        var unlockedSeason = new Season { Id = Guid.NewGuid(), Name = "Stagione 1", SeriesId = series.Id };
+        unlockedSeason.SetProviderId("AnimeClick", "111/wrong");
+
+        var unlockedEpisode = new Episode { Id = Guid.NewGuid(), Name = "Episodio 1", SeriesId = series.Id, SeasonId = unlockedSeason.Id };
+        unlockedEpisode.SetProviderId("AnimeClick", "111/wrong:s1:e1");
+
+        var lockedEpisode = new Episode { Id = Guid.NewGuid(), Name = "Episodio 2", SeriesId = series.Id, SeasonId = unlockedSeason.Id, IsLocked = true };
+        lockedEpisode.SetProviderId("AnimeClick", "111/wrong:s1:e2");
+
+        ledger.Record(series.Id, AnimeClickRepairOutcome.NoSource, "no-english-source");
+        ledger.Record(unlockedEpisode.Id, AnimeClickRepairOutcome.NoSource, "no-english-source");
+
+        var allItems = new List<BaseItem> { series, unlockedSeason, unlockedEpisode, lockedEpisode };
+        var updatedItems = new List<BaseItem>();
+        var libraryManager = TestDoubles.Proxy<ILibraryManager>((method, args) =>
+        {
+            if (method.Name == nameof(ILibraryManager.GetItemById) && args is [Guid id, ..])
+            {
+                return allItems.FirstOrDefault(item => item.Id == id);
+            }
+
+            if (method.Name == nameof(ILibraryManager.GetItemList))
+            {
+                return new List<BaseItem> { unlockedSeason, unlockedEpisode, lockedEpisode };
+            }
+
+            if (method.Name == nameof(ILibraryManager.UpdateItemAsync) && args is [BaseItem item, ..])
+            {
+                updatedItems.Add(item);
+                return Task.CompletedTask;
+            }
+
+            return TestDoubles.DefaultReturn(method);
+        });
+
+        const string html = """
+            <html>
+              <head><meta property="og:title" content="Scheda Giusta" /></head>
+              <body><h1 itemprop="name">Scheda Giusta</h1></body>
+            </html>
+            """;
+        var httpClientFactory = TestDoubles.Proxy<IHttpClientFactory>((method, _) =>
+            method.Name == nameof(IHttpClientFactory.CreateClient)
+                ? new HttpClient(new StaticHtmlHandler(html))
+                : TestDoubles.DefaultReturn(method));
+        var client = new AnimeClickClient(httpClientFactory, NullLogger<AnimeClickClient>.Instance);
+        var queued = new List<Guid>();
+        var providerManager = TestDoubles.Proxy<IProviderManager>((method, args) =>
+        {
+            if (method.Name == nameof(IProviderManager.QueueRefresh) && args is [Guid id, ..])
+            {
+                queued.Add(id);
+            }
+
+            return TestDoubles.DefaultReturn(method);
+        });
+
+        var controller = new AnimeClickIdentifyController(
+            libraryManager,
+            providerManager,
+            client,
+            new AnimeClickHtmlParser(),
+            TestDoubles.Proxy<IFileSystem>(),
+            NullLogger<AnimeClickIdentifyController>.Instance,
+            community: null,
+            cache: temporary.Cache,
+            repairLedger: ledger);
+
+        var actionResult = await controller.IdentifyAndRefresh(
+            new IdentifyAndRefreshRequest
+            {
+                ItemId = series.Id.ToString("N"),
+                AnimeClickId = "222/right"
+            },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var response = Assert.IsType<IdentifyAndRefreshResponse>(ok.Value);
+        Assert.True(response.RefreshTriggered);
+        Assert.Equal("222/right", series.GetProviderId("AnimeClick"));
+        Assert.Null(unlockedSeason.GetProviderId("AnimeClick"));
+        Assert.Null(unlockedEpisode.GetProviderId("AnimeClick"));
+        Assert.Equal("111/wrong:s1:e2", lockedEpisode.GetProviderId("AnimeClick"));
+        Assert.False(ledger.TryGetAttempt(series.Id, out _));
+        Assert.False(ledger.TryGetAttempt(unlockedEpisode.Id, out _));
+        var cached = await temporary.Cache.GetAsync<AnimeClickAnime>(
+            "anime::https://www.animeclick.it/anime/222/right",
+            CancellationToken.None);
+        Assert.NotNull(cached);
+        Assert.Equal("Scheda Giusta", cached!.Title);
+        Assert.Single(queued, series.Id);
+    }
+
+    private sealed class StaticHtmlHandler(string html) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                RequestMessage = new HttpRequestMessage(HttpMethod.Get, "https://www.animeclick.it/anime/222/right"),
+                Content = new StringContent(html, Encoding.UTF8, "text/html")
+            });
     }
 
     private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
