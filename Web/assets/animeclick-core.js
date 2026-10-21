@@ -3,7 +3,7 @@
     'use strict';
 
     var AC = window.AnimeClickUI = window.AnimeClickUI || {};
-    AC.version = '1.6.0.0';
+    AC.version = '1.6.1.0';
     AC.pluginId = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
 
     /* ===== DOM ===== */
@@ -86,7 +86,6 @@
         share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
         link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
         folder: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2z"/>',
-        heart: '<path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/>',
         cat: '<path d="M5 3.5 8.5 8h7L19 3.5V13a7 7 0 0 1-14 0z"/><path d="M9.5 12.5h.01M14.5 12.5h.01M10.5 16 12 17l1.5-1"/>',
         checklist: '<path d="m3 17 2 2 4-4M3 7l2 2 4-4M13 6h8M13 12h8M13 18h8"/>',
         activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
@@ -164,7 +163,8 @@
     AC.bus = {
         on: function (name, handler) { (listeners[name] = listeners[name] || []).push(handler); },
         off: function (name, handler) { listeners[name] = (listeners[name] || []).filter(function (h) { return h !== handler; }); },
-        emit: function (name, payload) { (listeners[name] || []).slice().forEach(function (handler) { handler(payload); }); }
+        emit: function (name, payload) { (listeners[name] || []).slice().forEach(function (handler) { handler(payload); }); },
+        clear: function () { listeners = Object.create(null); }
     };
 
     /* ===== authenticated API ===== */
@@ -305,7 +305,7 @@
                 if (settled) return;
                 settled = true;
                 veil.remove();
-                if (app) app.inert = false;
+                if (app && !document.querySelector('.ac-drawer-veil')) app.inert = false;
                 openModal = null;
                 if (trigger && typeof trigger.focus === 'function' && document.body.contains(trigger)) trigger.focus();
                 resolve(value);
@@ -351,7 +351,20 @@
         }
 
         function onKey(event) {
-            if (event.key === 'Escape' && !openModal) { event.preventDefault(); dismiss(); }
+            if (openModal) return;
+            if (event.key === 'Escape') { event.preventDefault(); dismiss(); return; }
+            if (event.key !== 'Tab') return;
+            var focusable = Array.prototype.slice.call(panel.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'))
+                .filter(function (node) { return !node.hidden && node.offsetParent !== null; });
+            if (!focusable.length) { event.preventDefault(); panel.focus(); return; }
+            var first = focusable[0], last = focusable[focusable.length - 1];
+            if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
         }
 
         close.addEventListener('click', dismiss);

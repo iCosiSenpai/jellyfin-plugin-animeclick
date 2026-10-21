@@ -112,6 +112,18 @@ public partial class AnimeClickClient
         return true;
     }
 
+    /// <summary>Returns the numeric prefix of a normalized AnimeClick ID (e.g. "2966/naruto" → "2966").</summary>
+    public static string GetStableIdentity(string normalizedId)
+    {
+        if (string.IsNullOrEmpty(normalizedId))
+        {
+            return string.Empty;
+        }
+
+        var slash = normalizedId.IndexOf('/', StringComparison.Ordinal);
+        return slash >= 0 ? normalizedId[..slash] : normalizedId;
+    }
+
     /// <summary>
     /// Builds the full anime page URL from a provider ID.
     /// AnimeClick requires a slug after the numeric ID: /anime/72/naruto.

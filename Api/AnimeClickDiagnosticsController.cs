@@ -43,6 +43,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
     private readonly AnimeClickActivityService _activities;
     private readonly ILogger<AnimeClickDiagnosticsController> _logger;
     private readonly AnimeClickFanartClient? _fanart;
+    private readonly AnimeClickAniListMetadata? _aniList;
 
     public AnimeClickDiagnosticsController(
         AnimeClickSeriesSearchProvider searchProvider,
@@ -59,7 +60,9 @@ public class AnimeClickDiagnosticsController : ControllerBase
         ILibraryManager libraryManager,
         ITaskManager taskManager,
         ILogger<AnimeClickDiagnosticsController> logger,
-        AnimeClickActivityService? activities = null, AnimeClickFanartClient? fanart = null)
+        AnimeClickActivityService? activities = null,
+        AnimeClickFanartClient? fanart = null,
+        AnimeClickAniListMetadata? aniList = null)
     {
         _searchProvider = searchProvider;
         _episodeListLoader = episodeListLoader;
@@ -77,6 +80,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         _activities = activities ?? new AnimeClickActivityService();
         _logger = logger;
         _fanart = fanart;
+        _aniList = aniList;
     }
 
     [HttpGet("TestLookup")]
@@ -248,26 +252,44 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
             var reasons = new List<AnimeClickAuditReason>();
             foreach (var seasonGroup in episodes
-                         .GroupBy(episode => episode.ParentIndexNumber ?? episode.SeasonId.GetHashCode())
-                         .OrderBy(group => group.Key))
+                         .GroupBy(episode => (
+                             SeasonNumber: episode.ParentIndexNumber,
+                             FallbackSeasonId: episode.ParentIndexNumber.HasValue ? Guid.Empty : episode.SeasonId))
+                         .OrderBy(group => group.Key.SeasonNumber ?? int.MaxValue))
             {
                 var seasonEpisodes = seasonGroup.ToList();
+                var seasonNumber = seasonGroup.Key.SeasonNumber;
                 var seasonId = seasonEpisodes[0].SeasonId;
                 var storedSeasonCard = seasonCardIds.TryGetValue(seasonId, out var seasonCard)
                     ? seasonCard
                     : null;
                 string? traversedCard = null;
                 if (!string.IsNullOrWhiteSpace(seriesAnimeClickId)
-                    && seasonEpisodes[0].ParentIndexNumber is > 1)
+                    && seasonNumber is { } sNum and > 1)
                 {
                     var layout = _layoutResolver.Resolve(seasonEpisodes[0].Path);
+                    var airYears = layout?.GetSeasonAirYears();
+                    if (_aniList is not null && layout is not null
+                        && layout.Seasons.TryGetValue(sNum, out var seasonLayout))
+                    {
+                        airYears = await _aniList
+                            .WithCachedSeasonYearAsync(
+                                airYears,
+                                layout.SeriesProviderIds,
+                                sNum,
+                                seasonLayout.KnownEpisodeCount,
+                                config,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
                     traversedCard = await _seasonResolver
                         .ResolveCachedAsync(
                             seriesAnimeClickId,
-                            seasonEpisodes[0].ParentIndexNumber,
+                            seasonNumber,
                             config,
                             cancellationToken,
-                            layout?.GetSeasonAirYears())
+                            airYears)
                         .ConfigureAwait(false);
                 }
 
@@ -305,13 +327,24 @@ public class AnimeClickDiagnosticsController : ControllerBase
                     continue;
                 }
 
-                reasons.AddRange(seasonReasons);
                 var seasonReason = AnimeClickLibraryAudit.Summarize(seasonReasons);
+                if (seasonReason == AnimeClickAuditReason.NotMatched
+                    && seasonNumber is > 1
+                    && traversedCard is null
+                    && string.IsNullOrWhiteSpace(storedSeasonCard))
+                {
+                    seasonReason = AnimeClickAuditReason.CardNotResolved;
+                    seasonReasons = [.. seasonReasons.Select(_ => AnimeClickAuditReason.CardNotResolved)];
+                }
+
+                reasons.AddRange(seasonReasons);
                 row.Seasons.Add(new LibraryAuditSeasonItem
                 {
-                    SeasonNumber = seasonEpisodes[0].ParentIndexNumber,
+                    SeasonNumber = seasonNumber,
                     MissingTitleCount = seasonReasons.Count,
                     AnimeClickId = cardId,
+                    CardIsResolved = traversedCard is not null || !string.IsNullOrWhiteSpace(storedSeasonCard),
+                    CardRowCount = catalog?.Episodes.Count,
                     Reason = seasonReason.ToString(),
                     ReasonLabel = AnimeClickLibraryAudit.Describe(seasonReason)
                 });
@@ -323,6 +356,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 episodes,
                 seasonId => seasonCardIds.TryGetValue(seasonId, out var card) ? card : null,
                 config);
+            row.CardRowCount = row.Seasons.Sum(item => item.CardRowCount ?? 0);
             response.Series.Add(row);
         }
 
@@ -421,13 +455,28 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 ? season.GetProviderId("AnimeClick")
                 : null;
             var layout = _layoutResolver.Resolve(seasonEpisodes[0].Path);
+            var airYears = layout?.GetSeasonAirYears();
+            if (_aniList is not null && layout is not null && seasonNumber is { } sNum and > 1
+                && layout.Seasons.TryGetValue(sNum, out var seasonLayout))
+            {
+                airYears = await _aniList
+                    .WithSeasonYearAsync(
+                        airYears,
+                        layout.SeriesProviderIds,
+                        sNum,
+                        seasonLayout.KnownEpisodeCount,
+                        config,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             var traversed = await _seasonResolver
                 .ResolveAsync(
                     animeClickId,
                     seasonNumber,
                     config,
                     cancellationToken,
-                    layout?.GetSeasonAirYears())
+                    airYears)
                 .ConfigureAwait(false);
             var cardId = traversed ?? storedSeasonId ?? animeClickId;
             var catalog = await LoadCatalogAsync(cardId, config, cancellationToken).ConfigureAwait(false);
@@ -440,10 +489,9 @@ public class AnimeClickDiagnosticsController : ControllerBase
                         episode.Name,
                         AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode),
                         catalog);
-                    return result == AnimeClickAuditReason.PendingRefresh
-                           && AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode)
-                        ? AnimeClickAuditReason.Locked
-                        : result;
+                    return AnimeClickLibraryAudit.ApplyNameLock(
+                        result,
+                        AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode));
                 })
                 .Where(reason => reason != AnimeClickAuditReason.Ok)
                 .ToList();
@@ -643,7 +691,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         [FromServices] AnimeClickTitleRepairService repair,
         CancellationToken cancellationToken)
     {
-        if (!Guid.TryParse(request.ItemId, out var id)) return BadRequest(new { error = "Episodio non valido." });
+        if (request is null || !Guid.TryParse(request.ItemId, out var id)) return BadRequest(new { error = "Episodio non valido." });
         if (_libraryManager.GetItemById(id) is not Episode episode) return NotFound();
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var currentTitle = episode.Name;
@@ -882,6 +930,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
             var seasonPrefixes = new[]
             {
+                "seasonMap:v7::",
                 "seasonMap:v6::",
                 "seasonMap:v5::",
                 "seasonMap:v4::",
@@ -965,6 +1014,11 @@ public class AnimeClickDiagnosticsController : ControllerBase
     [HttpPost("TestFanart")]
     public async Task<IActionResult> TestFanart([FromBody] TestFanartRequest request, CancellationToken cancellationToken)
     {
+        if (request is null)
+        {
+            return BadRequest(new { error = "request body is required" });
+        }
+
         var configuration = new PluginConfiguration { EnableFanartImages = true,
             FanartPersonalApiKey = request.PersonalApiKey ?? "", FanartProjectApiKey = request.ProjectApiKey ?? "" };
         if (_fanart is null || (string.IsNullOrWhiteSpace(configuration.FanartPersonalApiKey) && string.IsNullOrWhiteSpace(configuration.FanartProjectApiKey)))
@@ -1167,9 +1221,9 @@ public class AnimeClickDiagnosticsController : ControllerBase
             return BadRequest(new { error = "animeClickId is required" });
         }
 
-        if (request.Season < 0 || request.Episode <= 0)
+        if (request.Season < 0 || request.Episode < 0)
         {
-            return BadRequest(new { error = "season must be >= 0 and episode must be > 0" });
+            return BadRequest(new { error = "season must be >= 0 and episode must be >= 0" });
         }
 
         var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
@@ -1245,9 +1299,8 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 new FallbackChainStep("AnimeClick", "it", false, episodeAnimeClickId is not null),
                 new FallbackChainStep("TheTVDB", "ita", false, tvdbConfigured),
                 new FallbackChainStep("TMDB", "it-IT", false, tmdbConfigured),
-                new FallbackChainStep("TMDB", "en-US", true, tmdbConfigured && aiConfigured),
-                new FallbackChainStep("TheTVDB", "eng", true, tvdbConfigured && aiConfigured),
-                new FallbackChainStep(AnimeClickAiProviders.Resolve(config.AiProvider).DisplayName, "en→it", true, aiConfigured)
+                new FallbackChainStep("TMDB + " + AnimeClickAiProviders.Resolve(config.AiProvider).DisplayName, "en→it", true, tmdbConfigured && aiConfigured),
+                new FallbackChainStep("TheTVDB + " + AnimeClickAiProviders.Resolve(config.AiProvider).DisplayName, "en→it", true, tvdbConfigured && aiConfigured)
             ],
             ErrorMessage = fallback is null
                 ? "Né AnimeClick né le fonti esterne configurate hanno prodotto una sinossi italiana."

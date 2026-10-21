@@ -51,7 +51,7 @@ public sealed class AnimeClickMetadataRefreshScheduler
             return false;
         }
 
-        var item = _libraryManager.FindByPath(path, isFolder: false);
+        var item = FindItemByPath(path);
         return item is not null && TryQueue(item, field, reason, overview);
     }
 
@@ -67,7 +67,7 @@ public sealed class AnimeClickMetadataRefreshScheduler
             return false;
         }
 
-        var item = _libraryManager.FindByPath(path, isFolder: false);
+        var item = FindItemByPath(path);
         if (item is null)
         {
             return false;
@@ -84,7 +84,7 @@ public sealed class AnimeClickMetadataRefreshScheduler
         string? expectedOverview,
         string deduplicationKey)
     {
-        var item = _libraryManager.FindByPath(path, isFolder: false);
+        var item = FindItemByPath(path);
         return item is not null
             && TryQueueCore(
                 item,
@@ -94,6 +94,10 @@ public sealed class AnimeClickMetadataRefreshScheduler
                 expectedOverview,
                 deduplicationKey);
     }
+
+    private BaseItem? FindItemByPath(string path)
+        => _libraryManager.FindByPath(path, isFolder: false)
+            ?? _libraryManager.FindByPath(path, isFolder: true);
 
     public bool TryQueue(
         BaseItem item,

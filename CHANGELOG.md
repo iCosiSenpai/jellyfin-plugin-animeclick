@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.1.0
+
+Rifinitura completa del motore di ricerca e abbinamento, del backend e dell'interfaccia: guardia sull'anno nei sequel per stagione, conservazione dell'ID stagione e separazione della trama serie/stagione nei refresh, pulizia degli ID figli obsoleti e cache immediata quando si corregge un abbinamento, refresh post-traduzione AI anche per le serie, cache delle sottopagine personaggi/relazioni vuote, allineamento tra analisi singola e completa della libreria, protezione lato server della chiave AI al cambio di destinazione e miglioramenti di accessibilità e reattività nella pagina del plugin. README rinnovato.
+
+- [Note complete](docs/releases/1.6.1.0.md)
+- [Audit e verifiche](docs/AUDIT-1.6.1.md)
+
 ## 1.6.0.0
 
 Corretto il doppio caricamento dopo un aggiornamento (issue #2): lo ZIP contiene un `meta.json` con il nome del plugin, così Jellyfin tiene tutte le versioni sotto lo stesso nome e rimuove la vecchia, e all'avvio il plugin segna come superate le proprie copie più vecchie. Licenza AGPLv3 con termini aggiuntivi (attribuzione, versioni modificate riconoscibili, marchi e mascotte); attribuzione e link al codice sorgente nella pagina del plugin.

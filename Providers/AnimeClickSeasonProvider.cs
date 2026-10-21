@@ -74,18 +74,19 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
             info.IndexNumber,
             string.IsNullOrWhiteSpace(mainAnimeClickId) ? "<none>" : mainAnimeClickId);
 
-        if (string.IsNullOrWhiteSpace(mainAnimeClickId)
-            || !AnimeClickClient.TryNormalizeAnimeClickId(mainAnimeClickId, out var normalizedMainId)
-            || !AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, normalizedMainId, out _))
+        var normalizedMainId = string.Empty;
+        var hasMainId = !string.IsNullOrWhiteSpace(mainAnimeClickId)
+            && AnimeClickClient.TryNormalizeAnimeClickId(mainAnimeClickId, out normalizedMainId)
+            && AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, normalizedMainId, out _);
+        if (!hasMainId)
         {
+            normalizedMainId = string.Empty;
             if (!string.IsNullOrWhiteSpace(mainAnimeClickId))
             {
                 _logger.LogWarning(
                     "AnimeClick SeasonProvider ignored invalid series provider ID '{ProviderId}'",
                     mainAnimeClickId);
             }
-
-            return await CompleteAsync().ConfigureAwait(false);
         }
 
         var seasonNumber = info.IndexNumber;
@@ -93,9 +94,15 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
         // A card the community approved for this exact season layout wins over the sequel traversal:
         // that is what the correction was made for. A season that already has its own ID keeps it.
         string? resolvedId = null;
-        if (_community is not null
-            && seasonNumber is >= 0 and <= AnimeClickCommunityData.MaximumSeasonNumber
-            && string.IsNullOrWhiteSpace(info.ProviderIds?.GetValueOrDefault("AnimeClick")))
+        var storedSeasonId = info.ProviderIds?.GetValueOrDefault("AnimeClick");
+        if (!string.IsNullOrWhiteSpace(storedSeasonId)
+            && AnimeClickClient.TryNormalizeAnimeClickId(storedSeasonId, out var normalizedStoredSeasonId)
+            && AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, normalizedStoredSeasonId, out _))
+        {
+            resolvedId = normalizedStoredSeasonId;
+        }
+        else if (_community is not null
+            && seasonNumber is >= 0 and <= AnimeClickCommunityData.MaximumSeasonNumber)
         {
             var approved = await _community
                 .ResolveLibrarySeasonAsync(info.SeriesProviderIds ?? new Dictionary<string, string>(), seasonNumber.Value, info.Path, configuration, cancellationToken)
@@ -109,7 +116,7 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
 
         if (resolvedId is null)
         {
-            if (!seasonNumber.HasValue || seasonNumber.Value <= 1)
+            if (!hasMainId || !seasonNumber.HasValue || seasonNumber.Value <= 1)
             {
                 return await CompleteAsync().ConfigureAwait(false);
             }
@@ -137,7 +144,13 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
             AnimeClickNumberingGuard.Preserve(result.Item, info);
             result.HasMetadata = true;
             // Only a distinct season card describes this season; never copy the entire series plot.
-            if (_client is not null && _cache is not null && _parser is not null
+            var isDistinctCard = !hasMainId
+                || !string.Equals(
+                    AnimeClickClient.GetStableIdentity(resolvedId),
+                    AnimeClickClient.GetStableIdentity(normalizedMainId),
+                    StringComparison.OrdinalIgnoreCase);
+            if (isDistinctCard
+                && _client is not null && _cache is not null && _parser is not null
                 && AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, resolvedId, out var url))
             {
                 try

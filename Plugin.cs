@@ -56,6 +56,30 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
         if (configuration is PluginConfiguration animeClickConfiguration)
         {
+            var previous = Configuration;
+            if (previous is not null
+                && !string.IsNullOrWhiteSpace(previous.AiApiKey)
+                && string.Equals(animeClickConfiguration.AiApiKey?.Trim(), previous.AiApiKey.Trim(), StringComparison.Ordinal))
+            {
+                var prevOk = AnimeClick.Plugin.Services.AnimeClickAiTranslator.TryNormalizeEndpoint(previous.AiEndpoint, out var prevUri);
+                var nextOk = AnimeClick.Plugin.Services.AnimeClickAiTranslator.TryNormalizeEndpoint(animeClickConfiguration.AiEndpoint, out var nextUri);
+                var sameDestination = prevOk && nextOk
+                    && string.Equals(prevUri.Scheme, nextUri.Scheme, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(prevUri.IdnHost, nextUri.IdnHost, StringComparison.OrdinalIgnoreCase)
+                    && prevUri.Port == nextUri.Port
+                    && string.Equals(prevUri.AbsolutePath, nextUri.AbsolutePath, StringComparison.Ordinal);
+                if (!sameDestination)
+                {
+                    animeClickConfiguration.AiApiKey = string.Empty;
+                }
+            }
+
+            if (AnimeClick.Plugin.Services.AnimeClickAiTranslator.TryNormalizeEndpoint(animeClickConfiguration.AiEndpoint, out var normalizedAiUri)
+                && normalizedAiUri.Scheme != Uri.UriSchemeHttps)
+            {
+                animeClickConfiguration.AiApiKey = string.Empty;
+            }
+
             animeClickConfiguration.Sanitize();
         }
 

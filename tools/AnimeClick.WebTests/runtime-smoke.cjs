@@ -58,7 +58,7 @@ async function main() {
     const plugins = await call('/Plugins');
     const plugin = plugins.find(p => p.Id?.replaceAll('-', '').toLowerCase() === pluginId.replaceAll('-', ''));
     assert.ok(plugin, 'Plugin is absent: ' + JSON.stringify(plugins));
-    assert.equal(plugin?.Version, '1.6.0.0');
+    assert.equal(plugin?.Version, '1.6.1.0');
     assert.equal(plugin.Status, 'Active');
     const configPage = (await call('/web/ConfigurationPages')).find(page => page.Name === 'AnimeClick Plugin');
     assert.equal(configPage?.EnableInMainMenu, true);
@@ -71,9 +71,10 @@ async function main() {
     assert.equal(config.AiModel, '');
     assert.equal(config.EnableCommunityMappings, false);
     assert.equal(config.EnableCommunitySharing, false);
+    assert.equal(config.CommunitySharingMode, 'Ask');
     assert.equal(config.CommunityGitHubToken, '');
     assert.equal(config.SetupCompletedVersion, 0, 'A fresh installation starts with the full guided setup');
-    assert.equal(config.ConfigurationVersion, 2);
+    assert.equal(config.ConfigurationVersion, 3);
     await call('/Plugins/' + pluginId + '/Configuration', { ...config, NegativeCacheHours: 0, EnableEpisodeTitleFallback: false }, 204);
     assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).NegativeCacheHours, 0);
     assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).EnableEpisodeTitleFallback, false);
@@ -87,7 +88,7 @@ async function main() {
     await call('/Plugins/AnimeClick/CancelActivity', { Key: 'invalid' }, 400);
     await call('/Plugins/AnimeClick/Community/Status');
     const exported = await call('/Plugins/AnimeClick/Community/Export');
-    assert.deepEqual(exported, { schemaVersion: 1, mappings: [] });
+    assert.deepEqual(exported, { schemaVersion: 2, mappings: [] });
     await call('/Plugins/AnimeClick/Community/Preview?itemId=invalid', undefined, 400);
     await call('/Plugins/AnimeClick/Community/Retry', {});
     await call('/Plugins/AnimeClick/IdentifyStatus?itemId=invalid', undefined, 400);
@@ -178,9 +179,11 @@ async function main() {
             assert.ok(options.ImageFetchers.includes('AnimeClick'), type + ' offers AnimeClick images');
         }
         await page.locator('#acSetupNext').click();
+        await page.getByRole('button', { name: 'Salva e continua' }).click();
+        await page.locator('#acSetupFinish').waitFor({ timeout: 30000 });
         await page.locator('#acSetupFinish').click();
         await page.locator('#acSetup').waitFor({ state: 'hidden' });
-        assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).SetupCompletedVersion, 2);
+        assert.equal((await call('/Plugins/' + pluginId + '/Configuration')).SetupCompletedVersion, 4);
         await page.locator('#acHomeLibraries').getByText(libraryName, { exact: true }).waitFor({ timeout: 30000 });
         await page.waitForTimeout(800);
         await page.screenshot({ path: 'test-results/runtime-home.png', fullPage: true });
@@ -200,9 +203,10 @@ async function main() {
         await page.getByRole('tab', { name: 'Fonti', exact: true }).click();
         await page.screenshot({ path: 'test-results/runtime-sources.png', fullPage: true });
         await page.getByRole('tab', { name: 'Comunità', exact: true }).click();
-        assert.equal(await page.locator('#acEnableCommunitySharing').isChecked(), false);
+        assert.equal(await page.locator('#acEnableCommunityMappings').isChecked(), true);
+        assert.equal(await page.locator('#acCommunitySharingMode').inputValue(), 'Ask');
         await page.locator('#acCommunityStatus').click();
-        await page.locator('#acCommunityResult').filter({ hasText: 'disattivata' }).waitFor();
+        await page.locator('#acCommunityResult').filter({ hasText: 'abbinamenti' }).waitFor();
         // The host cancels outstanding home-page requests on navigation. Report that
         // separately; do not hide any other browser exception or plugin failure.
         const cancellations = errors.filter(e => e.message === 'CancelledError');

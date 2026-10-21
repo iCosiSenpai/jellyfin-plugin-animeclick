@@ -27,6 +27,7 @@
     }
 
     function build(root) {
+        AC.bus.clear();
         clear(root);
         var tabs = VIEWS.map(function (view) {
             return h('button', {

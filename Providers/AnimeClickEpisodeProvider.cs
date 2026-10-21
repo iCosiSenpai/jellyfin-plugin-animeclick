@@ -381,7 +381,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
         // Resolved before the traversal, because the years it carries are what lets the traversal
         // choose on the AnimeClick pages that declare no relation type.
-        var libraryLayout = _layoutResolver.Resolve(episodePath);
+        var (libraryLayout, libraryRuntimeMinutes) = _layoutResolver.ResolveWithRuntime(episodePath);
 
         // The traversal from the series card always gets the first word when the series has an ID
         // of its own: it is held to today's safety rules, while an ID sitting on the season may
@@ -450,10 +450,12 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         // A deliberate recheck must see titles published since the last scan. Refresh once per
         // actual resolved card, then share the fresh catalog across this run's episodes.
         if (refreshedCatalogs?.Unavailable.Contains(cacheKey) == true) return null;
-        if (refreshedCatalogs?.Refreshed.Add(cacheKey) == true) _cache.ClearKey(cacheKey);
-        var catalog = refreshedCatalogs?.Catalogs.GetValueOrDefault(cacheKey) ?? await _cache
-            .GetAsync<AnimeClickEpisodeCatalog>(cacheKey, configuration.CacheHours, cancellationToken)
-            .ConfigureAwait(false);
+        var forceRefresh = refreshedCatalogs?.Refreshed.Add(cacheKey) == true;
+        var catalog = forceRefresh
+            ? null
+            : refreshedCatalogs?.Catalogs.GetValueOrDefault(cacheKey) ?? await _cache
+                .GetAsync<AnimeClickEpisodeCatalog>(cacheKey, configuration.CacheHours, cancellationToken)
+                .ConfigureAwait(false);
         _logger.LogDebug("AnimeClick episode catalog cache {State}: {Key}", catalog is null ? "miss" : "hit", cacheKey);
 
         if (catalog is null || catalog.Episodes.Count == 0)
@@ -463,9 +465,11 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             try
             {
                 // Another concurrent episode may have populated the same raw catalog.
-                catalog = await _cache
-                    .GetAsync<AnimeClickEpisodeCatalog>(cacheKey, configuration.CacheHours, cancellationToken)
-                    .ConfigureAwait(false);
+                catalog = forceRefresh
+                    ? refreshedCatalogs?.Catalogs.GetValueOrDefault(cacheKey)
+                    : await _cache
+                        .GetAsync<AnimeClickEpisodeCatalog>(cacheKey, configuration.CacheHours, cancellationToken)
+                        .ConfigureAwait(false);
                 if (catalog is null || catalog.Episodes.Count == 0)
                 {
                     var loaded = await _episodeListLoader.LoadAsync(
@@ -522,7 +526,6 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         }
 
         var pageSeason = isSeasonSpecificPage ? 1 : seasonNumber;
-        var libraryRuntimeMinutes = _layoutResolver.GetKnownRuntimeMinutes(episodePath);
         var layoutOverride = AnimeClickEpisodeLayoutOverrideParser.ParseFor(
                                  configuration.EpisodeLayoutOverrides,
                                  animeClickId)

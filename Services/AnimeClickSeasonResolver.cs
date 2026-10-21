@@ -63,7 +63,7 @@ public sealed class AnimeClickSeasonResolver
         var yearKey = expectedYear is > 0
             ? expectedYear.Value.ToString(CultureInfo.InvariantCulture)
             : "na";
-        var cacheKey = $"seasonMap:v6::{normalizedMainId}::{seasonNumber.Value}::{yearKey}";
+        var cacheKey = $"seasonMap:v7::{normalizedMainId}::{seasonNumber.Value}::{yearKey}";
         var cached = await _cache
             .GetAsync<string>(cacheKey, configuration.CacheHours, cancellationToken)
             .ConfigureAwait(false);
@@ -95,7 +95,7 @@ public sealed class AnimeClickSeasonResolver
         var yearKey = expectedYear is > 0
             ? expectedYear.Value.ToString(CultureInfo.InvariantCulture)
             : "na";
-        var cacheKey = $"seasonMap:v6::{normalizedMainId}::{seasonNumber.Value}::{yearKey}";
+        var cacheKey = $"seasonMap:v7::{normalizedMainId}::{seasonNumber.Value}::{yearKey}";
         var missCacheKey = cacheKey + "::miss";
         var cached = await _cache
             .GetAsync<string>(cacheKey, configuration.CacheHours, cancellationToken)
@@ -431,6 +431,16 @@ public sealed class AnimeClickSeasonResolver
             {
                 return null;
             }
+
+            // A lone declared sequel that aired years away from the season is not that season: the
+            // card the traversal started from goes on for longer than one. Ascendance of a Bookworm
+            // keeps its 2019, 2020 and 2022 seasons on one card and declares only the 2026
+            // continuation, which used to put 2026 titles on the 2020 episodes. Only a card with no
+            // year of its own cannot be contradicted.
+            if (candidates[0].Year is not null)
+            {
+                return null;
+            }
         }
         else if (requireYearMatch)
         {
@@ -547,10 +557,7 @@ public sealed class AnimeClickSeasonResolver
         => relation.Year.HasValue && currentYear.HasValue && relation.Year.Value < currentYear.Value;
 
     private static string GetStableIdentity(string normalizedId)
-    {
-        var slash = normalizedId.IndexOf('/', StringComparison.Ordinal);
-        return slash >= 0 ? normalizedId[..slash] : normalizedId;
-    }
+        => AnimeClickClient.GetStableIdentity(normalizedId);
 
     private sealed record SeasonCandidate(
         AnimeClickRelation Relation,

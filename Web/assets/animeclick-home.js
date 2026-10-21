@@ -114,6 +114,7 @@
         var host = el('acHomeHero');
         if (!host) return;
         stopHero();
+        heroPaused = false;
         var items = heroItems();
         if (!items.length) {
             replace(host, h('section', { class: 'ac-hero ac-hero--empty', 'aria-label': 'Vetrina' },
@@ -489,10 +490,9 @@
         AC.bus.on('reports', function () { renderHealth(); renderStats(); renderTodo(); });
         AC.bus.on('jobs', function () { renderJobs(); renderTodo(); });
         AC.bus.on('libraries', function () { renderLibraries(); renderTodo(); });
-        AC.bus.on('config', function () { renderSources(); renderTodo(); });
+        AC.bus.on('config', function () { community.at = 0; renderSources(); renderTodo(); });
         AC.bus.on('library-changed', function () { showcaseAt = 0; });
         AC.bus.on('community-changed', function () { community.at = 0; });
-        AC.bus.on('config', function () { community.at = 0; });
         renderHealth();
         renderStats();
         renderTodo();
@@ -531,7 +531,6 @@
     AC.libraries = {
         load: loadLibraries,
         rows: function () { return libraries.rows; },
-        error: function () { return libraries.error; },
         enable: enableLibrary,
         confirmEnable: confirmEnable,
         state: libraryState,

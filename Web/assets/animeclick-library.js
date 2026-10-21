@@ -599,11 +599,24 @@
         return data.loadedAt ? filtered().filter(canReread).slice(0, REREAD_LIMIT) : [];
     }
 
+    function adjustCount(report, field, oldVal, newVal) {
+        if (!report || oldVal === undefined || newVal === undefined) return;
+        var prop = report[field] !== undefined ? field : field.charAt(0).toUpperCase() + field.slice(1);
+        if (report[prop] !== undefined) report[prop] = Math.max(0, (report[prop] || 0) - (oldVal || 0) + (newVal || 0));
+    }
+
     function replaceSeries(fresh) {
         var series = list(val(data.titles, 'series'));
         var id = key(val(fresh, 'id'));
         for (var i = 0; i < series.length; i++) {
-            if (key(val(series[i], 'id')) === id) { series[i] = fresh; break; }
+            if (key(val(series[i], 'id')) === id) {
+                var prev = series[i];
+                ['episodeCount', 'missingTitleCount', 'recoverableTitleCount', 'checkableTitleCount', 'waitingTitleCount', 'unavailableTitleCount'].forEach(function (field) {
+                    adjustCount(data.titles, field, val(prev, field), val(fresh, field));
+                });
+                series[i] = fresh;
+                break;
+            }
         }
         entriesCache = null;
     }
@@ -623,6 +636,7 @@
         }
         return next().then(function () {
             render();
+            AC.bus.emit('reports');
             ui.toast(errors.length ? 'Lettura completata con errori: ' + errors[0] : plural(targets.length, 'scheda riletta', 'schede rilette') + ' da AnimeClick.', errors.length ? 'error' : 'success');
         }).finally(function () { ui.setBusy(buttonNode, false); refreshControls(); });
     }
@@ -797,13 +811,11 @@
             if (!data.loadedAt && !data.loading) loadReports(false);
             poll();
         },
-        leave: function () { if (!shouldPoll()) stopPolling(); },
         poll: poll,
         stop: stopPolling,
         loadReports: loadReports,
         data: function () { return data; },
         entries: entries,
-        jobs: function () { return jobs; },
         jobError: function () { return jobError; },
         isActive: isActive,
         jobPanel: jobPanel,
@@ -814,6 +826,7 @@
         openDetail: openDetail,
         setFilter: setFilter,
         reset: function () {
+            if (detail && detail.isOpen()) detail.close();
             data.titles = data.quality = data.catalog = data.loadedAt = null;
             data.failures = [];
             entriesCache = null;

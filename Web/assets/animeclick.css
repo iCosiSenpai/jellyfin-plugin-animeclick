@@ -96,15 +96,6 @@
     display: none !important;
 }
 
-.ac-sr {
-    position: absolute !important;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-}
-
 /* ---------------------------------------------------------------- page shell */
 
 #AnimeClickConfigPage .content-primary {
@@ -391,11 +382,9 @@
 .ac-stack { display: grid; gap: 14px; align-content: start; }
 .ac-stack-s { display: grid; gap: 8px; align-content: start; }
 .ac-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.ac-row-end { justify-content: flex-end; }
 .ac-grow { flex: 1 1 auto; min-width: 0; }
 .ac-cols-2 { display: grid; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .ac-cols-3 { display: grid; gap: 18px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.ac-span-2 { grid-column: span 2; }
 
 /* ---------------------------------------------------------------- cards */
 
@@ -456,11 +445,6 @@
     align-items: center;
     padding-top: 14px;
     border-top: 1px dashed var(--ac-line-2);
-}
-
-.ac-divider {
-    height: 1px;
-    background: var(--ac-line);
 }
 
 /* ---------------------------------------------------------------- buttons */
@@ -543,10 +527,6 @@
 .ac-btn--icon {
     width: 40px;
     padding: 0;
-}
-
-.ac-btn--block {
-    width: 100%;
 }
 
 .ac-btn[aria-busy="true"]::after {
@@ -910,7 +890,6 @@
     padding: 30px 18px;
     border-radius: var(--ac-radius);
     background: rgba(255, 255, 255, 0.025);
-    box-shadow: inset 0 0 0 1px dashed var(--ac-line);
     border: 1px dashed var(--ac-line-2);
     text-align: center;
     color: var(--ac-text-2);
@@ -1384,6 +1363,7 @@
     width: 96px;
     height: 96px;
     flex: none;
+    color: var(--ac-red-hot);
 }
 
 .ac-ring svg {
@@ -1399,10 +1379,6 @@
 
 .ac-ring .ac-ring-track {
     stroke: rgba(255, 255, 255, 0.08);
-}
-
-.ac-ring {
-    color: var(--ac-red-hot);
 }
 
 .ac-ring.is-ok { color: var(--ac-ok); }
@@ -1565,8 +1541,6 @@
 }
 
 .ac-led.is-ok { background: var(--ac-ok); box-shadow: 0 0 10px rgba(63, 224, 174, 0.7); }
-.ac-led.is-warn { background: var(--ac-warn); box-shadow: 0 0 10px rgba(255, 195, 90, 0.6); }
-.ac-led.is-bad { background: var(--ac-bad); box-shadow: 0 0 10px rgba(255, 96, 112, 0.6); }
 
 /* ---------------------------------------------------------------- activities */
 
@@ -1613,12 +1587,6 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 18px;
-}
-
-.ac-repair {
-    display: grid;
-    gap: 16px;
-    align-content: start;
 }
 
 .ac-repair-top {
@@ -2230,10 +2198,6 @@ button.ac-number:hover {
     animation: ac-rise 0.35s var(--ac-ease);
 }
 
-.ac-setup-card.is-wide {
-    grid-template-columns: minmax(0, 1fr);
-}
-
 .ac-setup-main {
     display: grid;
     gap: 18px;
@@ -2494,10 +2458,6 @@ button.ac-number:hover {
     .ac-cols-2,
     .ac-cols-3 {
         grid-template-columns: minmax(0, 1fr);
-    }
-
-    .ac-span-2 {
-        grid-column: auto;
     }
 
     .ac-setup-card {

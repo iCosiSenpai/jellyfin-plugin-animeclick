@@ -196,6 +196,14 @@ public class AnimeClickAniListResolver
         }
         """;
 
+    public Task<AnimeClickAniListMedia?> GetCachedMediaAsync(int id, PluginConfiguration configuration, CancellationToken cancellationToken)
+        => id <= 0
+            ? Task.FromResult<AnimeClickAniListMedia?>(null)
+            : _cache.GetAsync<AnimeClickAniListMedia>(
+                "anilist:media:v1::" + id.ToString(CultureInfo.InvariantCulture),
+                configuration.CacheHours,
+                cancellationToken);
+
     /// <summary>
     /// One AniList entry with everything the plugin can complete from it, cached like an AnimeClick
     /// card. Shares the throttle and the circuit breaker of the identity lookups: AniList counts both.

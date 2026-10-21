@@ -44,8 +44,9 @@ def manifest(changelog=""):
 def main():
     target = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else pathlib.Path("meta.json")
     changelog = sys.argv[2] if len(sys.argv) > 2 else ""
-    target.write_text(json.dumps(manifest(changelog), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"{target}: {manifest()['name']} {manifest()['version']}")
+    data = manifest(changelog)
+    target.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"{target}: {data['name']} {data['version']}")
 
 
 if __name__ == "__main__":
