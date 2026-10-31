@@ -297,24 +297,47 @@
                 ui.button('Fonti', { small: true, onClick: function () { AC.app.go('sources'); } })));
         }
         if (config.EnableEpisodeTitles === false) {
+            var enableTitlesHomeBtn = ui.button('Attiva ora', { small: true, variant: 'primary', icon: 'check' });
+            enableTitlesHomeBtn.addEventListener('click', function () {
+                ui.setBusy(enableTitlesHomeBtn, true, 'Attivazione…');
+                AC.settings.savePatch({ EnableEpisodeTitles: true }).then(function () {
+                    ui.toast('Titoli degli episodi attivati', 'success');
+                    return AC.library.loadReports(true);
+                }).catch(function (error) {
+                    ui.toast(truncate(error.message, 240), 'error');
+                    ui.setBusy(enableTitlesHomeBtn, false);
+                });
+            });
             items.push(todoItem('title', 'warn', 'I titoli degli episodi sono spenti', 'Nessun titolo episodio viene scritto finché resta così.',
-                ui.button('Preferenze', { small: true, onClick: function () { AC.app.go('preferences'); } })));
+                h('div', { class: 'ac-row' }, enableTitlesHomeBtn, ui.button('Preferenze', { small: true, variant: 'ghost', onClick: function () { AC.app.go('preferences'); } }))));
         }
         if (data.loadedAt) {
             var toCheck = AC.library.titlesToCheck(data.titles);
             if (toCheck && !AC.library.isActive('titles')) {
+                var startTitlesHomeBtn = ui.button('Avvia', { small: true, variant: 'primary', icon: 'sparkles' });
+                startTitlesHomeBtn.addEventListener('click', function () { AC.library.runTitles(startTitlesHomeBtn); });
                 items.push(todoItem('title', 'red', plural(toCheck, 'titolo da sistemare', 'titoli da sistemare'), 'Un clic e il server li ricontrolla tutti.',
-                    ui.button('Libreria', { small: true, onClick: function () { AC.app.go('library'); AC.library.setFilter('titles'); } })));
+                    h('div', { class: 'ac-row' }, startTitlesHomeBtn, ui.button('Libreria', { small: true, variant: 'ghost', onClick: function () { AC.app.go('library'); AC.library.setFilter('titles'); } }))));
             }
             var repairable = val(data.quality, 'repairableCount');
             if (repairable && !AC.library.isActive('synopses')) {
+                var startSynopsesHomeBtn = ui.button('Avvia', { small: true, variant: 'primary', icon: 'sparkles' });
+                startSynopsesHomeBtn.addEventListener('click', function () { AC.library.runSynopses(startSynopsesHomeBtn); });
                 items.push(todoItem('book', 'red', plural(repairable, 'trama da completare', 'trame da completare'), 'Inglesi o vuote, con una fonte disponibile.',
-                    ui.button('Libreria', { small: true, onClick: function () { AC.app.go('library'); AC.library.setFilter('synopses'); } })));
+                    h('div', { class: 'ac-row' }, startSynopsesHomeBtn, ui.button('Libreria', { small: true, variant: 'ghost', onClick: function () { AC.app.go('library'); AC.library.setFilter('synopses'); } }))));
             }
-            var unidentified = AC.library.entries().filter(function (e) { return e.status === 'unidentified'; }).length;
+            var unidentifiedList = AC.library.entries().filter(function (e) { return e.status === 'unidentified'; });
+            var unidentified = unidentifiedList.length;
             if (unidentified) {
-                items.push(todoItem('link', 'bad', plural(unidentified, 'anime da identificare', 'anime da identificare'), 'Jellyfin non ha trovato la scheda AnimeClick.',
-                    ui.button('Libreria', { small: true, onClick: function () { AC.app.go('library'); AC.library.setFilter('unidentified'); } })));
+                var firstUnidentified = unidentifiedList[0];
+                var identifyAction = unidentified === 1 && firstUnidentified
+                    ? h('div', { class: 'ac-row' },
+                        ui.button('Identifica ora', { small: true, variant: 'primary', icon: 'link', onClick: function () {
+                            AC.settings.startIdentify({ id: firstUnidentified.id, name: firstUnidentified.name, type: firstUnidentified.type, year: firstUnidentified.year, hasPrimaryImage: firstUnidentified.hasPrimaryImage, returnToKey: firstUnidentified.key });
+                        } }),
+                        ui.button('Libreria', { small: true, variant: 'ghost', onClick: function () { AC.app.go('library'); AC.library.setFilter('unidentified'); } }))
+                    : ui.button('Libreria', { small: true, onClick: function () { AC.app.go('library'); AC.library.setFilter('unidentified'); } });
+                items.push(todoItem('link', 'bad', plural(unidentified, 'anime da identificare', 'anime da identificare'), 'Jellyfin non ha trovato la scheda AnimeClick.', identifyAction));
             }
         }
         if (!items.length) {

@@ -636,32 +636,73 @@
 
     /* ===== Strumenti ===== */
 
+    function checkItemStatus(targetId) {
+        var lockHost = el('acSelectedItemLockState');
+        if (!lockHost || !targetId) return;
+        clear(lockHost);
+        api.request('GET', 'Plugins/AnimeClick/IdentifyStatus?itemId=' + encodeURIComponent(targetId)).then(function (status) {
+            if (!el('acItemId') || el('acItemId').value !== targetId) return;
+            var currentId = val(status, 'animeClickId');
+            if (currentId && el('acFallbackAnimeId') && !el('acFallbackAnimeId').value.trim()) {
+                el('acFallbackAnimeId').value = currentId;
+            }
+            var isLocked = !!val(status, 'isLocked') || list(val(status, 'lockedFields')).length > 0;
+            if (!isLocked) return;
+            var unlockBtn = ui.button('Sblocca ora', { id: 'acBtnUnlockSelected', small: true, variant: 'ghost', icon: 'check' });
+            unlockBtn.addEventListener('click', function () {
+                ui.setBusy(unlockBtn, true, 'Sblocco…');
+                api.request('POST', 'Plugins/AnimeClick/UnlockItem', { itemId: targetId, includeChildren: true }).then(function () {
+                    replace(lockHost, ui.badge('Sbloccata', 'ok', 'check'));
+                    ui.toast('Scheda sbloccata in Jellyfin', 'success');
+                    AC.bus.emit('library-changed');
+                }).catch(function (error) {
+                    ui.toast(truncate(error.message, 240), 'error');
+                    ui.setBusy(unlockBtn, false);
+                });
+            });
+            replace(lockHost, ui.badge('Bloccata in Jellyfin', 'warn', 'lock'), unlockBtn);
+        }).catch(function () { /* Diagnostic status is optional. */ });
+    }
+
     function pickItem(item) {
         identify.item = item;
-        el('acItemId').value = val(item, 'id') || '';
+        var initialId = val(item, 'seasonId') || val(item, 'id') || '';
+        el('acItemId').value = initialId;
         var host = el('acSelectedItem');
         var year = val(item, 'productionYear') || val(item, 'year');
+        var lockState = h('div', { id: 'acSelectedItemLockState', class: 'ac-row' });
+        var returnKey = val(item, 'returnToKey');
         replace(host,
             ui.poster({ id: val(item, 'id'), name: val(item, 'name'), hasPrimaryImage: val(item, 'hasPrimaryImage') }, { height: 120 }),
-            h('div', null,
+            h('div', { class: 'ac-stack-s ac-grow' },
                 h('strong', { text: val(item, 'name') || 'Titolo selezionato' }),
-                h('p', { class: 'ac-muted', text: (val(item, 'type') === 'Movie' ? 'Film' : 'Serie') + (year ? ' · ' + year : '') })),
-            ui.button('Cambia', { small: true, variant: 'ghost', onClick: function () {
-                identify.item = null;
-                el('acItemId').value = '';
-                el('acAnimeClickId').value = '';
-                clear(el('acAnimeClickCandidates'));
-                clear(el('acIdentifyResult'));
-                renderSelection();
-                el('acItemSearch').focus();
-            } }));
+                h('p', { class: 'ac-muted', text: (val(item, 'type') === 'Movie' ? 'Film' : 'Serie') + (year ? ' · ' + year : '') }),
+                lockState),
+            h('div', { class: 'ac-row' },
+                returnKey ? ui.button('Torna alla libreria', { id: 'acBtnReturnLibrary', small: true, variant: 'ghost', icon: 'arrowLeft', onClick: function () {
+                    AC.app.go('library');
+                    if (AC.library && AC.library.openDetail) AC.library.openDetail(returnKey);
+                } }) : null,
+                ui.button('Cambia', { small: true, variant: 'ghost', onClick: function () {
+                    identify.item = null;
+                    el('acItemId').value = '';
+                    el('acAnimeClickId').value = '';
+                    clear(el('acAnimeClickCandidates'));
+                    clear(el('acIdentifyResult'));
+                    renderSelection();
+                    el('acItemSearch').focus();
+                } })));
         host.hidden = false;
         clear(el('acItemCandidates'));
         clear(el('acAnimeClickCandidates'));
         clear(el('acIdentifyResult'));
         el('acAnimeClickId').value = '';
         var lookup = el('acAnimeClickSearch');
-        if (lookup) lookup.value = val(item, 'name') || '';
+        if (lookup) {
+            var seasonNum = val(item, 'seasonNumber');
+            lookup.value = (val(item, 'name') || '') + (seasonNum != null && seasonNum > 1 ? ' ' + seasonNum : '');
+        }
+        checkItemStatus(initialId);
         if (val(item, 'type') !== 'Movie') loadSeasons(item);
     }
 
@@ -671,6 +712,8 @@
      */
     function loadSeasons(item) {
         var seriesId = val(item, 'id');
+        var desiredSeasonId = val(item, 'seasonId');
+        var desiredSeasonNumber = val(item, 'seasonNumber');
         var host = el('acSelectedItem');
         var picker = ui.select('acItemSeason', 'Cosa correggere', [{ value: seriesId, label: 'Tutta la serie' }], {
             hint: 'Scegli una stagione se ha una scheda AnimeClick sua, per esempio un sequel o un arco finale.'
@@ -678,18 +721,33 @@
         picker.id = 'acItemSeasonField';
         host.appendChild(picker);
         var select = el('acItemSeason');
-        select.addEventListener('change', function () { el('acItemId').value = select.value; });
+        select.addEventListener('change', function () {
+            el('acItemId').value = select.value;
+            checkItemStatus(select.value);
+        });
         api.request('GET', 'Shows/' + encodeURIComponent(seriesId) + '/Seasons?Fields=ProviderIds').then(function (result) {
-            if (el('acItemId').value !== seriesId && el('acItemId').value !== select.value) return;
+            if (el('acItemId').value !== seriesId && el('acItemId').value !== select.value && el('acItemId').value !== desiredSeasonId) return;
+            var matchedValue = null;
+            var norm = function (v) { return String(v || '').replace(/-/g, '').toLowerCase(); };
             list(val(result, 'items')).forEach(function (season) {
+                var sid = val(season, 'id');
                 var number = val(season, 'indexNumber');
                 var card = val(val(season, 'providerIds') || {}, 'animeClick');
                 select.appendChild(h('option', {
-                    value: val(season, 'id'),
+                    value: sid,
                     text: (number === 0 ? 'Speciali' : number != null ? 'Stagione ' + number : (val(season, 'name') || 'Stagione'))
                         + (card ? ' · AnimeClick ' + String(card).split('/')[0] : '')
                 }));
+                if ((desiredSeasonId && norm(sid) === norm(desiredSeasonId))
+                    || (!matchedValue && desiredSeasonNumber != null && number === desiredSeasonNumber)) {
+                    matchedValue = sid;
+                }
             });
+            if (matchedValue) {
+                select.value = matchedValue;
+                el('acItemId').value = matchedValue;
+                checkItemStatus(matchedValue);
+            }
         }).catch(function () { /* The series stays selectable on its own. */ });
     }
 
@@ -790,19 +848,60 @@
         var identifyOut = h('div', { id: 'acIdentifyResult', 'aria-live': 'polite' });
         fix.body.appendChild(h('div', { class: 'ac-card-foot' }, identifyButton));
         fix.body.appendChild(identifyOut);
-        identifyButton.addEventListener('click', function () {
+        function runIdentify(unlock, triggerBtn) {
             var itemId = el('acItemId').value.trim();
             var animeClickId = el('acAnimeClickId').value.trim();
             if (!itemId || !animeClickId) { ui.toast('Scegli un titolo e indica la scheda AnimeClick.', 'error'); return; }
-            ui.setBusy(identifyButton, true, 'Aggiornamento…');
-            replace(identifyOut, h('p', { class: 'ac-status', text: 'Verifica della scheda in corso…' }));
-            api.request('POST', 'Plugins/AnimeClick/IdentifyAndRefresh', {
+            var btn = triggerBtn || identifyButton;
+            ui.setBusy(btn, true, unlock ? 'Sblocco e aggiornamento…' : 'Aggiornamento…');
+            replace(identifyOut, h('p', { class: 'ac-status', text: unlock ? 'Sblocco della scheda e verifica in corso…' : 'Verifica della scheda in corso…' }));
+            var payload = {
                 itemId: itemId, animeClickId: animeClickId, replaceAllMetadata: false, replaceAllImages: el('acReplaceAllImages').checked
-            }).then(function (response) {
+            };
+            if (unlock) payload.unlock = true;
+            api.request('POST', 'Plugins/AnimeClick/IdentifyAndRefresh', payload).then(function (response) {
                 var success = !!val(response, 'success');
-                replace(identifyOut, ui.callout(success ? 'Abbinamento salvato' : 'Operazione incompleta',
-                    success ? 'L’ID AnimeClick è salvato e l’aggiornamento è partito.' : truncate(val(response, 'error') || 'Errore sconosciuto.', 300),
-                    success ? 'ok' : 'warn'));
+                var unlockedCount = val(response, 'unlockedCount') || 0;
+                var msg = success
+                    ? (unlockedCount ? 'Scheda sbloccata, ID AnimeClick salvato e aggiornamento avviato.' : 'L’ID AnimeClick è salvato e l’aggiornamento è partito.')
+                    : truncate(val(response, 'error') || 'Errore sconosciuto.', 300);
+                replace(identifyOut, ui.callout(success ? 'Abbinamento salvato' : 'Operazione incompleta', msg, success ? 'ok' : 'warn'));
+                var quickRow = h('div', { id: 'acIdentifyQuickActions', class: 'ac-row' });
+                if (!success) {
+                    var retryRefresh = ui.button('Aggiorna metadati ora', { id: 'acBtnRetryRefresh', small: true, variant: 'primary', icon: 'refresh' });
+                    retryRefresh.addEventListener('click', function () {
+                        ui.setBusy(retryRefresh, true, 'Accodamento…');
+                        api.request('POST', 'Plugins/AnimeClick/RefreshItem', {
+                            itemId: itemId, replaceAllMetadata: false, replaceAllImages: el('acReplaceAllImages').checked
+                        }).then(function () {
+                            ui.toast('Aggiornamento dei metadati avviato', 'success');
+                            retryRefresh.remove();
+                        }).catch(function (err) {
+                            ui.toast(truncate(err.message, 240), 'error');
+                            ui.setBusy(retryRefresh, false);
+                        });
+                    });
+                    quickRow.appendChild(retryRefresh);
+                }
+                var returnKey = identify.item && val(identify.item, 'returnToKey');
+                if (returnKey) {
+                    var backBtn = ui.button('Torna alla scheda in Libreria', { id: 'acBtnBackToLibrary', small: true, variant: 'ghost', icon: 'arrowLeft' });
+                    backBtn.addEventListener('click', function () {
+                        AC.app.go('library');
+                        if (AC.library && AC.library.loadReports) {
+                            AC.library.loadReports(true).then(function () {
+                                if (AC.library.openDetail) AC.library.openDetail(returnKey);
+                            });
+                        }
+                    });
+                    quickRow.appendChild(backBtn);
+                }
+                if (quickRow.childNodes.length) identifyOut.appendChild(quickRow);
+                if (unlockedCount && el('acSelectedItemLockState')) {
+                    replace(el('acSelectedItemLockState'), ui.badge('Sbloccata', 'ok', 'check'));
+                }
+                var savedCard = val(response, 'animeClickId') || animeClickId;
+                if (savedCard && el('acFallbackAnimeId')) el('acFallbackAnimeId').value = savedCard;
                 var community = val(response, 'communityMessage');
                 var proposal = val(response, 'communityProposal');
                 if (success && proposal) renderShareOffer(identifyOut, itemId, proposal);
@@ -811,13 +910,47 @@
                 ui.toast(success ? 'Abbinamento salvato' : 'Identificazione incompleta', success ? 'success' : 'error');
                 if (success) AC.bus.emit('library-changed');
             }).catch(function (error) {
-                replace(identifyOut, ui.callout('Identificazione non riuscita', truncate(error.message, 300), 'bad'));
+                var errText = truncate(error.message, 300);
+                var isLockedError = error.status === 409 && /bloccata/i.test(errText);
+                replace(identifyOut, ui.callout('Identificazione non riuscita', errText, 'bad'));
+                if (isLockedError) {
+                    var unlockAndIdentifyBtn = ui.button('Sblocca e identifica ora', { id: 'acBtnUnlockAndIdentify', variant: 'primary', small: true, icon: 'check' });
+                    unlockAndIdentifyBtn.addEventListener('click', function () {
+                        runIdentify(true, unlockAndIdentifyBtn);
+                    });
+                    var unlockOnlyBtn = ui.button('Solo sblocca', { id: 'acBtnUnlockOnly', variant: 'ghost', small: true, icon: 'lock' });
+                    unlockOnlyBtn.addEventListener('click', function () {
+                        ui.setBusy(unlockOnlyBtn, true, 'Sblocco…');
+                        api.request('POST', 'Plugins/AnimeClick/UnlockItem', { itemId: itemId, includeChildren: true }).then(function () {
+                            if (el('acSelectedItemLockState')) replace(el('acSelectedItemLockState'), ui.badge('Sbloccata', 'ok', 'check'));
+                            replace(identifyOut, ui.callout('Scheda sbloccata', 'Il blocco in Jellyfin è stato rimosso. Ora puoi premere «Identifica e aggiorna».', 'ok'));
+                            ui.toast('Scheda sbloccata in Jellyfin', 'success');
+                            AC.bus.emit('library-changed');
+                        }).catch(function (err) {
+                            ui.toast(truncate(err.message, 240), 'error');
+                            ui.setBusy(unlockOnlyBtn, false);
+                        });
+                    });
+                    identifyOut.appendChild(h('div', { id: 'acIdentifyQuickActions', class: 'ac-row' }, unlockAndIdentifyBtn, unlockOnlyBtn));
+                }
                 ui.toast('Identificazione non riuscita', 'error');
-            }).finally(function () { ui.setBusy(identifyButton, false); });
+            }).finally(function () { ui.setBusy(btn, false); });
+        }
+
+        identifyButton.addEventListener('click', function () { runIdentify(false, identifyButton); });
+        el2(fix.body, 'acItemSearch').addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') { event.preventDefault(); searchLibrary(findButton); }
+        });
+        el2(fix.body, 'acAnimeClickSearch').addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') { event.preventDefault(); searchAnimeClick(lookupButton); }
+        });
+        el2(fix.body, 'acAnimeClickId').addEventListener('keydown', function (event) {
+            if (event.key === 'Enter') { event.preventDefault(); runIdentify(false, identifyButton); }
         });
 
         var probe = ui.card({ icon: 'flask', title: 'Da dove arriva questa trama?', text: 'Esegue la catena delle fonti salvata su un episodio e mostra quale fonte risponde.' });
         var probeButton = ui.button('Esegui la catena', { id: 'acBtnPreviewFallback', icon: 'play' });
+        var probeBackHost = h('span', { id: 'acProbeBackHost', class: 'ac-row' });
         var probeOut = h('div', { id: 'acFallbackResult', class: 'ac-stack-s', 'aria-live': 'polite' });
         probe.body.appendChild(h('div', { class: 'ac-cols-3' },
             ui.field('acFallbackAnimeId', 'ID AnimeClick', { placeholder: 'Es. 72/naruto', spellcheck: false }),
@@ -825,23 +958,41 @@
             ui.field('acFallbackEpisode', 'Episodio', { type: 'number', min: '0' })));
         el2(probe.body, 'acFallbackSeason').value = '1';
         el2(probe.body, 'acFallbackEpisode').value = '1';
-        probe.body.appendChild(h('div', { class: 'ac-row' }, probeButton));
+        ['acFallbackAnimeId', 'acFallbackSeason', 'acFallbackEpisode'].forEach(function (fieldId) {
+            el2(probe.body, fieldId).addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') { event.preventDefault(); probeButton.click(); }
+            });
+        });
+        probe.body.appendChild(h('div', { class: 'ac-row' }, probeButton, probeBackHost));
         probe.body.appendChild(probeOut);
         probeButton.addEventListener('click', function () {
-            if (dirty) { ui.toast('Salva prima le impostazioni: la prova usa solo i valori salvati.', 'error'); return; }
             var id = el('acFallbackAnimeId').value.trim();
             var season = parseInt(el('acFallbackSeason').value, 10);
             var episode = parseInt(el('acFallbackEpisode').value, 10);
             if (!id || isNaN(season) || isNaN(episode)) { ui.toast('Inserisci ID AnimeClick, stagione ed episodio.', 'error'); return; }
-            ui.setBusy(probeButton, true, 'Analisi…');
-            api.request('POST', 'Plugins/AnimeClick/PreviewEpisodeFallback', { animeClickId: id, season: season, episode: episode })
-                .then(renderProbe).catch(function (error) {
-                    renderProbe({ success: false, errorMessage: truncate(error.message, 300), chain: [] });
-                }).finally(function () { ui.setBusy(probeButton, false); });
+            var runProbe = function () {
+                ui.setBusy(probeButton, true, 'Analisi…');
+                return api.request('POST', 'Plugins/AnimeClick/PreviewEpisodeFallback', { animeClickId: id, season: season, episode: episode })
+                    .then(renderProbe).catch(function (error) {
+                        renderProbe({ success: false, errorMessage: truncate(error.message, 300), chain: [] });
+                    }).finally(function () { ui.setBusy(probeButton, false); });
+            };
+            if (dirty) {
+                ui.setBusy(probeButton, true, 'Salvataggio e analisi…');
+                save().then(runProbe).catch(function () { ui.setBusy(probeButton, false); });
+                return;
+            }
+            runProbe();
         });
 
         function renderProbe(result) {
             clear(probeOut);
+            var epTitle = val(result, 'episodeTitle');
+            if (epTitle) {
+                probeOut.appendChild(h('div', { class: 'ac-row' },
+                    ui.badge('Titolo AnimeClick', 'info', 'title'),
+                    h('strong', { text: epTitle })));
+            }
             if (!val(result, 'success')) {
                 probeOut.appendChild(ui.callout('Nessuna fonte disponibile', val(result, 'errorMessage') || 'La catena non ha prodotto una trama.', 'warn'));
             } else {
@@ -911,8 +1062,43 @@
         AC.app.go('tools');
         pickItem(item);
         var target = el('acAnimeClickSearch');
-        if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (target) {
+            target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            if (target.value.trim().length >= 2 && el('acBtnLookup')) {
+                searchAnimeClick(el('acBtnLookup'));
+            }
+        }
         if (el('acAnimeClickId')) el('acAnimeClickId').value = '';
+    }
+
+    /** Opens Strumenti → Da dove arriva questa trama? pre-filled for an episode and runs the probe. */
+    function startProbe(options) {
+        options = options || {};
+        AC.app.go('tools');
+        var idInput = el('acFallbackAnimeId');
+        var seasonInput = el('acFallbackSeason');
+        var episodeInput = el('acFallbackEpisode');
+        if (idInput && options.animeClickId) idInput.value = options.animeClickId;
+        if (seasonInput) seasonInput.value = String(options.season != null ? options.season : 1);
+        if (episodeInput) episodeInput.value = String(options.episode != null ? options.episode : 1);
+        var backHost = el('acProbeBackHost');
+        if (backHost) {
+            clear(backHost);
+            if (options.returnToKey) {
+                backHost.appendChild(ui.button('Torna alla libreria', {
+                    id: 'acBtnProbeReturnLibrary', small: true, variant: 'ghost', icon: 'arrowLeft',
+                    onClick: function () {
+                        AC.app.go('library');
+                        if (AC.library && AC.library.openDetail) AC.library.openDetail(options.returnToKey);
+                    }
+                }));
+            }
+        }
+        var btn = el('acBtnPreviewFallback');
+        if (btn) {
+            btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            btn.click();
+        }
     }
 
     /* ===== Comunità ===== */
@@ -1178,6 +1364,7 @@
         isDirty: function () { return dirty; },
         sourceState: sourceState,
         startIdentify: startIdentify,
+        startProbe: startProbe,
         runTest: function (source, payload) {
             return api.request('POST', 'Plugins/AnimeClick/' + TEST_ROUTES[source], payload).then(function (result) {
                 return { success: !!val(result, 'success'), message: describeTest(source, result, !!val(result, 'success')) };

@@ -1173,6 +1173,164 @@ public class AnimeClickOrchestrationTests
         Assert.Single(queued, series.Id);
     }
 
+    [Fact]
+    public async Task IdentifyAndRefreshWithUnlockClearsItemAndDescendantLocksAndQueuesRefresh()
+    {
+        using var temporary = new TemporaryAnimeClickCache();
+        var ledger = CreateLedger(temporary);
+
+        var series = new Series
+        {
+            Id = Guid.NewGuid(),
+            Name = "DanMachi",
+            IsLocked = true,
+            LockedFields = [MetadataField.Name, MetadataField.Overview]
+        };
+        var lockedEpisode = new Episode
+        {
+            Id = Guid.NewGuid(),
+            Name = "Episodio 1",
+            SeriesId = series.Id,
+            IsLocked = true,
+            LockedFields = [MetadataField.Name]
+        };
+        lockedEpisode.SetProviderId("AnimeClick", "111/old:s1:e1");
+        series.SetProviderId("AnimeClick", "111/old");
+
+        var allItems = new List<BaseItem> { series, lockedEpisode };
+        var libraryManager = TestDoubles.Proxy<ILibraryManager>((method, args) =>
+        {
+            if (method.Name == nameof(ILibraryManager.GetItemById) && args is [Guid id, ..])
+            {
+                return allItems.FirstOrDefault(item => item.Id == id);
+            }
+
+            if (method.Name == nameof(ILibraryManager.GetItemList))
+            {
+                return new List<BaseItem> { lockedEpisode };
+            }
+
+            if (method.Name == nameof(ILibraryManager.UpdateItemAsync))
+            {
+                return Task.CompletedTask;
+            }
+
+            return TestDoubles.DefaultReturn(method);
+        });
+
+        const string html = """
+            <html>
+              <head><meta property="og:title" content="DanMachi" /></head>
+              <body><h1 itemprop="name">DanMachi</h1></body>
+            </html>
+            """;
+        var httpClientFactory = TestDoubles.Proxy<IHttpClientFactory>((method, _) =>
+            method.Name == nameof(IHttpClientFactory.CreateClient)
+                ? new HttpClient(new StaticHtmlHandler(html))
+                : TestDoubles.DefaultReturn(method));
+        var client = new AnimeClickClient(httpClientFactory, NullLogger<AnimeClickClient>.Instance);
+        var queued = new List<Guid>();
+        var providerManager = TestDoubles.Proxy<IProviderManager>((method, args) =>
+        {
+            if (method.Name == nameof(IProviderManager.QueueRefresh) && args is [Guid id, ..])
+            {
+                queued.Add(id);
+            }
+
+            return TestDoubles.DefaultReturn(method);
+        });
+
+        var controller = new AnimeClickIdentifyController(
+            libraryManager,
+            providerManager,
+            client,
+            new AnimeClickHtmlParser(),
+            TestDoubles.Proxy<IFileSystem>(),
+            NullLogger<AnimeClickIdentifyController>.Instance,
+            community: null,
+            cache: temporary.Cache,
+            repairLedger: ledger);
+
+        // Status reflects the lock before unlocking
+        var statusBefore = Assert.IsType<OkObjectResult>(controller.IdentifyStatus(series.Id.ToString("N")).Result);
+        var statusDto = Assert.IsType<IdentifyStatusResponse>(statusBefore.Value);
+        Assert.True(statusDto.IsLocked);
+        Assert.Contains("Name", statusDto.LockedFields);
+
+        // Without Unlock = true, IdentifyAndRefresh returns 409 Conflict
+        var conflictResult = await controller.IdentifyAndRefresh(
+            new IdentifyAndRefreshRequest
+            {
+                ItemId = series.Id.ToString("N"),
+                AnimeClickId = "222/right",
+                Unlock = false
+            },
+            CancellationToken.None);
+        Assert.IsType<ConflictObjectResult>(conflictResult.Result);
+        Assert.True(series.IsLocked);
+
+        // With Unlock = true, IdentifyAndRefresh unlocks series + child episode, clears stale child ID, and queues refresh
+        var okResult = await controller.IdentifyAndRefresh(
+            new IdentifyAndRefreshRequest
+            {
+                ItemId = series.Id.ToString("N"),
+                AnimeClickId = "222/right",
+                Unlock = true
+            },
+            CancellationToken.None);
+        var ok = Assert.IsType<OkObjectResult>(okResult.Result);
+        var response = Assert.IsType<IdentifyAndRefreshResponse>(ok.Value);
+        Assert.True(response.Success);
+        Assert.Equal(2, response.UnlockedCount);
+        Assert.False(series.IsLocked);
+        Assert.Empty(series.LockedFields);
+        Assert.False(lockedEpisode.IsLocked);
+        Assert.Null(lockedEpisode.GetProviderId("AnimeClick"));
+        Assert.Single(queued, series.Id);
+    }
+
+    [Fact]
+    public async Task LibraryQualityRepairWithUnlockClearsOverviewLockBeforeQueueing()
+    {
+        var lockedMovie = CreateMovie(1, "Locked English", EnglishOverview, locked: true);
+        lockedMovie.LockedFields = [MetadataField.Name, MetadataField.Overview];
+        var libraryManager = TestDoubles.Proxy<ILibraryManager>((method, args) =>
+        {
+            if (method.Name == nameof(ILibraryManager.GetItemById) && args is [Guid id, ..])
+            {
+                return id == lockedMovie.Id ? lockedMovie : null;
+            }
+
+            if (method.Name == nameof(ILibraryManager.UpdateItemAsync))
+            {
+                return Task.CompletedTask;
+            }
+
+            return TestDoubles.DefaultReturn(method);
+        });
+        var queued = new List<QueuedRefresh>();
+        var scheduler = CreateScheduler(libraryManager, queued);
+        using var temporary = new TemporaryAnimeClickCache();
+        var service = new AnimeClickLibraryQualityService(
+            libraryManager,
+            scheduler,
+            CreateLedger(temporary),
+            NullLogger<AnimeClickLibraryQualityService>.Instance);
+
+        var result = await service.QueueRepairAsync(
+            [lockedMovie.Id.ToString("N")],
+            force: true,
+            CancellationToken.None,
+            unlock: true);
+
+        Assert.Equal(1, result.UnlockedCount);
+        Assert.Equal(1, result.QueuedCount);
+        Assert.False(lockedMovie.IsLocked);
+        Assert.DoesNotContain(MetadataField.Overview, lockedMovie.LockedFields);
+        Assert.Contains(MetadataField.Name, lockedMovie.LockedFields);
+        Assert.Single(queued);
+    }
+
     private sealed class StaticHtmlHandler(string html) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(

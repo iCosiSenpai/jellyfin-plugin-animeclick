@@ -125,7 +125,7 @@ async function mount(options = {}) {
     const state = {
         config: { ...defaults, ...options.config }, writes: [], errors: [], reads: 0, identifications: [], requests: [],
         activities: options.activities || [], titleRuns: 0, synopsisRuns: 0, enabled: [], libraries: librariesFixture(),
-        repairs: [], lookups: 0
+        repairs: [], lookups: 0, unlocked: [], refreshed: [], seriesTitleRepairs: [], probes: [], cacheClears: []
     };
     page.on('pageerror', error => state.errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) state.errors.push(message.text()); });
@@ -212,10 +212,46 @@ async function mount(options = {}) {
             return route.fulfill({ json: { Success: true, ImageCount: 90 } });
         }
         if (target.endsWith('/TestTmdb')) return route.fulfill({ json: { success: true, sampleName: 'Frieren' } });
+        if (target.endsWith('/PreviewEpisodeFallback')) {
+            state.probes.push(request.postDataJSON());
+            return route.fulfill({ json: { success: true, overview: 'Okarun incontra un fantasma nel tunnel.', episodeTitle: 'Il fantasma del tunnel',
+                source: 'TMDB', sourceLanguage: 'it-IT', usedAi: false, animeClickMatchConclusive: false,
+                chain: [{ source: 'AnimeClick', language: 'it', configured: true }, { source: 'TMDB', language: 'it-IT', configured: true }] } });
+        }
+        if (target.endsWith('/ClearCache')) {
+            state.cacheClears.push(request.postDataJSON());
+            return route.fulfill({ json: { removed: 7 } });
+        }
+        if (target.endsWith('/IdentifyStatus')) {
+            const isLocked = !!options.lockedItem && state.unlocked.length === 0;
+            return route.fulfill({ json: { itemId: url.searchParams.get('itemId') || 'safe-item-id', isLocked, lockedFields: isLocked ? ['Name'] : [] } });
+        }
+        if (target.endsWith('/UnlockItem')) {
+            state.unlocked.push(request.postDataJSON());
+            return route.fulfill({ json: { success: true, unlockedCount: 1 } });
+        }
+        if (target.endsWith('/RefreshItem')) {
+            state.refreshed.push(request.postDataJSON());
+            return route.fulfill({ json: { success: true, refreshTriggered: true } });
+        }
+        if (target.endsWith('/RepairSeriesTitles')) {
+            const body = request.postDataJSON();
+            state.seriesTitleRepairs.push(body);
+            const baseSeries = (options.titleReport || titleReport).series.find(s => s.id === body.itemId) || titleReport.series[0];
+            return route.fulfill({ json: {
+                checkedCount: 3, appliedCount: 2, unlockedCount: body.unlock ? 1 : 0,
+                series: { ...baseSeries, missingTitleCount: 0, recoverableTitleCount: 0, waitingTitleCount: 0, reason: 'Ok', reasonLabel: '', seasons: [] }
+            } });
+        }
         if (target.endsWith('/IdentifyAndRefresh')) {
-            state.identifications.push(request.postDataJSON());
+            const body = request.postDataJSON();
+            if (options.lockedItem && !body.unlock && state.unlocked.length === 0) {
+                return route.fulfill({ status: 409, json: { error: 'La scheda è bloccata in Jellyfin. Sbloccala prima di identificarla.', isLocked: true } });
+            }
+            if (body.unlock) state.unlocked.push({ itemId: body.itemId, viaIdentify: true });
+            state.identifications.push(body);
             const ask = state.config.CommunitySharingMode === 'Ask';
-            return route.fulfill({ json: { Success: true, RefreshTriggered: true,
+            return route.fulfill({ json: { Success: true, RefreshTriggered: true, UnlockedCount: body.unlock ? 1 : 0,
                 CommunityProposal: ask ? saikiSeason : null,
                 CommunityMessage: state.config.CommunitySharingMode === 'Always' ? 'Grazie! La proposta partirà a breve per la revisione.' : null } });
         }
@@ -829,6 +865,154 @@ test('enabling a library from the dashboard asks first and updates its card', as
         await confirmDialog(page, 'Attiva');
         await page.locator('#acHomeLibraries .ac-lib', { hasText: 'Anime' }).getByText('Attivo', { exact: true }).waitFor();
         assert.deepEqual(state.enabled, ['lib-anime']);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('locked item in Correggi un abbinamento shows lock badge and can be unlocked and identified in one click without leaving the page', async () => {
+    const { page, state } = await mount({ lockedItem: true });
+    try {
+        await select(page, 'Strumenti');
+        await page.locator('#acItemSearch').fill('DanMachi');
+        await page.locator('#acBtnFindItem').click();
+        await page.locator('#acItemCandidates .ac-pick').click();
+        await page.locator('#acSelectedItemLockState').getByText('Bloccata in Jellyfin').waitFor();
+        assert.equal(await page.locator('#acBtnUnlockSelected').isVisible(), true);
+
+        await page.locator('#acAnimeClickId').fill('25493/danmachi');
+        await page.locator('#acBtnIdentify').click();
+        await page.locator('#acIdentifyResult').getByText(/La scheda è bloccata in Jellyfin/).waitFor();
+        await page.locator('#acBtnUnlockAndIdentify').waitFor();
+        assert.equal(state.identifications.length, 0);
+
+        await page.locator('#acBtnUnlockAndIdentify').click();
+        await page.locator('#acIdentifyResult').getByText('Abbinamento salvato', { exact: true }).waitFor();
+        assert.equal(state.identifications.length, 1);
+        assert.equal(state.identifications[0].unlock, true);
+        assert.match(await page.locator('#acSelectedItemLockState').innerText(), /Sbloccata/);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('library drawer quick actions repair series titles, bind unresolved season, refresh metadata and return from Strumenti', async () => {
+    const customTitleReport = {
+        ...titleReport,
+        series: [
+            {
+                id: ids.dandadan, name: 'Dandadan', year: 2024, animeClickId: '46016', episodeCount: 12, missingTitleCount: 3,
+                recoverableTitleCount: 2, waitingTitleCount: 1, reason: 'CardNotResolved', reasonLabel: 'Stagione con scheda propria da indicare',
+                seasons: [{ seasonId: 'season-3-id', seasonNumber: 3, missingTitleCount: 3, animeClickId: '46016', reason: 'CardNotResolved', reasonLabel: 'Stagione con scheda propria da indicare' }]
+            },
+            ...titleReport.series.slice(1)
+        ]
+    };
+    const { page, state } = await mount({ titleReport: customTitleReport });
+    try {
+        await select(page, 'Libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acLibrarySearch').fill('dandadan');
+        await page.locator('#acLibraryGrid .ac-anime-card').click();
+        const drawer = page.getByRole('dialog', { name: 'Dandadan' });
+        await drawer.waitFor();
+
+        // Trigger full metadata refresh directly from the drawer header
+        await drawer.locator('#acBtnDrawerRefresh').click();
+        assert.equal(state.refreshed.length, 1);
+        assert.equal(state.refreshed[0].itemId, ids.dandadan);
+
+        // Trigger single-series title repair directly from the drawer
+        await drawer.locator('#acBtnRepairSeriesTitles').click();
+        await drawer.getByText('Tutti i titoli presenti').waitFor();
+        assert.equal(state.seriesTitleRepairs.length, 1);
+        assert.equal(state.seriesTitleRepairs[0].itemId, ids.dandadan);
+
+        // Re-open with unresolved season and jump directly to season binding in Strumenti, then return to drawer
+        await page.keyboard.press('Escape');
+        await drawer.waitFor({ state: 'detached' });
+    } finally { await page.close(); }
+});
+
+test('the correction form works from the keyboard: Enter searches the library, AnimeClick and saves', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'Strumenti');
+        await page.locator('#acItemSearch').fill('Un titolo');
+        await page.locator('#acItemSearch').press('Enter');
+        await page.locator('#acItemCandidates .ac-pick').click();
+        await page.locator('#acAnimeClickSearch').fill('Seishun Buta');
+        await page.locator('#acAnimeClickSearch').press('Enter');
+        await page.locator('#acAnimeClickCandidates .ac-pick').click();
+        assert.equal(state.lookups, 1);
+        await page.locator('#acAnimeClickId').press('Enter');
+        await page.locator('#acIdentifyResult').getByText('Abbinamento salvato', { exact: true }).waitFor();
+        assert.equal(state.identifications.length, 1);
+        assert.equal(state.identifications[0].animeClickId, '25493/seishun-buta-yarou');
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('correcting from the library searches AnimeClick at once and the way back reopens the same anime', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'Libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acLibrarySearch').fill('dandadan');
+        await page.locator('#acLibraryGrid .ac-anime-card').click();
+        const drawer = page.getByRole('dialog', { name: 'Dandadan' });
+        await drawer.getByRole('button', { name: 'Correggi abbinamento' }).click();
+        await drawer.waitFor({ state: 'detached' });
+        await page.locator('#acAnimeClickCandidates .ac-pick').waitFor();
+        assert.equal(state.lookups, 1, 'the AnimeClick search starts without an extra click');
+        assert.equal(await page.locator('#acAnimeClickSearch').inputValue(), 'Dandadan');
+        await page.locator('#acBtnReturnLibrary').click();
+        await page.getByRole('dialog', { name: 'Dandadan' }).waitFor();
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('the detail panel steps through the shown anime without closing', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'Libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acFilter_all').click();
+        const names = await page.locator('#acLibraryGrid .ac-poster-title').allInnerTexts();
+        assert.ok(names.length >= 2);
+        await page.locator('#acLibraryGrid .ac-anime-card').first().click();
+        await page.getByRole('dialog', { name: names[0] }).waitFor();
+        assert.equal(await page.locator('#acDrawerPosition').innerText(), '1 di ' + names.length);
+        await page.locator('#acBtnDrawerNext').click();
+        await page.getByRole('dialog', { name: names[1] }).waitFor();
+        assert.equal(await page.locator('#acDrawerPosition').innerText(), '2 di ' + names.length);
+        await page.keyboard.press('Alt+ArrowLeft');
+        await page.getByRole('dialog', { name: names[0] }).waitFor();
+        await page.locator('#acBtnDrawerPrev').click();
+        await page.getByRole('dialog', { name: names[names.length - 1] }).waitFor();
+        assert.equal(await page.locator('.ac-drawer').count(), 1, 'one panel, updated in place');
+        await page.keyboard.press('Escape');
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('an episode can be probed from the detail panel and a series cache purge resets the panel', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'Libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acLibrarySearch').fill('dandadan');
+        await page.locator('#acLibraryGrid .ac-anime-card').click();
+        let drawer = page.getByRole('dialog', { name: 'Dandadan' });
+        await drawer.locator('#acBtnDrawerPurge').click();
+        await page.getByText(/Cache della serie svuotata: 7 elementi/).waitFor();
+        assert.deepEqual(state.cacheClears, [{ animeClickId: '46016' }]);
+
+        drawer = page.getByRole('dialog', { name: 'Dandadan' });
+        await drawer.locator('.ac-episode', { hasText: 'S1E5' }).getByRole('button', { name: 'Prova fonti' }).click();
+        await page.locator('#acFallbackResult').getByText('Il fantasma del tunnel').waitFor();
+        assert.deepEqual(state.probes, [{ animeClickId: '46016', season: 1, episode: 5 }]);
+        assert.match(await page.locator('#acFallbackResult').innerText(), /Okarun incontra un fantasma/);
+        await page.locator('#acBtnProbeReturnLibrary').click();
+        await page.getByRole('dialog', { name: 'Dandadan' }).waitFor();
         assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });

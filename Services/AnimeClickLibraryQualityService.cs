@@ -63,10 +63,55 @@ public sealed class AnimeClickLibraryQualityService
     public async Task<AnimeClickLibraryQualityRepairResult> QueueRepairAsync(
         IEnumerable<string>? itemIds,
         bool force,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool unlock = false)
     {
         await _repairLedger.EnsureLoadedAsync(cancellationToken).ConfigureAwait(false);
-        return QueueRepair(itemIds, force);
+        var unlockedCount = 0;
+        if (unlock)
+        {
+            unlockedCount = await UnlockOverviewItemsAsync(itemIds, cancellationToken).ConfigureAwait(false);
+        }
+
+        var result = QueueRepair(itemIds, force);
+        result.UnlockedCount = unlockedCount;
+        return result;
+    }
+
+    private async Task<int> UnlockOverviewItemsAsync(
+        IEnumerable<string>? itemIds,
+        CancellationToken cancellationToken)
+    {
+        var unlocked = 0;
+        var requested = (itemIds ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaximumRepairItems);
+        foreach (var value in requested)
+        {
+            if (!Guid.TryParse(value, out var id)
+                || _libraryManager.GetItemById(id) is not BaseItem item
+                || !BelongsToAnimeClick(item))
+            {
+                continue;
+            }
+
+            var lockedFields = item.LockedFields ?? [];
+            if (!item.IsLocked && !lockedFields.Contains(MetadataField.Overview))
+            {
+                continue;
+            }
+
+            item.IsLocked = false;
+            item.LockedFields = lockedFields.Where(field => field != MetadataField.Overview).ToArray();
+            await _libraryManager
+                .UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken)
+                .ConfigureAwait(false);
+            _repairLedger.Forget(item.Id);
+            unlocked++;
+        }
+
+        return unlocked;
     }
 
     public AnimeClickLibraryQualityReport Audit()
@@ -514,6 +559,7 @@ public sealed class AnimeClickLibraryQualityRepairResult
     public int SuppressedCount { get; set; }
 
     public bool Forced { get; set; }
+    public int UnlockedCount { get; set; }
     public int MaximumItems { get; set; }
     public bool Truncated { get; set; }
 }

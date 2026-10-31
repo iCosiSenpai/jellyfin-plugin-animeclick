@@ -173,6 +173,31 @@ public class AnimeClickMajorReleaseTests
     }
 
     [Fact]
+    public async Task ClearingTheLedgerMakesEverySuppressedItemEligibleAgainAndPersists()
+    {
+        using var temporary = new TemporaryAnimeClickCache();
+        var configuration = new PluginConfiguration();
+        using var ledger = new AnimeClickRepairLedger(temporary.Cache,
+            NullLogger<AnimeClickRepairLedger>.Instance, () => configuration);
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        ledger.Record(first, AnimeClickRepairOutcome.NoSource, "none");
+        ledger.Record(second, AnimeClickRepairOutcome.WaitingTranslation, "queued");
+        Assert.True(ledger.IsSuppressed(first, DateTimeOffset.UtcNow, out _));
+
+        ledger.Clear();
+
+        Assert.Equal(0, ledger.Count);
+        Assert.False(ledger.IsSuppressed(first, DateTimeOffset.UtcNow, out _));
+        Assert.False(ledger.IsSuppressed(second, DateTimeOffset.UtcNow, out _));
+        await ledger.FlushAsync(CancellationToken.None);
+        using var reloaded = new AnimeClickRepairLedger(temporary.Cache,
+            NullLogger<AnimeClickRepairLedger>.Instance, () => configuration);
+        await reloaded.EnsureLoadedAsync(CancellationToken.None);
+        Assert.Equal(0, reloaded.Count);
+    }
+
+    [Fact]
     public void FreshConfigurationDoesNotInventAnAiProfileAndMigrationIsIdempotent()
     {
         var configuration = new PluginConfiguration();

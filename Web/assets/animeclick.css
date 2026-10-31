@@ -1812,6 +1812,16 @@ button.ac-number:hover {
     overflow-y: auto;
 }
 
+.ac-drawer-nav {
+    justify-content: space-between;
+    padding: 8px 0 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ac-drawer-nav .ac-muted {
+    font-variant-numeric: tabular-nums;
+}
+
 .ac-seasons {
     display: flex;
     flex-wrap: wrap;
@@ -2047,6 +2057,7 @@ button.ac-number:hover {
 
 .ac-selected {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     padding: 10px 12px;
@@ -2065,6 +2076,10 @@ button.ac-number:hover {
 .ac-selected > div {
     min-width: 0;
     flex: 1 1 auto;
+}
+
+.ac-selected > #acItemSeasonField {
+    flex: 1 1 100%;
 }
 
 .ac-step-title {

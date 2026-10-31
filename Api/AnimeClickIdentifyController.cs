@@ -78,8 +78,8 @@ public class AnimeClickIdentifyController : ControllerBase
         if (item is null) return NotFound(new { error = "L’elemento non è più presente nella libreria." });
         if (item is not (Movie or Series or Season))
             return BadRequest(new { error = "Seleziona un film, una serie o una stagione. Gli episodi usano l’identità della serie." });
-        if (item.IsLocked)
-            return Conflict(new { error = "La scheda è bloccata in Jellyfin. Sbloccala prima di identificarla." });
+        if (item.IsLocked && !request.Unlock)
+            return Conflict(new { error = "La scheda è bloccata in Jellyfin. Sbloccala prima di identificarla.", isLocked = true });
         var previousId = item.GetProviderId(ProviderKey);
 
         // No mutation until AnimeClick confirms a real detail page. HTTP 200 alone can be an ad.
@@ -106,9 +106,14 @@ public class AnimeClickIdentifyController : ControllerBase
         // The item may have been locked while the network request was in flight.
         item = _libraryManager.GetItemById(itemId);
         if (item is null) return NotFound();
-        if (item.IsLocked) return Conflict(new { error = "La scheda è stata bloccata durante la verifica." });
+        if (item.IsLocked && !request.Unlock) return Conflict(new { error = "La scheda è stata bloccata durante la verifica.", isLocked = true });
         if (!string.Equals(previousId, item.GetProviderId(ProviderKey), StringComparison.Ordinal))
             return Conflict(new { error = "L’abbinamento è cambiato durante la verifica. Ricarica la scheda e riprova." });
+        var unlockedCount = 0;
+        if (request.Unlock)
+        {
+            unlockedCount = await UnlockItemAndDescendantsAsync(item, includeChildren: true, specificField: null, cancellationToken).ConfigureAwait(false);
+        }
         item.SetProviderId(ProviderKey, animeClickId);
         await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
         await ResetStaleDescendantsAndLedgerAsync(item, previousId, animeClickId, cancellationToken).ConfigureAwait(false);
@@ -139,14 +144,16 @@ public class AnimeClickIdentifyController : ControllerBase
             return Ok(new IdentifyAndRefreshResponse
             {
                 ItemId = item.Id.ToString(), AnimeClickId = animeClickId, PreviousAnimeClickId = previousId,
+                UnlockedCount = unlockedCount,
                 CommunityMessage = communityMessage, CommunityProposal = communityProposal,
-                Error = "L’abbinamento è salvato, ma l’aggiornamento non è partito. Usa «Aggiorna metadati» nella scheda Jellyfin."
+                Error = "L’abbinamento è salvato, ma l’aggiornamento non è partito. Usa «Aggiorna metadati» qui sotto."
             });
         }
         return Ok(new IdentifyAndRefreshResponse
         {
             Success = true, ItemId = item.Id.ToString(), Name = item.Name, AnimeClickId = animeClickId,
             PreviousAnimeClickId = previousId, RefreshTriggered = true, ReplaceAllImages = request.ReplaceAllImages,
+            UnlockedCount = unlockedCount,
             CommunityMessage = communityMessage,
             CommunityProposal = communityProposal
         });
@@ -154,8 +161,7 @@ public class AnimeClickIdentifyController : ControllerBase
 
     /// <summary>
     /// Diagnostic helper: returns whether the item currently has an
-    /// AnimeClick provider ID. Useful for the "Identify &amp; Refresh"
-    /// button in the plugin config page.
+    /// AnimeClick provider ID and whether its metadata is locked in Jellyfin.
     /// </summary>
     [HttpGet("IdentifyStatus")]
     public ActionResult<IdentifyStatusResponse> IdentifyStatus(
@@ -179,7 +185,132 @@ public class AnimeClickIdentifyController : ControllerBase
             Name = item.Name,
             TypeName = item.GetType().Name,
             AnimeClickId = id,
-            HasAnimeClickId = !string.IsNullOrWhiteSpace(id)
+            HasAnimeClickId = !string.IsNullOrWhiteSpace(id),
+            IsLocked = item.IsLocked,
+            LockedFields = item.LockedFields?.Select(field => field.ToString()).ToList() ?? []
+        });
+    }
+
+    /// <summary>
+    /// Unlocks a Jellyfin item (and optionally its child seasons/episodes) directly from the plugin
+    /// so the administrator does not have to leave the current page.
+    /// </summary>
+    [HttpPost("UnlockItem")]
+    public async Task<ActionResult<UnlockItemResponse>> UnlockItem(
+        [FromBody] UnlockItemRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null || !Guid.TryParse(request.ItemId, out var itemId))
+        {
+            return BadRequest(new { error = "Seleziona un elemento Jellyfin valido." });
+        }
+
+        var item = _libraryManager.GetItemById(itemId);
+        if (item is null)
+        {
+            return NotFound(new { error = "L’elemento non è più presente nella libreria." });
+        }
+
+        MetadataField? specificField = null;
+        if (!string.IsNullOrWhiteSpace(request.Field)
+            && Enum.TryParse<MetadataField>(request.Field, ignoreCase: true, out var parsedField))
+        {
+            specificField = parsedField;
+        }
+
+        var unlocked = await UnlockItemAndDescendantsAsync(
+            item,
+            request.IncludeChildren,
+            specificField,
+            cancellationToken).ConfigureAwait(false);
+
+        return Ok(new UnlockItemResponse
+        {
+            Success = true,
+            ItemId = item.Id.ToString(),
+            UnlockedCount = unlocked
+        });
+    }
+
+    /// <summary>
+    /// Triggers a full Jellyfin metadata refresh for one item directly from the plugin UI.
+    /// </summary>
+    [HttpPost("RefreshItem")]
+    public async Task<ActionResult<RefreshItemResponse>> RefreshItem(
+        [FromBody] RefreshItemRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null || !Guid.TryParse(request.ItemId, out var itemId))
+        {
+            return BadRequest(new { error = "Seleziona un elemento Jellyfin valido." });
+        }
+
+        var item = _libraryManager.GetItemById(itemId);
+        if (item is null)
+        {
+            return NotFound(new { error = "L’elemento non è più presente nella libreria." });
+        }
+
+        var unlocked = 0;
+        if (request.Unlock)
+        {
+            unlocked = await UnlockItemAndDescendantsAsync(
+                item,
+                includeChildren: true,
+                specificField: null,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        _repairLedger?.Forget(item.Id);
+        if (item is Series or Season)
+        {
+            try
+            {
+                var childTypes = item is Series
+                    ? new[] { BaseItemKind.Season, BaseItemKind.Episode }
+                    : new[] { BaseItemKind.Episode };
+                var children = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = childTypes,
+                    Recursive = true,
+                    ParentId = item.Id,
+                    IsVirtualItem = false
+                });
+                if (children is { Count: > 0 })
+                {
+                    _repairLedger?.Forget(children.Select(c => c.Id));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "AnimeClick: unable to clear descendant repair ledger for {ItemId}", item.Id);
+            }
+        }
+
+        var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
+        {
+            MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
+            ImageRefreshMode = request.ReplaceAllImages ? MetadataRefreshMode.FullRefresh : MetadataRefreshMode.Default,
+            ReplaceAllMetadata = request.ReplaceAllMetadata,
+            ReplaceAllImages = request.ReplaceAllImages,
+            ForceSave = true
+        };
+        try
+        {
+            _providerManager.QueueRefresh(item.Id, options, RefreshPriority.High);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AnimeClick refresh could not be queued for {ItemId}", item.Id);
+            return StatusCode(500, new { error = "Impossibile accodare l’aggiornamento dei metadati in Jellyfin." });
+        }
+
+        return Ok(new RefreshItemResponse
+        {
+            Success = true,
+            ItemId = item.Id.ToString(),
+            RefreshTriggered = true,
+            UnlockedCount = unlocked
         });
     }
 
@@ -295,6 +426,85 @@ public class AnimeClickIdentifyController : ControllerBase
         }
     }
 
+    private async Task<int> UnlockItemAndDescendantsAsync(
+        BaseItem item,
+        bool includeChildren,
+        MetadataField? specificField,
+        CancellationToken cancellationToken)
+    {
+        var unlocked = 0;
+        if (await TryUnlockSingleItemAsync(item, specificField, cancellationToken).ConfigureAwait(false))
+        {
+            unlocked++;
+        }
+
+        if (!includeChildren || item is not (Series or Season))
+        {
+            return unlocked;
+        }
+
+        try
+        {
+            var childTypes = item is Series
+                ? new[] { BaseItemKind.Season, BaseItemKind.Episode }
+                : new[] { BaseItemKind.Episode };
+            var children = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = childTypes,
+                Recursive = true,
+                ParentId = item.Id,
+                IsVirtualItem = false
+            });
+            if (children is null || children.Count == 0)
+            {
+                return unlocked;
+            }
+
+            foreach (var child in children)
+            {
+                if (await TryUnlockSingleItemAsync(child, specificField, cancellationToken).ConfigureAwait(false))
+                {
+                    unlocked++;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "AnimeClick: unable to unlock descendant items for {ItemId}", item.Id);
+        }
+
+        return unlocked;
+    }
+
+    private async Task<bool> TryUnlockSingleItemAsync(
+        BaseItem target,
+        MetadataField? specificField,
+        CancellationToken cancellationToken)
+    {
+        var lockedFields = target.LockedFields ?? [];
+        var hasLockedField = specificField.HasValue
+            ? lockedFields.Contains(specificField.Value)
+            : lockedFields.Length > 0;
+        if (!target.IsLocked && !hasLockedField)
+        {
+            return false;
+        }
+
+        target.IsLocked = false;
+        target.LockedFields = specificField.HasValue
+            ? lockedFields.Where(field => field != specificField.Value).ToArray()
+            : [];
+        await _libraryManager
+            .UpdateItemAsync(target, target.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken)
+            .ConfigureAwait(false);
+        _repairLedger?.Forget(target.Id);
+        return true;
+    }
+
     private static ImageType? ParseImageType(string s)
     {
         if (Enum.TryParse<ImageType>(s, ignoreCase: true, out var t))
@@ -316,6 +526,12 @@ public sealed class IdentifyAndRefreshRequest
     /// never deletes artwork or overrides the administrator's image provider order.
     /// </summary>
     public bool ReplaceAllImages { get; set; } = false;
+
+    /// <summary>
+    /// Unlocks the target item (and locked child seasons/episodes) before saving the AnimeClick ID
+    /// and queueing the refresh.
+    /// </summary>
+    public bool Unlock { get; set; } = false;
 }
 
 public sealed class IdentifyAndRefreshResponse
@@ -332,6 +548,7 @@ public sealed class IdentifyAndRefreshResponse
     public string? PreviousAnimeClickId { get; set; }
     public bool RefreshTriggered { get; set; }
     public bool ReplaceAllImages { get; set; }
+    public int UnlockedCount { get; set; }
     public int DeletedImages { get; set; }
     public List<string> DownloadedImages { get; set; } = new();
     public string? Error { get; set; }
@@ -344,6 +561,38 @@ public sealed class IdentifyStatusResponse
     public string TypeName { get; set; } = string.Empty;
     public string? AnimeClickId { get; set; }
     public bool HasAnimeClickId { get; set; }
+    public bool IsLocked { get; set; }
+    public List<string> LockedFields { get; set; } = [];
+}
+
+public sealed class UnlockItemRequest
+{
+    public string ItemId { get; set; } = string.Empty;
+    public bool IncludeChildren { get; set; } = true;
+    public string? Field { get; set; }
+}
+
+public sealed class UnlockItemResponse
+{
+    public bool Success { get; set; }
+    public string ItemId { get; set; } = string.Empty;
+    public int UnlockedCount { get; set; }
+}
+
+public sealed class RefreshItemRequest
+{
+    public string ItemId { get; set; } = string.Empty;
+    public bool ReplaceAllMetadata { get; set; } = false;
+    public bool ReplaceAllImages { get; set; } = false;
+    public bool Unlock { get; set; } = false;
+}
+
+public sealed class RefreshItemResponse
+{
+    public bool Success { get; set; }
+    public string ItemId { get; set; } = string.Empty;
+    public bool RefreshTriggered { get; set; }
+    public int UnlockedCount { get; set; }
 }
 
 public sealed class RemoteImagesResponse

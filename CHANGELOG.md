@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.2.0
+
+Azioni rapide senza uscire dalla pagina del plugin: sblocco e identificazione in un solo clic per le schede bloccate in Jellyfin, riparazione dei titoli e completamento/sblocco delle trame direttamente dal pannello di dettaglio della serie o sul singolo episodio, abbinamento diretto della stagione con scheda propria, navigazione «Precedente» / «Successivo» tra gli anime nel pannello laterale, ricerca automatica su AnimeClick all'apertura dalla Libreria, supporto del tasto Invio nei campi di ricerca, prova diretta delle fonti episodio con titolo AnimeClick e azzeramento delle soppressioni del registro di riparazione allo svuotamento della cache.
+
+- [Note complete](docs/releases/1.6.2.0.md)
+- [Audit e verifiche](docs/AUDIT-1.6.2.md)
+
 ## 1.6.1.0
 
 Rifinitura completa del motore di ricerca e abbinamento, del backend e dell'interfaccia: guardia sull'anno nei sequel per stagione, conservazione dell'ID stagione e separazione della trama serie/stagione nei refresh, pulizia degli ID figli obsoleti e cache immediata quando si corregge un abbinamento, refresh post-traduzione AI anche per le serie, cache delle sottopagine personaggi/relazioni vuote, allineamento tra analisi singola e completa della libreria, protezione lato server della chiave AI al cambio di destinazione e miglioramenti di accessibilità e reattività nella pagina del plugin. README rinnovato.

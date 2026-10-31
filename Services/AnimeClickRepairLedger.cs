@@ -257,6 +257,23 @@ public sealed class AnimeClickRepairLedger : IDisposable
     }
 
     /// <summary>
+    /// Clears all recorded repair verdicts when the entire cache is purged.
+    /// </summary>
+    public void Clear()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        if (!_entries.IsEmpty)
+        {
+            _entries.Clear();
+            ScheduleFlush();
+        }
+    }
+
+    /// <summary>
     /// True when the last attempt tells the audit not to offer this item again yet.
     /// </summary>
     public bool IsSuppressed(Guid itemId, DateTimeOffset now, out AnimeClickRepairAttempt attempt)

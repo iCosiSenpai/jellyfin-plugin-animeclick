@@ -44,6 +44,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
     private readonly ILogger<AnimeClickDiagnosticsController> _logger;
     private readonly AnimeClickFanartClient? _fanart;
     private readonly AnimeClickAniListMetadata? _aniList;
+    private readonly AnimeClickRepairLedger? _repairLedger;
 
     public AnimeClickDiagnosticsController(
         AnimeClickSeriesSearchProvider searchProvider,
@@ -62,7 +63,8 @@ public class AnimeClickDiagnosticsController : ControllerBase
         ILogger<AnimeClickDiagnosticsController> logger,
         AnimeClickActivityService? activities = null,
         AnimeClickFanartClient? fanart = null,
-        AnimeClickAniListMetadata? aniList = null)
+        AnimeClickAniListMetadata? aniList = null,
+        AnimeClickRepairLedger? repairLedger = null)
     {
         _searchProvider = searchProvider;
         _episodeListLoader = episodeListLoader;
@@ -81,6 +83,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         _logger = logger;
         _fanart = fanart;
         _aniList = aniList;
+        _repairLedger = repairLedger;
     }
 
     [HttpGet("TestLookup")]
@@ -340,6 +343,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 reasons.AddRange(seasonReasons);
                 row.Seasons.Add(new LibraryAuditSeasonItem
                 {
+                    SeasonId = seasonId != Guid.Empty ? seasonId.ToString("N", CultureInfo.InvariantCulture) : string.Empty,
                     SeasonNumber = seasonNumber,
                     MissingTitleCount = seasonReasons.Count,
                     AnimeClickId = cardId,
@@ -451,7 +455,8 @@ public class AnimeClickDiagnosticsController : ControllerBase
             // a season is usually a card of its own, and reporting "no match" against the wrong card
             // would blame the plugin for a season it never looked at.
             var seasonNumber = seasonGroup.Key;
-            var storedSeasonId = _libraryManager.GetItemById(seasonEpisodes[0].SeasonId) is Season season
+            var seasonEntityId = seasonEpisodes[0].SeasonId;
+            var storedSeasonId = _libraryManager.GetItemById(seasonEntityId) is Season season
                 ? season.GetProviderId("AnimeClick")
                 : null;
             var layout = _layoutResolver.Resolve(seasonEpisodes[0].Path);
@@ -516,6 +521,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
             reasons.AddRange(seasonReasons);
             result.Seasons.Add(new LibraryAuditSeasonItem
             {
+                SeasonId = seasonEntityId != Guid.Empty ? seasonEntityId.ToString("N", CultureInfo.InvariantCulture) : string.Empty,
                 SeasonNumber = seasonNumber,
                 MissingTitleCount = seasonReasons.Count,
                 AnimeClickId = cardId,
@@ -617,7 +623,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         }
 
         return Ok(await _qualityService
-            .QueueRepairAsync(request.ItemIds, request.Force, cancellationToken)
+            .QueueRepairAsync(request.ItemIds, request.Force, cancellationToken, request.Unlock)
             .ConfigureAwait(false));
     }
 
@@ -630,6 +636,134 @@ public class AnimeClickDiagnosticsController : ControllerBase
         /// batch would keep being spent on the same unfixable items.
         /// </summary>
         public bool Force { get; set; }
+
+        /// <summary>
+        /// Unlocks the Overview field (and full-item lock) on the requested items before queueing
+        /// their non-destructive synopsis refresh.
+        /// </summary>
+        public bool Unlock { get; set; }
+    }
+
+    /// <summary>
+    /// Repairs missing or English episode titles for a single series directly from the library
+    /// detail drawer, optionally unlocking name-locked episodes first, and returns the updated
+    /// single-series audit row.
+    /// </summary>
+    [HttpPost("RepairSeriesTitles")]
+    public async Task<ActionResult<RepairSeriesTitlesResponse>> RepairSeriesTitles(
+        [FromBody] RepairSeriesTitlesRequest request,
+        [FromServices] AnimeClickTitleRepairService repair,
+        CancellationToken cancellationToken)
+    {
+        if (request is null || !Guid.TryParse(request.ItemId, out var itemId))
+        {
+            return BadRequest(new { error = "itemId is required" });
+        }
+
+        if (_libraryManager.GetItemById(itemId) is not Series series)
+        {
+            return NotFound(new { error = "series not found" });
+        }
+
+        var episodes = _libraryManager
+            .GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Episode],
+                Recursive = true,
+                ParentId = series.Id,
+                IsVirtualItem = false
+            })
+            .OfType<Episode>()
+            .OrderBy(episode => episode.ParentIndexNumber ?? int.MaxValue)
+            .ThenBy(episode => episode.IndexNumber ?? int.MaxValue)
+            .ToList();
+
+        var unlockedCount = 0;
+        if (request.Unlock)
+        {
+            if (await TryUnlockNameAsync(series, cancellationToken).ConfigureAwait(false))
+            {
+                unlockedCount++;
+            }
+
+            var unlockedSeasons = new HashSet<Guid>();
+            foreach (var episode in episodes)
+            {
+                if (episode.Season is { } parentSeason
+                    && unlockedSeasons.Add(parentSeason.Id)
+                    && await TryUnlockNameAsync(parentSeason, cancellationToken).ConfigureAwait(false))
+                {
+                    unlockedCount++;
+                }
+
+                if (await TryUnlockNameAsync(episode, cancellationToken).ConfigureAwait(false))
+                {
+                    unlockedCount++;
+                }
+            }
+        }
+
+        var session = new AnimeClickTitleRepairSession();
+        var checkedCount = 0;
+        var appliedCount = 0;
+        foreach (var episode in episodes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode)
+                || !AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode))
+            {
+                continue;
+            }
+
+            checkedCount++;
+            if (await repair.RepairAsync(episode, session, cancellationToken).ConfigureAwait(false))
+            {
+                appliedCount++;
+            }
+        }
+
+        var auditAction = await LibraryAuditSeries(
+            new LibraryAuditSeriesRequest { ItemId = series.Id.ToString("N", CultureInfo.InvariantCulture) },
+            cancellationToken).ConfigureAwait(false);
+        var updatedSeries = (auditAction.Result as OkObjectResult)?.Value as LibraryAuditSeriesItem ?? auditAction.Value;
+
+        return Ok(new RepairSeriesTitlesResponse
+        {
+            CheckedCount = checkedCount,
+            AppliedCount = appliedCount,
+            UnlockedCount = unlockedCount,
+            Series = updatedSeries
+        });
+    }
+
+    private async Task<bool> TryUnlockNameAsync(BaseItem target, CancellationToken cancellationToken)
+    {
+        var lockedFields = target.LockedFields ?? [];
+        if (!target.IsLocked && !lockedFields.Contains(MetadataField.Name))
+        {
+            return false;
+        }
+
+        target.IsLocked = false;
+        target.LockedFields = lockedFields.Where(field => field != MetadataField.Name).ToArray();
+        await _libraryManager
+            .UpdateItemAsync(target, target.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken)
+            .ConfigureAwait(false);
+        return true;
+    }
+
+    public sealed class RepairSeriesTitlesRequest
+    {
+        public string ItemId { get; set; } = string.Empty;
+        public bool Unlock { get; set; }
+    }
+
+    public sealed class RepairSeriesTitlesResponse
+    {
+        public int CheckedCount { get; set; }
+        public int AppliedCount { get; set; }
+        public int UnlockedCount { get; set; }
+        public LibraryAuditSeriesItem? Series { get; set; }
     }
 
     /// <summary>
@@ -886,6 +1020,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
         if (!hasKey && !hasPrefix && !hasAnimeClickId)
         {
+            _repairLedger?.Clear();
             return Ok(new ClearCacheResponse { Removed = _cache.ClearAll() });
         }
 
@@ -987,9 +1122,70 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 var numericAnimePrefix = canonicalAnimeUrl[..(lastSlash + 1)];
                 removed += _cache.ClearByPrefix("anime::" + numericAnimePrefix);
             }
+
+            ForgetLedgerForCard(stableAnimeClickId);
         }
 
         return Ok(new ClearCacheResponse { Removed = removed });
+    }
+
+    private void ForgetLedgerForCard(string stableAnimeClickId)
+    {
+        if (_repairLedger is null || string.IsNullOrWhiteSpace(stableAnimeClickId))
+        {
+            return;
+        }
+
+        static bool MatchesCard(string? providerId, string stableId)
+            => !string.IsNullOrWhiteSpace(providerId)
+                && (string.Equals(providerId, stableId, StringComparison.OrdinalIgnoreCase)
+                    || providerId.StartsWith(stableId + "/", StringComparison.OrdinalIgnoreCase)
+                    || providerId.StartsWith(stableId + "-", StringComparison.OrdinalIgnoreCase));
+
+        var matchingSeriesIds = _libraryManager
+            .GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Series, BaseItemKind.Movie],
+                Recursive = true,
+                IsVirtualItem = false
+            })
+            .Where(item => MatchesCard(item.GetProviderId("AnimeClick"), stableAnimeClickId))
+            .Select(item => item.Id)
+            .ToHashSet();
+
+        foreach (var season in _libraryManager
+                     .GetItemList(new InternalItemsQuery
+                     {
+                         IncludeItemTypes = [BaseItemKind.Season],
+                         Recursive = true,
+                         IsVirtualItem = false
+                     })
+                     .OfType<Season>())
+        {
+            if (MatchesCard(season.GetProviderId("AnimeClick"), stableAnimeClickId) && season.SeriesId != Guid.Empty)
+            {
+                matchingSeriesIds.Add(season.SeriesId);
+            }
+        }
+
+        if (matchingSeriesIds.Count == 0)
+        {
+            return;
+        }
+
+        _repairLedger.Forget(matchingSeriesIds);
+        var episodeIds = _libraryManager
+            .GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = [BaseItemKind.Episode],
+                AncestorIds = matchingSeriesIds.ToArray(),
+                Recursive = true,
+                IsVirtualItem = false
+            })
+            .OfType<Episode>()
+            .Where(episode => matchingSeriesIds.Contains(episode.SeriesId))
+            .Select(episode => episode.Id);
+        _repairLedger.Forget(episodeIds);
     }
 
     /// <summary>
@@ -1282,6 +1478,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         {
             Success = fallback is not null,
             Overview = fallback?.Value,
+            EpisodeTitle = AnimeClickMetadataText.Title(animeClickMatch?.Episode?.Title),
             Source = fallback?.Source,
             SourceLanguage = fallback?.SourceLanguage,
             UsedAi = fallback?.UsedAi ?? false,
@@ -1659,6 +1856,7 @@ public sealed class EpisodeFallbackPreviewResponse
 {
     public bool Success { get; set; }
     public string? Overview { get; set; }
+    public string? EpisodeTitle { get; set; }
     public string? Source { get; set; }
     public string? SourceLanguage { get; set; }
     public bool UsedAi { get; set; }
@@ -1778,6 +1976,8 @@ public sealed class LibraryAuditSeriesItem
 
 public sealed class LibraryAuditSeasonItem
 {
+    public string SeasonId { get; set; } = string.Empty;
+
     public int? SeasonNumber { get; set; }
 
     public int MissingTitleCount { get; set; }
