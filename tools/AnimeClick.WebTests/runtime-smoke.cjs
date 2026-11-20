@@ -58,7 +58,7 @@ async function main() {
     const plugins = await call('/Plugins');
     const plugin = plugins.find(p => p.Id?.replaceAll('-', '').toLowerCase() === pluginId.replaceAll('-', ''));
     assert.ok(plugin, 'Plugin is absent: ' + JSON.stringify(plugins));
-    assert.equal(plugin?.Version, '1.6.2.0');
+    assert.equal(plugin?.Version, '1.7.0.0');
     assert.equal(plugin.Status, 'Active');
     const configPage = (await call('/web/ConfigurationPages')).find(page => page.Name === 'AnimeClick Plugin');
     assert.equal(configPage?.EnableInMainMenu, true);
@@ -94,6 +94,20 @@ async function main() {
     await call('/Plugins/AnimeClick/IdentifyStatus?itemId=invalid', undefined, 400);
     await call('/Plugins/AnimeClick/IdentifyAndRefresh', { ItemId: randomUUID(), AnimeClickId: 'https://evil.invalid/anime/1/x' }, 400);
     await call('/Plugins/AnimeClick/IdentifyAndRefresh', { ItemId: randomUUID(), AnimeClickId: '72/naruto' }, 404);
+    // Maintenance: the card preview refuses what is not an AnimeClick card before any request,
+    // and the report never carries what was typed into a secret field.
+    await call('/Plugins/AnimeClick/PreviewCard?animeClickId=' + encodeURIComponent('https://evil.invalid/anime/1/x'), undefined, 400);
+    await call('/Plugins/AnimeClick/UnlockItem', { ItemId: randomUUID(), Field: 'Name' }, 404);
+    const cacheStats = await call('/Plugins/AnimeClick/CacheStats');
+    assert.equal(typeof (cacheStats.Entries ?? cacheStats.entries), 'number');
+    const marker = 'smoke-secret-' + randomUUID();
+    await call('/Plugins/' + pluginId + '/Configuration', { ...config, NegativeCacheHours: 0, TmdbApiKey: marker }, 204);
+    const report = await call('/Plugins/AnimeClick/DiagnosticReport');
+    assert.equal(JSON.stringify(report).includes(marker), false, 'The diagnostic report never carries a key');
+    assert.equal((report.Configuration ?? report.configuration).TmdbApiKey, 'impostata');
+    assert.equal(report.PluginVersion ?? report.pluginVersion, plugin.Version);
+    assert.ok(report.ServerVersion ?? report.serverVersion, 'The report names the server version');
+    await call('/Plugins/' + pluginId + '/Configuration', { ...config, NegativeCacheHours: 0 }, 204);
     const emptyShowcase = await call('/Plugins/AnimeClick/Showcase?limit=8');
     assert.equal((emptyShowcase.Items ?? emptyShowcase.items).length, 0);
     assert.deepEqual(await call('/Plugins/AnimeClick/Catalog'), []);
@@ -124,6 +138,10 @@ async function main() {
     await call('/Plugins/AnimeClick/Libraries', undefined, 403);
     await call('/Plugins/AnimeClick/Libraries/Enable', { LibraryId: randomUUID() }, 403);
     await call('/Plugins/AnimeClick/Showcase', undefined, 403);
+    await call('/Plugins/AnimeClick/CacheStats', undefined, 403);
+    await call('/Plugins/AnimeClick/DiagnosticReport', undefined, 403);
+    await call('/Plugins/AnimeClick/PreviewCard?animeClickId=72', undefined, 403);
+    await call('/Plugins/AnimeClick/UnlockItem', { ItemId: randomUUID() }, 403);
     token = adminToken;
     assert.equal((await call('/Plugins/AnimeClick/TestFanart', {})).Success, false);
     const integratedConfig = await call('/Plugins/' + pluginId + '/Configuration');
@@ -202,11 +220,18 @@ async function main() {
         assert.equal((await call('/Plugins/AnimeClick/Activities')).find(a => a.Key === 'titles').State, 'Completed');
         await page.getByRole('tab', { name: 'Fonti', exact: true }).click();
         await page.screenshot({ path: 'test-results/runtime-sources.png', fullPage: true });
+        await page.getByRole('tab', { name: 'Strumenti', exact: true }).click();
+        await page.locator('#acCacheStats').filter({ hasText: /elementi|elemento|La cache è vuota/ }).waitFor({ timeout: 30000 });
+        const download = page.waitForEvent('download');
+        await page.locator('#acBtnReportDownload').click();
+        assert.equal((await download).suggestedFilename(), 'animeclick-diagnostica.json');
+        await page.screenshot({ path: 'test-results/runtime-tools.png', fullPage: true });
         await page.getByRole('tab', { name: 'Comunità', exact: true }).click();
         assert.equal(await page.locator('#acEnableCommunityMappings').isChecked(), true);
         assert.equal(await page.locator('#acCommunitySharingMode').inputValue(), 'Ask');
         await page.locator('#acCommunityStatus').click();
-        await page.locator('#acCommunityResult').filter({ hasText: 'abbinamenti' }).waitFor();
+        // With the relay published, a fresh installation has nothing waiting to be sent.
+        await page.locator('#acCommunityResult').filter({ hasText: /in attesa di invio|non è ancora attivo/ }).waitFor();
         // The host cancels outstanding home-page requests on navigation. Report that
         // separately; do not hide any other browser exception or plugin failure.
         const cancellations = errors.filter(e => e.message === 'CancelledError');

@@ -286,6 +286,17 @@ public class AnimeClickAiTranslator
     }
 
     /// <summary>
+    /// Whether two normalized endpoints are the same place to send a key to: scheme, host, port and
+    /// path. The saved key belongs to the saved destination, so every rule that decides whether it
+    /// may be reused — the configuration save and the diagnostics calls — compares with this.
+    /// </summary>
+    internal static bool IsSameDestination(Uri left, Uri right)
+        => string.Equals(left.Scheme, right.Scheme, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(left.IdnHost, right.IdnHost, StringComparison.OrdinalIgnoreCase)
+            && left.Port == right.Port
+            && string.Equals(left.AbsolutePath, right.AbsolutePath, StringComparison.Ordinal);
+
+    /// <summary>
     /// True for a host that cannot be reached from outside the user's network: loopback, an
     /// RFC1918 or link-local address, or a name with no dot in it — a container or LAN hostname.
     /// A public name always needs TLS.

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -245,6 +247,91 @@ public class AnimeClickCacheService
         }
     }
 
+    /// <summary>
+    /// What the cache holds, by the source it came from, for the page and the diagnostic report: how
+    /// many entries, how much disk, how old. Reads file attributes only, never the contents, and an
+    /// entry that vanishes meanwhile is simply not counted.
+    /// </summary>
+    public AnimeClickCacheStatistics GetStatistics()
+    {
+        var statistics = new AnimeClickCacheStatistics();
+        var groups = new Dictionary<string, AnimeClickCacheGroup>(StringComparer.Ordinal);
+        IEnumerable<string> paths;
+        try
+        {
+            paths = Directory.EnumerateFiles(_cacheDirectory, "*.json");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return statistics;
+        }
+
+        foreach (var path in paths)
+        {
+            long bytes;
+            DateTimeOffset writtenAt;
+            try
+            {
+                var file = new FileInfo(path);
+                bytes = file.Length;
+                writtenAt = new DateTimeOffset(file.LastWriteTimeUtc);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            // A key starts with its family ("anime::…", "translation:v4::…"). The letters are read
+            // instead of the colon, which a file system that forbids it has already replaced.
+            var name = Path.GetFileNameWithoutExtension(path);
+            var letters = 0;
+            while (letters < name.Length && char.IsAsciiLetter(name[letters])) letters++;
+            var groupId = GroupOf(name[..letters]);
+            if (!groups.TryGetValue(groupId, out var group))
+            {
+                groups[groupId] = group = new AnimeClickCacheGroup { Id = groupId };
+            }
+
+            group.Entries++;
+            group.Bytes += bytes;
+            statistics.Entries++;
+            statistics.Bytes += bytes;
+            if (statistics.OldestEntryUtc is null || writtenAt < statistics.OldestEntryUtc) statistics.OldestEntryUtc = writtenAt;
+            if (statistics.NewestEntryUtc is null || writtenAt > statistics.NewestEntryUtc) statistics.NewestEntryUtc = writtenAt;
+        }
+
+        statistics.Groups = [.. groups.Values.OrderByDescending(group => group.Bytes).ThenBy(group => group.Id, StringComparer.Ordinal)];
+        return statistics;
+    }
+
+    /// <summary>
+    /// The source a key family belongs to. Decided here, next to the keys, so the page only has to
+    /// name the groups: a family added later lands under AnimeClick until it is given a group.
+    /// </summary>
+    internal static string GroupOf(string family)
+    {
+        foreach (var (prefix, group) in FamilyGroups)
+        {
+            if (family.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return group;
+            }
+        }
+
+        return "animeclick";
+    }
+
+    private static readonly (string Prefix, string Group)[] FamilyGroups =
+    [
+        ("translation", "translation"),
+        ("tmdb", "tmdb"),
+        ("tvdb", "tvdb"),
+        ("anilist", "anilist"),
+        ("fanart", "fanart"),
+        ("community", "community"),
+        ("repairLedger", "ledger")
+    ];
+
     private static SemaphoreSlim GetLock(string path) => Locks.Get(path);
 
     private bool DeletePathSynchronized(string path)
@@ -357,4 +444,21 @@ public class AnimeClickCacheService
 
         return head + "~" + digest;
     }
+}
+
+public sealed class AnimeClickCacheStatistics
+{
+    public int Entries { get; set; }
+    public long Bytes { get; set; }
+    public DateTimeOffset? OldestEntryUtc { get; set; }
+    public DateTimeOffset? NewestEntryUtc { get; set; }
+    public List<AnimeClickCacheGroup> Groups { get; set; } = [];
+}
+
+/// <summary>The entries one source left in the cache: animeclick, tmdb, tvdb, anilist, fanart, translation, community or ledger.</summary>
+public sealed class AnimeClickCacheGroup
+{
+    public string Id { get; set; } = string.Empty;
+    public int Entries { get; set; }
+    public long Bytes { get; set; }
 }

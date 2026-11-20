@@ -85,22 +85,9 @@ public class AnimeClickIdentifyController : ControllerBase
         // No mutation until AnimeClick confirms a real detail page. HTTP 200 alone can be an ad.
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var url = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
-        AnimeClickAnime validatedAnime;
-        try
+        if (await ReadCardAsync(url, configuration, cancellationToken).ConfigureAwait(false) is null)
         {
-            var html = await _client.GetStringAsync(url, configuration, cancellationToken).ConfigureAwait(false);
-            validatedAnime = _parser.ParseAnimePage(url, html);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "AnimeClick identification could not validate the selected page");
             return StatusCode(502, new { error = "Impossibile verificare la scheda AnimeClick. Nessuna modifica salvata: controlla il link e riprova." });
-        }
-
-        if (_cache is not null && !string.IsNullOrWhiteSpace(validatedAnime.Title))
-        {
-            await _cache.SetAsync("anime::" + url, validatedAnime, cancellationToken).ConfigureAwait(false);
         }
 
         // The item may have been locked while the network request was in flight.
@@ -121,26 +108,19 @@ public class AnimeClickIdentifyController : ControllerBase
         if (_community is not null)
         {
             try { communityOffer = await _community.OfferAsync(item, cancellationToken).ConfigureAwait(false); }
-            catch { communityOffer = new AnimeClickCommunityOffer { Message = "La correzione locale è salvata; l’invio alla comunità non è stato accodato." }; }
+            catch (Exception ex)
+            {
+                // Every failure is absorbed, a cancelled request included: the ID is already saved,
+                // and the refresh below must still be queued or the title would keep its old data.
+                _logger.LogDebug(ex, "AnimeClick community offer failed for {ItemId}", item.Id);
+                communityOffer = new AnimeClickCommunityOffer { Message = "La correzione locale è salvata; l’invio alla comunità non è stato accodato." };
+            }
         }
 
         var communityMessage = communityOffer?.Message;
         var communityProposal = communityOffer?.Proposal;
-        var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
+        if (!TryQueueRefresh(item, request.ReplaceAllMetadata, request.ReplaceAllImages))
         {
-            MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-            ImageRefreshMode = request.ReplaceAllImages ? MetadataRefreshMode.FullRefresh : MetadataRefreshMode.Default,
-            ReplaceAllMetadata = request.ReplaceAllMetadata,
-            ReplaceAllImages = request.ReplaceAllImages,
-            ForceSave = true
-        };
-        try
-        {
-            _providerManager.QueueRefresh(item.Id, options, RefreshPriority.High);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "AnimeClick identification saved but refresh could not be queued for {ItemId}", item.Id);
             return Ok(new IdentifyAndRefreshResponse
             {
                 ItemId = item.Id.ToString(), AnimeClickId = animeClickId, PreviousAnimeClickId = previousId,
@@ -149,6 +129,7 @@ public class AnimeClickIdentifyController : ControllerBase
                 Error = "L’abbinamento è salvato, ma l’aggiornamento non è partito. Usa «Aggiorna metadati» qui sotto."
             });
         }
+
         return Ok(new IdentifyAndRefreshResponse
         {
             Success = true, ItemId = item.Id.ToString(), Name = item.Name, AnimeClickId = animeClickId,
@@ -158,6 +139,143 @@ public class AnimeClickIdentifyController : ControllerBase
             CommunityProposal = communityProposal
         });
     }
+
+    /// <summary>
+    /// Reads the card the administrator is about to bind and says which library titles already use
+    /// it, so a wrong pick or a duplicate is visible before anything is saved. Nothing is written to
+    /// the library; a card read here is cached like any other, so identifying it right after costs
+    /// AnimeClick no second visit beyond the verification itself.
+    /// </summary>
+    [HttpGet("PreviewCard")]
+    public async Task<ActionResult<AnimeClickCardPreview>> PreviewCard(
+        [FromQuery] string animeClickId,
+        [FromQuery] string? itemId,
+        CancellationToken cancellationToken)
+    {
+        if (!AnimeClickClient.TryNormalizeAnimeInput(animeClickId, out var normalizedId))
+        {
+            return BadRequest(new { error = "Inserisci un ID AnimeClick o il link alla scheda dell’anime." });
+        }
+
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+        if (!AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, normalizedId, out var url))
+        {
+            return BadRequest(new { error = "L’indirizzo di AnimeClick nelle impostazioni non è valido." });
+        }
+
+        AnimeClickAnime? anime = null;
+        if (_cache is not null)
+        {
+            anime = await _cache
+                .GetAsync<AnimeClickAnime>(CardCacheKey(url), configuration.CacheHours, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (anime is null || string.IsNullOrWhiteSpace(anime.Title))
+        {
+            anime = await ReadCardAsync(url, configuration, cancellationToken).ConfigureAwait(false);
+            if (anime is null)
+            {
+                return StatusCode(502, new { error = "Non riesco a leggere questa scheda su AnimeClick: controlla il link o riprova fra poco." });
+            }
+        }
+
+        var selected = Guid.TryParse(itemId, out var selectedItemId) ? _libraryManager.GetItemById(selectedItemId) : null;
+        return Ok(new AnimeClickCardPreview
+        {
+            AnimeClickId = normalizedId,
+            Url = url,
+            Title = AnimeClickMetadataText.Title(anime.Title) ?? normalizedId,
+            OriginalTitle = AnimeClickMetadataText.Title(anime.OriginalTitle),
+            Year = anime.ProductionYear,
+            Category = AnimeClickMetadataText.Title(anime.Category),
+            Status = AnimeClickMetadataText.Title(anime.Status),
+            EpisodeCount = anime.EpisodeCount,
+            ImageUrl = AnimeClickClient.TryResolveAllowedImageUri(configuration.BaseUrl, anime.ImageUrl, out var imageUri)
+                && imageUri.Scheme == Uri.UriSchemeHttps
+                    ? imageUri.AbsoluteUri
+                    : null,
+            Overview = AnimeClickMetadataText.Excerpt(AnimeClickMetadataText.Clean(anime.Overview), CardPreviewOverviewLength),
+            Genres = [.. AnimeClickMetadataText.Labels(anime.Genres ?? []).Take(4)],
+            UsedBy = FindItemsUsingCard(AnimeClickClient.GetStableIdentity(normalizedId), selectedItemId, selected)
+        });
+    }
+
+    private static string CardCacheKey(string url) => "anime::" + url;
+
+    /// <summary>
+    /// Asks AnimeClick for a card and keeps it in the cache the providers read. Null when the page
+    /// cannot be fetched or is not a card: HTTP 200 alone can be an advertisement or a maintenance
+    /// page, and neither may be cached or bound to a title.
+    /// </summary>
+    private async Task<AnimeClickAnime?> ReadCardAsync(string url, PluginConfiguration configuration, CancellationToken cancellationToken)
+    {
+        AnimeClickAnime anime;
+        try
+        {
+            var html = await _client.GetStringAsync(url, configuration, cancellationToken).ConfigureAwait(false);
+            anime = _parser.ParseAnimePage(url, html);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "AnimeClick did not return a readable card for the selected page");
+            return null;
+        }
+
+        if (_cache is not null && !string.IsNullOrWhiteSpace(anime.Title))
+        {
+            await _cache.SetAsync(CardCacheKey(url), anime, cancellationToken).ConfigureAwait(false);
+        }
+
+        return anime;
+    }
+
+    /// <summary>
+    /// Other library titles already bound to this card. A second series on the same card is
+    /// sometimes right (two cuts of one work) and often a mistake: the page says so and leaves the
+    /// decision to the administrator. The selected title is not "another" one, and neither are its
+    /// own series and seasons: the provider writes the series card on a season that has no card of
+    /// its own, and that is the same work, not a duplicate.
+    /// </summary>
+    private List<AnimeClickCardUse> FindItemsUsingCard(string stableId, Guid selectedItemId, BaseItem? selected)
+    {
+        var selectedSeriesId = selected is Season selectedSeason ? selectedSeason.SeriesId : selectedItemId;
+        try
+        {
+            return _libraryManager
+                .GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = [BaseItemKind.Series, BaseItemKind.Movie, BaseItemKind.Season],
+                    Recursive = true,
+                    IsVirtualItem = false
+                })
+                .Where(candidate => candidate.Id != selectedItemId
+                    && (selectedSeriesId == Guid.Empty
+                        || (candidate.Id != selectedSeriesId && (candidate as Season)?.SeriesId != selectedSeriesId))
+                    && AnimeClickClient.TryNormalizeAnimeClickId(candidate.GetProviderId(ProviderKey), out var bound)
+                    && string.Equals(AnimeClickClient.GetStableIdentity(bound), stableId, StringComparison.OrdinalIgnoreCase))
+                .Take(MaximumCardUses)
+                .Select(candidate => new AnimeClickCardUse
+                {
+                    ItemId = candidate.Id.ToString("N", System.Globalization.CultureInfo.InvariantCulture),
+                    Name = candidate is Season season && !string.IsNullOrWhiteSpace(season.SeriesName)
+                        ? season.SeriesName + " · " + season.Name
+                        : candidate.Name ?? string.Empty,
+                    Type = candidate switch { Movie => "Movie", Season => "Season", _ => "Series" }
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            // The list is a courtesy: failing to build it must not hide the card itself.
+            _logger.LogDebug(ex, "AnimeClick card preview could not list the items using card {Card}", stableId);
+            return [];
+        }
+    }
+
+    private const int CardPreviewOverviewLength = 360;
+    private const int MaximumCardUses = 5;
 
     /// <summary>
     /// Diagnostic helper: returns whether the item currently has an
@@ -211,10 +329,17 @@ public class AnimeClickIdentifyController : ControllerBase
             return NotFound(new { error = "L’elemento non è più presente nella libreria." });
         }
 
+        // An unreadable field name must be refused: treating it as "no field" would remove every
+        // lock of the item, which is more than the caller asked for.
         MetadataField? specificField = null;
-        if (!string.IsNullOrWhiteSpace(request.Field)
-            && Enum.TryParse<MetadataField>(request.Field, ignoreCase: true, out var parsedField))
+        if (!string.IsNullOrWhiteSpace(request.Field))
         {
+            if (!Enum.TryParse<MetadataField>(request.Field, ignoreCase: true, out var parsedField)
+                || !Enum.IsDefined(parsedField))
+            {
+                return BadRequest(new { error = "Campo da sbloccare non riconosciuto." });
+            }
+
             specificField = parsedField;
         }
 
@@ -262,46 +387,17 @@ public class AnimeClickIdentifyController : ControllerBase
         }
 
         _repairLedger?.Forget(item.Id);
-        if (item is Series or Season)
-        {
-            try
-            {
-                var childTypes = item is Series
-                    ? new[] { BaseItemKind.Season, BaseItemKind.Episode }
-                    : new[] { BaseItemKind.Episode };
-                var children = _libraryManager.GetItemList(new InternalItemsQuery
-                {
-                    IncludeItemTypes = childTypes,
-                    Recursive = true,
-                    ParentId = item.Id,
-                    IsVirtualItem = false
-                });
-                if (children is { Count: > 0 })
-                {
-                    _repairLedger?.Forget(children.Select(c => c.Id));
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "AnimeClick: unable to clear descendant repair ledger for {ItemId}", item.Id);
-            }
-        }
-
-        var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
-        {
-            MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
-            ImageRefreshMode = request.ReplaceAllImages ? MetadataRefreshMode.FullRefresh : MetadataRefreshMode.Default,
-            ReplaceAllMetadata = request.ReplaceAllMetadata,
-            ReplaceAllImages = request.ReplaceAllImages,
-            ForceSave = true
-        };
         try
         {
-            _providerManager.QueueRefresh(item.Id, options, RefreshPriority.High);
+            _repairLedger?.Forget(GetDescendants(item).Select(child => child.Id));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "AnimeClick refresh could not be queued for {ItemId}", item.Id);
+            _logger.LogDebug(ex, "AnimeClick: unable to clear descendant repair ledger for {ItemId}", item.Id);
+        }
+
+        if (!TryQueueRefresh(item, request.ReplaceAllMetadata, request.ReplaceAllImages))
+        {
             return StatusCode(500, new { error = "Impossibile accodare l’aggiornamento dei metadati in Jellyfin." });
         }
 
@@ -382,17 +478,8 @@ public class AnimeClickIdentifyController : ControllerBase
 
         try
         {
-            var childTypes = item is Series
-                ? new[] { BaseItemKind.Season, BaseItemKind.Episode }
-                : new[] { BaseItemKind.Episode };
-            var children = _libraryManager.GetItemList(new InternalItemsQuery
-            {
-                IncludeItemTypes = childTypes,
-                Recursive = true,
-                ParentId = item.Id,
-                IsVirtualItem = false
-            });
-            if (children is null || children.Count == 0)
+            var children = GetDescendants(item);
+            if (children.Count == 0)
             {
                 return;
             }
@@ -445,22 +532,7 @@ public class AnimeClickIdentifyController : ControllerBase
 
         try
         {
-            var childTypes = item is Series
-                ? new[] { BaseItemKind.Season, BaseItemKind.Episode }
-                : new[] { BaseItemKind.Episode };
-            var children = _libraryManager.GetItemList(new InternalItemsQuery
-            {
-                IncludeItemTypes = childTypes,
-                Recursive = true,
-                ParentId = item.Id,
-                IsVirtualItem = false
-            });
-            if (children is null || children.Count == 0)
-            {
-                return unlocked;
-            }
-
-            foreach (var child in children)
+            foreach (var child in GetDescendants(item))
             {
                 if (await TryUnlockSingleItemAsync(child, specificField, cancellationToken).ConfigureAwait(false))
                 {
@@ -485,24 +557,58 @@ public class AnimeClickIdentifyController : ControllerBase
         MetadataField? specificField,
         CancellationToken cancellationToken)
     {
-        var lockedFields = target.LockedFields ?? [];
-        var hasLockedField = specificField.HasValue
-            ? lockedFields.Contains(specificField.Value)
-            : lockedFields.Length > 0;
-        if (!target.IsLocked && !hasLockedField)
+        if (!await AnimeClickLocks.TryUnlockAsync(_libraryManager, target, specificField, cancellationToken).ConfigureAwait(false))
         {
             return false;
         }
 
-        target.IsLocked = false;
-        target.LockedFields = specificField.HasValue
-            ? lockedFields.Where(field => field != specificField.Value).ToArray()
-            : [];
-        await _libraryManager
-            .UpdateItemAsync(target, target.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken)
-            .ConfigureAwait(false);
         _repairLedger?.Forget(target.Id);
         return true;
+    }
+
+    /// <summary>The seasons and episodes of a series, or the episodes of a season; empty for anything else.</summary>
+    private IReadOnlyList<BaseItem> GetDescendants(BaseItem item)
+    {
+        if (item is not (Series or Season))
+        {
+            return [];
+        }
+
+        return _libraryManager.GetItemList(new InternalItemsQuery
+        {
+            IncludeItemTypes = item is Series
+                ? [BaseItemKind.Season, BaseItemKind.Episode]
+                : [BaseItemKind.Episode],
+            Recursive = true,
+            ParentId = item.Id,
+            IsVirtualItem = false
+        }) ?? [];
+    }
+
+    /// <summary>
+    /// Hands the item to Jellyfin's own refresh queue. The plugin never deletes artwork itself:
+    /// replacing images is a request to Jellyfin, which keeps the administrator's provider order.
+    /// </summary>
+    private bool TryQueueRefresh(BaseItem item, bool replaceAllMetadata, bool replaceAllImages)
+    {
+        var options = new MetadataRefreshOptions(new DirectoryService(_fileSystem))
+        {
+            MetadataRefreshMode = MetadataRefreshMode.FullRefresh,
+            ImageRefreshMode = replaceAllImages ? MetadataRefreshMode.FullRefresh : MetadataRefreshMode.Default,
+            ReplaceAllMetadata = replaceAllMetadata,
+            ReplaceAllImages = replaceAllImages,
+            ForceSave = true
+        };
+        try
+        {
+            _providerManager.QueueRefresh(item.Id, options, RefreshPriority.High);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AnimeClick refresh could not be queued for {ItemId}", item.Id);
+            return false;
+        }
     }
 
     private static ImageType? ParseImageType(string s)
@@ -549,9 +655,33 @@ public sealed class IdentifyAndRefreshResponse
     public bool RefreshTriggered { get; set; }
     public bool ReplaceAllImages { get; set; }
     public int UnlockedCount { get; set; }
-    public int DeletedImages { get; set; }
-    public List<string> DownloadedImages { get; set; } = new();
     public string? Error { get; set; }
+}
+
+/// <summary>What the page shows of an AnimeClick card before it is bound to a library title.</summary>
+public sealed class AnimeClickCardPreview
+{
+    public string AnimeClickId { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? OriginalTitle { get; set; }
+    public int? Year { get; set; }
+    public string? Category { get; set; }
+    public string? Status { get; set; }
+    public int? EpisodeCount { get; set; }
+    public string? ImageUrl { get; set; }
+    public string? Overview { get; set; }
+    public List<string> Genres { get; set; } = [];
+
+    /// <summary>Other library titles already bound to the same card.</summary>
+    public List<AnimeClickCardUse> UsedBy { get; set; } = [];
+}
+
+public sealed class AnimeClickCardUse
+{
+    public string ItemId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Type { get; set; } = "Series";
 }
 
 public sealed class IdentifyStatusResponse

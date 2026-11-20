@@ -34,6 +34,22 @@ JavaScript vanilla senza build, servito come risorse incorporate. `Configuration
   sostituire `commit()` con un salvataggio dell'intero oggetto.
 - Una chiave AI salvata non deve mai seguire una destinazione diversa (regola replicata anche lato server).
 
+- **Avviso delle novità** (`NEWS` in `animeclick-home.js`): dopo un aggiornamento compare una volta per browser
+  in Inizio. Ha una sua `edition`: quando una release ha qualcosa da raccontare si alza l'edizione e si riscrivono
+  titolo e righe insieme. Non sostituisce un passo di setup: racconta, non chiede.
+- Gli errori di un campo si mostrano accanto al campo con `ui.fieldError` (o `requireValue` / `pointAt` in
+  `animeclick-settings.js`), non solo in un messaggio a scomparsa.
+
+## Lucchetti e rapporto diagnostico
+
+- Un lucchetto di Jellyfin protegge una correzione fatta a mano. Si legge e si toglie solo con `AnimeClickLocks`, e
+  solo dove una riparazione può davvero scrivere: per le trame la regola è `NeedsOverviewRepair` (che la pagina
+  riceve come `CanUnlock`), per i titoli sono le stesse condizioni di `RepairAsync`. Non ricalcolare la regola nel
+  browser.
+- Il rapporto diagnostico (`AnimeClickDiagnosticReport`) è pensato per essere incollato in pubblico. Ogni stringa
+  della configurazione è redatta salvo quelle elencate in `PlainTextSettings`: aggiungine una lì solo se non è un
+  segreto, un indirizzo o un dato personale. Niente titoli, nomi di librerie, percorsi o messaggi delle attività.
+
 ## Comunità
 
 Le regole di una proposta vivono in tre implementazioni: il plugin (`Services/AnimeClickCommunityData.cs`), il

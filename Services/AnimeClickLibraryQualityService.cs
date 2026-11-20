@@ -83,6 +83,7 @@ public sealed class AnimeClickLibraryQualityService
         CancellationToken cancellationToken)
     {
         var unlocked = 0;
+        var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var requested = (itemIds ?? [])
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -96,17 +97,15 @@ public sealed class AnimeClickLibraryQualityService
                 continue;
             }
 
-            var lockedFields = item.LockedFields ?? [];
-            if (!item.IsLocked && !lockedFields.Contains(MetadataField.Overview))
+            // The lock is removed only when the repair it makes room for can actually run: a synopsis
+            // already in Italian or of uncertain language, or a switched-off feature, would lose its
+            // lock and gain nothing. The audit tells the page the same thing as CanUnlock.
+            if (!NeedsOverviewRepair(item, configuration, ClassifyOverview(item.Overview).Status)
+                || !await AnimeClickLocks.TryUnlockAsync(_libraryManager, item, MetadataField.Overview, cancellationToken).ConfigureAwait(false))
             {
                 continue;
             }
 
-            item.IsLocked = false;
-            item.LockedFields = lockedFields.Where(field => field != MetadataField.Overview).ToArray();
-            await _libraryManager
-                .UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken)
-                .ConfigureAwait(false);
             _repairLedger.Forget(item.Id);
             unlocked++;
         }
@@ -361,36 +360,15 @@ public sealed class AnimeClickLibraryQualityService
         bool ignoreSuppression = false)
     {
         var overview = item.Overview?.Trim() ?? string.Empty;
-        AnimeClickOverviewAuditStatus status;
-        AnimeClickLanguageDetection detection;
-        if (AnimeClickMetadataText.Clean(overview) is null)
-        {
-            status = AnimeClickOverviewAuditStatus.Missing;
-            detection = new AnimeClickLanguageDetection(AnimeClickTextLanguage.Unknown, 1, 0, 0, 0);
-        }
-        else
-        {
-            detection = AnimeClickMetadataLanguageDetector.Detect(overview);
-            status = detection.Language switch
-            {
-                AnimeClickTextLanguage.Italian => AnimeClickOverviewAuditStatus.Italian,
-                AnimeClickTextLanguage.English => AnimeClickOverviewAuditStatus.English,
-                _ => AnimeClickOverviewAuditStatus.Unknown
-            };
-        }
-
-        var locked = item.IsLocked || (item.LockedFields?.Contains(MetadataField.Overview) ?? false);
-        var featureEnabled = item is Episode
-            ? configuration.EnableEpisodeSynopsisTranslation
-            : configuration.EnablePlot;
+        var (status, detection) = ClassifyOverview(overview);
+        var locked = AnimeClickLocks.IsLocked(item, MetadataField.Overview);
+        var needsRepair = NeedsOverviewRepair(item, configuration, status);
 
         // What a previous attempt discovered. Language alone cannot say whether a repair is worth
         // queueing: the chain may already have proved that no source carries this synopsis.
         var suppressed = _repairLedger.IsSuppressed(item.Id, now, out var attempt);
         var hasAttempt = attempt is not null;
-        var languageRepairable = !locked
-            && featureEnabled
-            && status is AnimeClickOverviewAuditStatus.English or AnimeClickOverviewAuditStatus.Missing;
+        var languageRepairable = !locked && needsRepair;
         var canRepair = languageRepairable && (ignoreSuppression || !suppressed);
         return new AnimeClickLibraryQualityItem
         {
@@ -409,6 +387,7 @@ public sealed class AnimeClickLibraryQualityService
             Status = status.ToString(),
             Confidence = Math.Round(detection.Confidence, 3),
             Locked = locked,
+            CanUnlock = locked && needsRepair,
             CanRepair = canRepair,
             LanguageRepairable = languageRepairable,
             Suppressed = languageRepairable && suppressed && !ignoreSuppression,
@@ -420,6 +399,34 @@ public sealed class AnimeClickLibraryQualityService
             AttemptCount = hasAttempt ? attempt!.Attempts : 0,
             Preview = BuildPreview(overview)
         };
+    }
+
+    /// <summary>
+    /// Whether a repair would rewrite this synopsis if no lock stood in the way: the preference that
+    /// lets the plugin write it is on, and the stored text is English or missing. The one rule behind
+    /// what the audit offers, what it lets the page unlock and what the unlock itself touches.
+    /// </summary>
+    private static bool NeedsOverviewRepair(BaseItem item, PluginConfiguration configuration, AnimeClickOverviewAuditStatus status)
+        => (item is Episode ? configuration.EnableEpisodeSynopsisTranslation : configuration.EnablePlot)
+            && status is AnimeClickOverviewAuditStatus.English or AnimeClickOverviewAuditStatus.Missing;
+
+    private static (AnimeClickOverviewAuditStatus Status, AnimeClickLanguageDetection Detection) ClassifyOverview(string? value)
+    {
+        var overview = value?.Trim() ?? string.Empty;
+        if (AnimeClickMetadataText.Clean(overview) is null)
+        {
+            return (
+                AnimeClickOverviewAuditStatus.Missing,
+                new AnimeClickLanguageDetection(AnimeClickTextLanguage.Unknown, 1, 0, 0, 0));
+        }
+
+        var detection = AnimeClickMetadataLanguageDetector.Detect(overview);
+        return (detection.Language switch
+        {
+            AnimeClickTextLanguage.Italian => AnimeClickOverviewAuditStatus.Italian,
+            AnimeClickTextLanguage.English => AnimeClickOverviewAuditStatus.English,
+            _ => AnimeClickOverviewAuditStatus.Unknown
+        }, detection);
     }
 
     private static void AddInspection(
@@ -528,6 +535,9 @@ public sealed class AnimeClickLibraryQualityItem
     public string Status { get; set; } = string.Empty;
     public double Confidence { get; set; }
     public bool Locked { get; set; }
+
+    /// <summary>True when the lock is all that keeps a repair from rewriting this synopsis.</summary>
+    public bool CanUnlock { get; set; }
 
     /// <summary>True when queueing this item now can still accomplish something.</summary>
     public bool CanRepair { get; set; }

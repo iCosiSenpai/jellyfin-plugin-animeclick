@@ -64,7 +64,10 @@
     function loadForm(config) {
         saved = config;
         verified = {};
-        bound().forEach(function (control) { writeControl(control, config); });
+        bound().forEach(function (control) {
+            writeControl(control, config);
+            ui.fieldError(control, '');
+        });
 
         var aiKey = el('acAiApiKey');
         aiKey.value = '';
@@ -97,9 +100,7 @@
         var enteredEndpoint = el('acAiEndpoint').value.trim();
         if (enteredEndpoint) {
             var normalized = normalizeAiEndpoint(enteredEndpoint);
-            if (normalized == null) {
-                throw new Error('L’indirizzo del servizio AI deve essere HTTPS (o HTTP verso la tua rete) e non può contenere credenziali, query o frammenti.');
-            }
+            if (normalized == null) throw new Error(AI_ENDPOINT_RULE);
             var fresh = normalizeAiEndpoint(config.AiEndpoint);
             if (!enteredKey && config.AiApiKey && !el('acClearAiKey').checked) {
                 if (aiEndpointIsLocal()) {
@@ -159,29 +160,38 @@
         try { return new URL(el('acAiEndpoint').value.trim()).protocol === 'http:'; } catch (error) { return false; }
     }
 
+    var AI_ENDPOINT_RULE = 'L’indirizzo del servizio AI deve essere HTTPS (o HTTP verso la tua rete) e non può contenere credenziali, query o frammenti.';
+
+    /** Opens the section and the panel that hold a field, shows the problem under it and focuses it. */
+    function pointAt(input, message) {
+        var view = input.closest('[data-view]');
+        if (view) AC.app.go(view.dataset.view);
+        for (var parent = input.parentElement; parent && parent !== view; parent = parent.parentElement) {
+            if (parent.tagName === 'DETAILS') parent.open = true;
+        }
+        ui.fieldError(input, message);
+        input.focus();
+        return message;
+    }
+
+    /** The first problem that prevents saving, already shown next to its field; null when there is none. */
     function validate() {
-        var invalid = bound().find(function (control) {
-            return control.type === 'number' && (!control.value.trim() || !control.checkValidity());
-        });
+        var numbers = bound().filter(function (input) { return input.type === 'number'; });
+        numbers.concat([el('acAiEndpoint'), el('acAiApiKey')]).forEach(function (input) { ui.fieldError(input, ''); });
+
+        var invalid = numbers.find(function (input) { return !input.value.trim() || !input.checkValidity(); });
         if (invalid) {
-            var view = invalid.closest('[data-view]');
-            if (view) AC.app.go(view.dataset.view);
-            for (var parent = invalid.parentElement; parent && parent !== view; parent = parent.parentElement) {
-                if (parent.tagName === 'DETAILS') parent.open = true;
-            }
-            invalid.focus();
             var label = page.querySelector('label[for="' + invalid.id + '"]');
+            pointAt(invalid, 'Inserisci un numero intero fra ' + invalid.min + ' e ' + invalid.max + '.');
             return 'Controlla «' + (label ? label.textContent : invalid.id) + '»: il valore deve essere compreso tra '
                 + invalid.min + ' e ' + invalid.max + '.';
         }
 
         var endpoint = el('acAiEndpoint').value.trim();
-        if (endpoint && normalizeAiEndpoint(endpoint) == null) {
-            return 'L’indirizzo del servizio AI deve essere HTTPS (o HTTP verso la tua rete) e non può contenere credenziali, query o frammenti.';
-        }
+        if (endpoint && normalizeAiEndpoint(endpoint) == null) return pointAt(el('acAiEndpoint'), AI_ENDPOINT_RULE);
         if (aiEndpointIsLocal()) return null;
         if (aiEndpointChanged() && saved && saved.AiApiKey && !el('acClearAiKey').checked && !el('acAiApiKey').value.trim()) {
-            return 'Dopo aver cambiato servizio, inserisci la nuova chiave oppure seleziona «Rimuovi la chiave salvata».';
+            return pointAt(el('acAiApiKey'), 'Dopo aver cambiato servizio, inserisci la nuova chiave oppure seleziona «Rimuovi la chiave salvata».');
         }
         return null;
     }
@@ -494,7 +504,7 @@
     function sourceCard(options) {
         var c = ui.card({ id: 'acSource_' + options.id });
         var logo = h('span', { class: 'ac-source-logo' },
-            options.logo ? h('img', { src: api.asset(options.logo), alt: options.name }) : icon(options.icon || 'plug'));
+            options.logo ? h('img', { src: api.asset(options.logo), alt: options.name, width: 92, height: 30, decoding: 'async' }) : icon(options.icon || 'plug'));
         c.card.insertBefore(h('div', { class: 'ac-source-head' },
             h('div', { class: 'ac-source-top' }, logo, h('span', { id: 'acSourceState_' + options.id })),
             h('div', null, h('h2', { class: 'ac-h2', text: options.name }), h('p', { class: 'ac-hint', style: 'margin-top:4px', text: options.role }))), c.body);
@@ -566,7 +576,7 @@
             h('div', { class: 'ac-stack-s' }, keyField, ui.check('acClearAiKey', 'Rimuovi la chiave salvata', 'Viene rimossa quando salvi.'))));
         var modelsButton = ui.button('Elenca modelli', { id: 'acBtnAiModels', icon: 'search', small: true });
         ai.body.appendChild(ui.field('acAiModel', 'Modello', {
-            key: 'AiModel', spellcheck: false, list: 'acAiModelList', placeholder: 'Scegli un modello',
+            key: 'AiModel', spellcheck: false, list: 'acAiModelList', placeholder: 'Scegli un modello…',
             hint: 'Premi «Elenca modelli» e scegli un nome dall’elenco.', action: modelsButton
         }));
         ai.body.appendChild(h('datalist', { id: 'acAiModelList' }));
@@ -634,7 +644,48 @@
         });
     }
 
-    /* ===== Strumenti ===== */
+    /* ===== Strumenti: correggi un abbinamento ===== */
+
+    /** The input, select or textarea inside a field built by ui.field / ui.select. */
+    function fieldControl(fieldNode) {
+        return fieldNode.querySelector('input, textarea, select');
+    }
+
+    /** The trimmed value of a field that must not be empty; when it is, says so next to it and returns ''. */
+    function requireValue(input, message) {
+        var value = input.value.trim();
+        ui.fieldError(input, value ? '' : message);
+        if (!value) input.focus();
+        return value;
+    }
+
+    function onEnter(input, action) {
+        input.addEventListener('keydown', function (event) {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            action();
+        });
+    }
+
+    function markUnlocked() {
+        var host = el('acSelectedItemLockState');
+        if (host) replace(host, ui.badge('Sbloccata', 'ok', 'unlock'));
+    }
+
+    /** Removes the Jellyfin locks of a title and of its seasons and episodes. */
+    function unlockItem(itemId, buttonNode) {
+        ui.setBusy(buttonNode, true, 'Sblocco…');
+        return api.request('POST', 'Plugins/AnimeClick/UnlockItem', { itemId: itemId, includeChildren: true }).then(function () {
+            markUnlocked();
+            ui.toast('Scheda sbloccata in Jellyfin', 'success');
+            AC.bus.emit('library-changed');
+            return true;
+        }).catch(function (error) {
+            ui.toast(truncate(error.message, 240), 'error');
+            ui.setBusy(buttonNode, false);
+            return false;
+        });
+    }
 
     function checkItemStatus(targetId) {
         var lockHost = el('acSelectedItemLockState');
@@ -648,60 +699,70 @@
             }
             var isLocked = !!val(status, 'isLocked') || list(val(status, 'lockedFields')).length > 0;
             if (!isLocked) return;
-            var unlockBtn = ui.button('Sblocca ora', { id: 'acBtnUnlockSelected', small: true, variant: 'ghost', icon: 'check' });
-            unlockBtn.addEventListener('click', function () {
-                ui.setBusy(unlockBtn, true, 'Sblocco…');
-                api.request('POST', 'Plugins/AnimeClick/UnlockItem', { itemId: targetId, includeChildren: true }).then(function () {
-                    replace(lockHost, ui.badge('Sbloccata', 'ok', 'check'));
-                    ui.toast('Scheda sbloccata in Jellyfin', 'success');
-                    AC.bus.emit('library-changed');
-                }).catch(function (error) {
-                    ui.toast(truncate(error.message, 240), 'error');
-                    ui.setBusy(unlockBtn, false);
-                });
-            });
-            replace(lockHost, ui.badge('Bloccata in Jellyfin', 'warn', 'lock'), unlockBtn);
+            var unlockButton = ui.button('Sblocca ora', { id: 'acBtnUnlockSelected', small: true, variant: 'ghost', icon: 'unlock' });
+            unlockButton.addEventListener('click', function () { unlockItem(targetId, unlockButton); });
+            replace(lockHost, ui.badge('Bloccata in Jellyfin', 'warn', 'lock'), unlockButton);
         }).catch(function () { /* Diagnostic status is optional. */ });
+    }
+
+    function returnToLibrary(returnKey, reload) {
+        AC.app.go('library');
+        var open = function () { AC.library.openDetail(returnKey); };
+        if (reload) AC.library.loadReports(true).then(open); else open();
+    }
+
+    var CARD_REQUIRED = 'Scegli un risultato o incolla il link della scheda.';
+    var previewRequest = null;
+
+    /**
+     * Drops the preview on screen and withdraws the one still on its way: it described a card no
+     * longer chosen, and the server should not keep reading AnimeClick for it.
+     */
+    function discardPreview() {
+        if (previewRequest) previewRequest.abort();
+        previewRequest = null;
+        ui.setBusy(el('acBtnPreviewCard'), false);
+        clear(el('acCardPreview'));
+    }
+
+    function clearMatch() {
+        el('acAnimeClickId').value = '';
+        ui.fieldError(el('acAnimeClickId'), '');
+        clear(el('acAnimeClickCandidates'));
+        discardPreview();
+        clear(el('acIdentifyResult'));
+    }
+
+    function clearSelection() {
+        identify.item = null;
+        el('acItemId').value = '';
+        clearMatch();
+        replace(el('acSelectedItem'), h('p', { class: 'ac-muted', text: 'Nessun titolo selezionato.' }));
+        el('acItemSearch').focus();
     }
 
     function pickItem(item) {
         identify.item = item;
         var initialId = val(item, 'seasonId') || val(item, 'id') || '';
         el('acItemId').value = initialId;
-        var host = el('acSelectedItem');
         var year = val(item, 'productionYear') || val(item, 'year');
-        var lockState = h('div', { id: 'acSelectedItemLockState', class: 'ac-row' });
         var returnKey = val(item, 'returnToKey');
-        replace(host,
+        replace(el('acSelectedItem'),
             ui.poster({ id: val(item, 'id'), name: val(item, 'name'), hasPrimaryImage: val(item, 'hasPrimaryImage') }, { height: 120 }),
             h('div', { class: 'ac-stack-s ac-grow' },
                 h('strong', { text: val(item, 'name') || 'Titolo selezionato' }),
                 h('p', { class: 'ac-muted', text: (val(item, 'type') === 'Movie' ? 'Film' : 'Serie') + (year ? ' · ' + year : '') }),
-                lockState),
+                h('div', { id: 'acSelectedItemLockState', class: 'ac-row' })),
             h('div', { class: 'ac-row' },
-                returnKey ? ui.button('Torna alla libreria', { id: 'acBtnReturnLibrary', small: true, variant: 'ghost', icon: 'arrowLeft', onClick: function () {
-                    AC.app.go('library');
-                    if (AC.library && AC.library.openDetail) AC.library.openDetail(returnKey);
-                } }) : null,
-                ui.button('Cambia', { small: true, variant: 'ghost', onClick: function () {
-                    identify.item = null;
-                    el('acItemId').value = '';
-                    el('acAnimeClickId').value = '';
-                    clear(el('acAnimeClickCandidates'));
-                    clear(el('acIdentifyResult'));
-                    renderSelection();
-                    el('acItemSearch').focus();
-                } })));
-        host.hidden = false;
+                returnKey ? ui.button('Torna alla libreria', {
+                    id: 'acBtnReturnLibrary', small: true, variant: 'ghost', icon: 'arrowLeft',
+                    onClick: function () { returnToLibrary(returnKey); }
+                }) : null,
+                ui.button('Cambia', { small: true, variant: 'ghost', onClick: clearSelection })));
         clear(el('acItemCandidates'));
-        clear(el('acAnimeClickCandidates'));
-        clear(el('acIdentifyResult'));
-        el('acAnimeClickId').value = '';
-        var lookup = el('acAnimeClickSearch');
-        if (lookup) {
-            var seasonNum = val(item, 'seasonNumber');
-            lookup.value = (val(item, 'name') || '') + (seasonNum != null && seasonNum > 1 ? ' ' + seasonNum : '');
-        }
+        clearMatch();
+        var seasonNumber = val(item, 'seasonNumber');
+        el('acAnimeClickSearch').value = (val(item, 'name') || '') + (seasonNumber != null && seasonNumber > 1 ? ' ' + seasonNumber : '');
         checkItemStatus(initialId);
         if (val(item, 'type') !== 'Movie') loadSeasons(item);
     }
@@ -714,48 +775,43 @@
         var seriesId = val(item, 'id');
         var desiredSeasonId = val(item, 'seasonId');
         var desiredSeasonNumber = val(item, 'seasonNumber');
-        var host = el('acSelectedItem');
         var picker = ui.select('acItemSeason', 'Cosa correggere', [{ value: seriesId, label: 'Tutta la serie' }], {
             hint: 'Scegli una stagione se ha una scheda AnimeClick sua, per esempio un sequel o un arco finale.'
         });
         picker.id = 'acItemSeasonField';
-        host.appendChild(picker);
-        var select = el('acItemSeason');
+        el('acSelectedItem').appendChild(picker);
+        var select = fieldControl(picker);
         select.addEventListener('change', function () {
             el('acItemId').value = select.value;
             checkItemStatus(select.value);
         });
+        var sameId = function (left, right) {
+            return String(left || '').replace(/-/g, '').toLowerCase() === String(right || '').replace(/-/g, '').toLowerCase();
+        };
         api.request('GET', 'Shows/' + encodeURIComponent(seriesId) + '/Seasons?Fields=ProviderIds').then(function (result) {
-            if (el('acItemId').value !== seriesId && el('acItemId').value !== select.value && el('acItemId').value !== desiredSeasonId) return;
-            var matchedValue = null;
-            var norm = function (v) { return String(v || '').replace(/-/g, '').toLowerCase(); };
+            // Another title may have been picked while the seasons were loading.
+            if (!select.isConnected) return;
+            var matched = null;
             list(val(result, 'items')).forEach(function (season) {
-                var sid = val(season, 'id');
+                var seasonId = val(season, 'id');
                 var number = val(season, 'indexNumber');
                 var card = val(val(season, 'providerIds') || {}, 'animeClick');
                 select.appendChild(h('option', {
-                    value: sid,
+                    value: seasonId,
                     text: (number === 0 ? 'Speciali' : number != null ? 'Stagione ' + number : (val(season, 'name') || 'Stagione'))
                         + (card ? ' · AnimeClick ' + String(card).split('/')[0] : '')
                 }));
-                if ((desiredSeasonId && norm(sid) === norm(desiredSeasonId))
-                    || (!matchedValue && desiredSeasonNumber != null && number === desiredSeasonNumber)) {
-                    matchedValue = sid;
+                if ((desiredSeasonId && sameId(seasonId, desiredSeasonId))
+                    || (!matched && desiredSeasonNumber != null && number === desiredSeasonNumber)) {
+                    matched = seasonId;
                 }
             });
-            if (matchedValue) {
-                select.value = matchedValue;
-                el('acItemId').value = matchedValue;
-                checkItemStatus(matchedValue);
+            if (matched) {
+                select.value = matched;
+                el('acItemId').value = matched;
+                checkItemStatus(matched);
             }
         }).catch(function () { /* The series stays selectable on its own. */ });
-    }
-
-    function renderSelection() {
-        var host = el('acSelectedItem');
-        if (!identify.item) {
-            replace(host, h('p', { class: 'ac-muted', text: 'Nessun titolo selezionato.' }));
-        }
     }
 
     function searchLibrary(buttonNode) {
@@ -800,19 +856,16 @@
             }
             host.appendChild(h('div', { class: 'ac-picks' }, results.slice(0, 12).map(function (row) {
                 var id = val(row, 'animeClickId');
-                var image = val(row, 'imageUrl');
-                var cover = h('div', { class: 'ac-poster' }, h('span', { class: 'ac-poster-fallback', 'aria-hidden': 'true', text: truncate(val(row, 'name') || id, 40) }));
-                if (image && /^https:\/\//i.test(image)) {
-                    var img = h('img', { alt: '', loading: 'lazy', src: image, referrerpolicy: 'no-referrer' });
-                    img.addEventListener('error', function () { img.remove(); });
-                    cover.appendChild(img);
-                }
                 var pick = h('button', { type: 'button', class: 'ac-pick', 'aria-pressed': 'false' },
-                    cover, h('strong', { text: val(row, 'name') || id }), h('small', { text: (val(row, 'year') ? val(row, 'year') + ' · ' : '') + 'ID ' + id }));
+                    ui.poster({ name: val(row, 'name') || id }, { src: val(row, 'imageUrl') }),
+                    h('strong', { text: val(row, 'name') || id }),
+                    h('small', { text: (val(row, 'year') ? val(row, 'year') + ' · ' : '') + 'ID ' + id }));
                 pick.addEventListener('click', function () {
                     host.querySelectorAll('.ac-pick').forEach(function (other) { other.setAttribute('aria-pressed', 'false'); });
                     pick.setAttribute('aria-pressed', 'true');
                     el('acAnimeClickId').value = id;
+                    ui.fieldError(el('acAnimeClickId'), '');
+                    previewCard();
                 });
                 return pick;
             })));
@@ -821,225 +874,410 @@
         }).finally(function () { ui.setBusy(buttonNode, false); });
     }
 
-    function buildTools(view) {
-        view.appendChild(ui.sectionHead('ツール', 'Strumenti', 'Sistema, verifica, regola',
-            'Correggi un abbinamento sbagliato, controlla da dove arriva una trama e regola i parametri avanzati.'));
+    /**
+     * Shows the chosen card before it is bound: its title, year and episodes, and the library titles
+     * that already use it. The check is read-only; «Identifica e aggiorna» is what saves.
+     */
+    function previewCard() {
+        var host = el('acCardPreview');
+        var buttonNode = el('acBtnPreviewCard');
+        var animeClickId = requireValue(el('acAnimeClickId'), CARD_REQUIRED);
+        if (!animeClickId) return;
+        discardPreview();
+        var mine = previewRequest = new AbortController();
+        ui.setBusy(buttonNode, true, 'Lettura…');
+        replace(host, ui.skeleton(132));
+        api.request('GET', 'Plugins/AnimeClick/PreviewCard?animeClickId=' + encodeURIComponent(animeClickId)
+            + '&itemId=' + encodeURIComponent(el('acItemId').value.trim()), undefined, undefined, mine.signal).then(function (preview) {
+            if (previewRequest === mine) renderCardPreview(preview);
+        }).catch(function (error) {
+            if (previewRequest === mine) replace(host, ui.callout('Non riesco a mostrare questa scheda', truncate(error.message, 240), 'warn'));
+        }).finally(function () {
+            if (previewRequest !== mine) return;
+            previewRequest = null;
+            ui.setBusy(buttonNode, false);
+        });
+    }
 
+    var USE_KINDS = { Movie: 'film', Season: 'stagione', Series: 'serie' };
+
+    function renderCardPreview(preview) {
+        var host = el('acCardPreview');
+        var title = val(preview, 'title') || val(preview, 'animeClickId');
+        var original = val(preview, 'originalTitle');
+        var episodes = val(preview, 'episodeCount');
+        var facts = [
+            val(preview, 'year'),
+            val(preview, 'category'),
+            episodes ? AC.util.plural(episodes, 'episodio', 'episodi') : null,
+            val(preview, 'status')
+        ].filter(Boolean);
+        var url = val(preview, 'url');
+        var uses = list(val(preview, 'usedBy'));
+        replace(host, h('div', { class: 'ac-card-preview', id: 'acCardPreviewBody' },
+            ui.poster({ name: title }, { src: val(preview, 'imageUrl') }),
+            h('div', { class: 'ac-stack-s' },
+                h('div', null,
+                    h('strong', { class: 'ac-card-preview-title', text: title }),
+                    original && original !== title ? h('p', { class: 'ac-muted', text: original }) : null),
+                facts.length ? h('p', { class: 'ac-card-preview-facts', text: facts.join(' · ') }) : null,
+                list(val(preview, 'genres')).length ? h('div', { class: 'ac-row' }, list(val(preview, 'genres')).map(function (genre) { return ui.badge(genre); })) : null,
+                val(preview, 'overview') ? h('p', { class: 'ac-hint', text: val(preview, 'overview') }) : null,
+                url && /^https?:\/\//i.test(url)
+                    ? h('div', { class: 'ac-row' }, h('a', { class: 'ac-btn ac-btn--sm ac-btn--ghost', href: url, target: '_blank', rel: 'noopener noreferrer' }, icon('external'), 'Apri su AnimeClick'))
+                    : null)),
+            uses.length ? ui.callout('Scheda già usata nella libreria',
+                'È abbinata a ' + uses.map(function (use) {
+                    return '«' + (val(use, 'name') || 'Senza titolo') + '» (' + (USE_KINDS[val(use, 'type')] || 'serie') + ')';
+                }).join(', ') + '. Va bene per due edizioni della stessa opera; altrimenti stai per creare un doppione.', 'warn') : null);
+    }
+
+    function refreshNow(itemId, buttonNode) {
+        ui.setBusy(buttonNode, true, 'Accodamento…');
+        api.request('POST', 'Plugins/AnimeClick/RefreshItem', {
+            itemId: itemId, replaceAllMetadata: false, replaceAllImages: el('acReplaceAllImages').checked
+        }).then(function () {
+            ui.toast('Aggiornamento dei metadati avviato', 'success');
+            buttonNode.remove();
+        }).catch(function (error) {
+            ui.toast(truncate(error.message, 240), 'error');
+            ui.setBusy(buttonNode, false);
+        });
+    }
+
+    function renderIdentified(response, itemId, animeClickId) {
+        var out = el('acIdentifyResult');
+        var success = !!val(response, 'success');
+        var unlocked = val(response, 'unlockedCount') || 0;
+        replace(out, ui.callout(success ? 'Abbinamento salvato' : 'Operazione incompleta',
+            success
+                ? (unlocked ? 'Scheda sbloccata, ID AnimeClick salvato e aggiornamento avviato.' : 'L’ID AnimeClick è salvato e l’aggiornamento è partito.')
+                : truncate(val(response, 'error') || 'Errore sconosciuto.', 300),
+            success ? 'ok' : 'warn'));
+
+        var actions = h('div', { id: 'acIdentifyQuickActions', class: 'ac-row' });
+        if (!success) {
+            var retry = ui.button('Aggiorna metadati ora', { id: 'acBtnRetryRefresh', small: true, variant: 'primary', icon: 'refresh' });
+            retry.addEventListener('click', function () { refreshNow(itemId, retry); });
+            actions.appendChild(retry);
+        }
+        var returnKey = identify.item && val(identify.item, 'returnToKey');
+        if (returnKey) {
+            actions.appendChild(ui.button('Torna alla scheda in Libreria', {
+                id: 'acBtnBackToLibrary', small: true, variant: 'ghost', icon: 'arrowLeft',
+                onClick: function () { returnToLibrary(returnKey, true); }
+            }));
+        }
+        if (actions.childNodes.length) out.appendChild(actions);
+        if (unlocked) markUnlocked();
+
+        var savedCard = val(response, 'animeClickId') || animeClickId;
+        if (savedCard) el('acFallbackAnimeId').value = savedCard;
+        var community = val(response, 'communityMessage');
+        var proposal = val(response, 'communityProposal');
+        if (success && proposal) renderShareOffer(out, itemId, proposal);
+        else if (community && community !== 'Disattivata') out.appendChild(h('p', { class: 'ac-hint', text: community }));
+        if (success && community && community !== 'Disattivata') AC.bus.emit('community-changed');
+        ui.toast(success ? 'Abbinamento salvato' : 'Identificazione incompleta', success ? 'success' : 'error');
+        if (success) AC.bus.emit('library-changed');
+    }
+
+    /** After a 409: the title is locked in Jellyfin, and the page can remove the lock itself. */
+    function renderLockedChoice(itemId) {
+        var unlockAndIdentify = ui.button('Sblocca e identifica ora', { id: 'acBtnUnlockAndIdentify', variant: 'primary', small: true, icon: 'unlock' });
+        unlockAndIdentify.addEventListener('click', function () { runIdentify(true, unlockAndIdentify); });
+        var unlockOnly = ui.button('Solo sblocca', { id: 'acBtnUnlockOnly', variant: 'ghost', small: true, icon: 'unlock' });
+        unlockOnly.addEventListener('click', function () {
+            unlockItem(itemId, unlockOnly).then(function (done) {
+                if (!done) return;
+                replace(el('acIdentifyResult'), ui.callout('Scheda sbloccata', 'Il blocco in Jellyfin è stato rimosso. Ora puoi premere «Identifica e aggiorna».', 'ok'));
+            });
+        });
+        el('acIdentifyResult').appendChild(h('div', { id: 'acIdentifyQuickActions', class: 'ac-row' }, unlockAndIdentify, unlockOnly));
+    }
+
+    function runIdentify(unlock, triggerButton) {
+        var itemId = el('acItemId').value.trim();
+        if (!itemId) {
+            ui.toast('Scegli prima il titolo da correggere.', 'error');
+            el('acItemSearch').focus();
+            return;
+        }
+        var animeClickId = requireValue(el('acAnimeClickId'), CARD_REQUIRED);
+        if (!animeClickId) return;
+        var out = el('acIdentifyResult');
+        var buttonNode = triggerButton || el('acBtnIdentify');
+        ui.setBusy(buttonNode, true, unlock ? 'Sblocco e aggiornamento…' : 'Aggiornamento…');
+        replace(out, h('p', { class: 'ac-status', text: unlock ? 'Sblocco della scheda e verifica in corso…' : 'Verifica della scheda in corso…' }));
+        var payload = { itemId: itemId, animeClickId: animeClickId, replaceAllMetadata: false, replaceAllImages: el('acReplaceAllImages').checked };
+        if (unlock) payload.unlock = true;
+        api.request('POST', 'Plugins/AnimeClick/IdentifyAndRefresh', payload).then(function (response) {
+            renderIdentified(response, itemId, animeClickId);
+        }).catch(function (error) {
+            var message = truncate(error.message, 300);
+            replace(out, ui.callout('Identificazione non riuscita', message, 'bad'));
+            if (error.status === 409 && /bloccata/i.test(message)) renderLockedChoice(itemId);
+            ui.toast('Identificazione non riuscita', 'error');
+        }).finally(function () { ui.setBusy(buttonNode, false); });
+    }
+
+    function buildFixCard() {
         var fix = ui.card({ icon: 'link', title: 'Correggi un abbinamento', text: 'Scegli il titolo nella tua libreria e indica la scheda giusta su AnimeClick. L’aggiornamento continua in background.' });
         var findButton = ui.button('Cerca', { id: 'acBtnFindItem', icon: 'search' });
-        findButton.addEventListener('click', function () { searchLibrary(findButton); });
         var lookupButton = ui.button('Cerca su AnimeClick', { id: 'acBtnLookup', icon: 'search' });
-        lookupButton.addEventListener('click', function () { searchAnimeClick(lookupButton); });
+        var previewButton = ui.button('Anteprima', { id: 'acBtnPreviewCard', icon: 'eye', title: 'Mostra la scheda prima di salvarla' });
         var identifyButton = ui.button('Identifica e aggiorna', { id: 'acBtnIdentify', variant: 'primary', icon: 'check' });
-        var itemSearch = ui.field('acItemSearch', 'Titolo nella libreria', { type: 'search', placeholder: 'Es. Frieren', maxLength: 200, action: findButton });
-        var lookupSearch = ui.field('acAnimeClickSearch', 'Cerca su AnimeClick', { type: 'search', placeholder: 'Titolo su AnimeClick', maxLength: 200, action: lookupButton });
+        var itemSearch = ui.field('acItemSearch', 'Titolo nella libreria', { type: 'search', placeholder: 'Es. Frieren…', maxLength: 200, action: findButton });
+        var lookupSearch = ui.field('acAnimeClickSearch', 'Cerca su AnimeClick', { type: 'search', placeholder: 'Titolo su AnimeClick…', maxLength: 200, action: lookupButton });
+        var idField = ui.field('acAnimeClickId', 'Link o ID AnimeClick', {
+            placeholder: 'https://www.animeclick.it/anime/…', maxLength: 512, spellcheck: false, action: previewButton,
+            hint: 'Scegli un risultato oppure incolla l’indirizzo della scheda da animeclick.it.'
+        });
+
         fix.body.appendChild(h('div', { class: 'ac-stack' },
-            h('p', { class: 'ac-step-title' }, h('span', { class: 'ac-step-num', text: '1' }), 'Quale titolo vuoi correggere?'),
+            h('h3', { class: 'ac-step-title' }, h('span', { class: 'ac-step-num', 'aria-hidden': 'true', text: '1' }), 'Quale titolo vuoi correggere?'),
             itemSearch,
             h('input', { type: 'hidden', id: 'acItemId' }),
             h('div', { id: 'acItemCandidates', 'aria-live': 'polite' }),
             h('div', { id: 'acSelectedItem', class: 'ac-selected' }, h('p', { class: 'ac-muted', text: 'Nessun titolo selezionato.' }))));
         fix.body.appendChild(h('div', { class: 'ac-stack' },
-            h('p', { class: 'ac-step-title' }, h('span', { class: 'ac-step-num', text: '2' }), 'Qual è la scheda giusta?'),
+            h('h3', { class: 'ac-step-title' }, h('span', { class: 'ac-step-num', 'aria-hidden': 'true', text: '2' }), 'Qual è la scheda giusta?'),
             lookupSearch,
             h('div', { id: 'acAnimeClickCandidates', 'aria-live': 'polite' }),
-            ui.field('acAnimeClickId', 'Link o ID AnimeClick', { placeholder: 'https://www.animeclick.it/anime/…', maxLength: 512, spellcheck: false, hint: 'Scegli un risultato oppure incolla l’indirizzo della scheda da animeclick.it.' }),
+            idField,
+            h('div', { id: 'acCardPreview', class: 'ac-stack-s', 'aria-live': 'polite' }),
             ui.check('acReplaceAllImages', 'Sostituisci tutte le immagini', 'Chiede a Jellyfin di rifare le immagini. Lascia spento per tenere le tue locandine.')));
-        var identifyOut = h('div', { id: 'acIdentifyResult', 'aria-live': 'polite' });
         fix.body.appendChild(h('div', { class: 'ac-card-foot' }, identifyButton));
-        fix.body.appendChild(identifyOut);
-        function runIdentify(unlock, triggerBtn) {
-            var itemId = el('acItemId').value.trim();
-            var animeClickId = el('acAnimeClickId').value.trim();
-            if (!itemId || !animeClickId) { ui.toast('Scegli un titolo e indica la scheda AnimeClick.', 'error'); return; }
-            var btn = triggerBtn || identifyButton;
-            ui.setBusy(btn, true, unlock ? 'Sblocco e aggiornamento…' : 'Aggiornamento…');
-            replace(identifyOut, h('p', { class: 'ac-status', text: unlock ? 'Sblocco della scheda e verifica in corso…' : 'Verifica della scheda in corso…' }));
-            var payload = {
-                itemId: itemId, animeClickId: animeClickId, replaceAllMetadata: false, replaceAllImages: el('acReplaceAllImages').checked
-            };
-            if (unlock) payload.unlock = true;
-            api.request('POST', 'Plugins/AnimeClick/IdentifyAndRefresh', payload).then(function (response) {
-                var success = !!val(response, 'success');
-                var unlockedCount = val(response, 'unlockedCount') || 0;
-                var msg = success
-                    ? (unlockedCount ? 'Scheda sbloccata, ID AnimeClick salvato e aggiornamento avviato.' : 'L’ID AnimeClick è salvato e l’aggiornamento è partito.')
-                    : truncate(val(response, 'error') || 'Errore sconosciuto.', 300);
-                replace(identifyOut, ui.callout(success ? 'Abbinamento salvato' : 'Operazione incompleta', msg, success ? 'ok' : 'warn'));
-                var quickRow = h('div', { id: 'acIdentifyQuickActions', class: 'ac-row' });
-                if (!success) {
-                    var retryRefresh = ui.button('Aggiorna metadati ora', { id: 'acBtnRetryRefresh', small: true, variant: 'primary', icon: 'refresh' });
-                    retryRefresh.addEventListener('click', function () {
-                        ui.setBusy(retryRefresh, true, 'Accodamento…');
-                        api.request('POST', 'Plugins/AnimeClick/RefreshItem', {
-                            itemId: itemId, replaceAllMetadata: false, replaceAllImages: el('acReplaceAllImages').checked
-                        }).then(function () {
-                            ui.toast('Aggiornamento dei metadati avviato', 'success');
-                            retryRefresh.remove();
-                        }).catch(function (err) {
-                            ui.toast(truncate(err.message, 240), 'error');
-                            ui.setBusy(retryRefresh, false);
-                        });
-                    });
-                    quickRow.appendChild(retryRefresh);
-                }
-                var returnKey = identify.item && val(identify.item, 'returnToKey');
-                if (returnKey) {
-                    var backBtn = ui.button('Torna alla scheda in Libreria', { id: 'acBtnBackToLibrary', small: true, variant: 'ghost', icon: 'arrowLeft' });
-                    backBtn.addEventListener('click', function () {
-                        AC.app.go('library');
-                        if (AC.library && AC.library.loadReports) {
-                            AC.library.loadReports(true).then(function () {
-                                if (AC.library.openDetail) AC.library.openDetail(returnKey);
-                            });
-                        }
-                    });
-                    quickRow.appendChild(backBtn);
-                }
-                if (quickRow.childNodes.length) identifyOut.appendChild(quickRow);
-                if (unlockedCount && el('acSelectedItemLockState')) {
-                    replace(el('acSelectedItemLockState'), ui.badge('Sbloccata', 'ok', 'check'));
-                }
-                var savedCard = val(response, 'animeClickId') || animeClickId;
-                if (savedCard && el('acFallbackAnimeId')) el('acFallbackAnimeId').value = savedCard;
-                var community = val(response, 'communityMessage');
-                var proposal = val(response, 'communityProposal');
-                if (success && proposal) renderShareOffer(identifyOut, itemId, proposal);
-                else if (community && community !== 'Disattivata') identifyOut.appendChild(h('p', { class: 'ac-hint', text: community }));
-                if (success && community && community !== 'Disattivata') AC.bus.emit('community-changed');
-                ui.toast(success ? 'Abbinamento salvato' : 'Identificazione incompleta', success ? 'success' : 'error');
-                if (success) AC.bus.emit('library-changed');
-            }).catch(function (error) {
-                var errText = truncate(error.message, 300);
-                var isLockedError = error.status === 409 && /bloccata/i.test(errText);
-                replace(identifyOut, ui.callout('Identificazione non riuscita', errText, 'bad'));
-                if (isLockedError) {
-                    var unlockAndIdentifyBtn = ui.button('Sblocca e identifica ora', { id: 'acBtnUnlockAndIdentify', variant: 'primary', small: true, icon: 'check' });
-                    unlockAndIdentifyBtn.addEventListener('click', function () {
-                        runIdentify(true, unlockAndIdentifyBtn);
-                    });
-                    var unlockOnlyBtn = ui.button('Solo sblocca', { id: 'acBtnUnlockOnly', variant: 'ghost', small: true, icon: 'lock' });
-                    unlockOnlyBtn.addEventListener('click', function () {
-                        ui.setBusy(unlockOnlyBtn, true, 'Sblocco…');
-                        api.request('POST', 'Plugins/AnimeClick/UnlockItem', { itemId: itemId, includeChildren: true }).then(function () {
-                            if (el('acSelectedItemLockState')) replace(el('acSelectedItemLockState'), ui.badge('Sbloccata', 'ok', 'check'));
-                            replace(identifyOut, ui.callout('Scheda sbloccata', 'Il blocco in Jellyfin è stato rimosso. Ora puoi premere «Identifica e aggiorna».', 'ok'));
-                            ui.toast('Scheda sbloccata in Jellyfin', 'success');
-                            AC.bus.emit('library-changed');
-                        }).catch(function (err) {
-                            ui.toast(truncate(err.message, 240), 'error');
-                            ui.setBusy(unlockOnlyBtn, false);
-                        });
-                    });
-                    identifyOut.appendChild(h('div', { id: 'acIdentifyQuickActions', class: 'ac-row' }, unlockAndIdentifyBtn, unlockOnlyBtn));
-                }
-                ui.toast('Identificazione non riuscita', 'error');
-            }).finally(function () { ui.setBusy(btn, false); });
-        }
+        fix.body.appendChild(h('div', { id: 'acIdentifyResult', 'aria-live': 'polite' }));
 
+        findButton.addEventListener('click', function () { searchLibrary(findButton); });
+        lookupButton.addEventListener('click', function () { searchAnimeClick(lookupButton); });
+        previewButton.addEventListener('click', previewCard);
         identifyButton.addEventListener('click', function () { runIdentify(false, identifyButton); });
-        el2(fix.body, 'acItemSearch').addEventListener('keydown', function (event) {
-            if (event.key === 'Enter') { event.preventDefault(); searchLibrary(findButton); }
+        onEnter(fieldControl(itemSearch), function () { searchLibrary(findButton); });
+        onEnter(fieldControl(lookupSearch), function () { searchAnimeClick(lookupButton); });
+        onEnter(fieldControl(idField), function () { runIdentify(false, identifyButton); });
+        fieldControl(idField).addEventListener('input', function () {
+            // A preview describes the card that was in the field: once the field changes it is stale.
+            discardPreview();
+            ui.fieldError(fieldControl(idField), '');
         });
-        el2(fix.body, 'acAnimeClickSearch').addEventListener('keydown', function (event) {
-            if (event.key === 'Enter') { event.preventDefault(); searchAnimeClick(lookupButton); }
-        });
-        el2(fix.body, 'acAnimeClickId').addEventListener('keydown', function (event) {
-            if (event.key === 'Enter') { event.preventDefault(); runIdentify(false, identifyButton); }
-        });
+        return fix.card;
+    }
 
-        var probe = ui.card({ icon: 'flask', title: 'Da dove arriva questa trama?', text: 'Esegue la catena delle fonti salvata su un episodio e mostra quale fonte risponde.' });
-        var probeButton = ui.button('Esegui la catena', { id: 'acBtnPreviewFallback', icon: 'play' });
-        var probeBackHost = h('span', { id: 'acProbeBackHost', class: 'ac-row' });
-        var probeOut = h('div', { id: 'acFallbackResult', class: 'ac-stack-s', 'aria-live': 'polite' });
-        probe.body.appendChild(h('div', { class: 'ac-cols-3' },
-            ui.field('acFallbackAnimeId', 'ID AnimeClick', { placeholder: 'Es. 72/naruto', spellcheck: false }),
-            ui.field('acFallbackSeason', 'Stagione', { type: 'number', min: '0', hint: '0 per gli speciali.' }),
-            ui.field('acFallbackEpisode', 'Episodio', { type: 'number', min: '0' })));
-        el2(probe.body, 'acFallbackSeason').value = '1';
-        el2(probe.body, 'acFallbackEpisode').value = '1';
-        ['acFallbackAnimeId', 'acFallbackSeason', 'acFallbackEpisode'].forEach(function (fieldId) {
-            el2(probe.body, fieldId).addEventListener('keydown', function (event) {
-                if (event.key === 'Enter') { event.preventDefault(); probeButton.click(); }
-            });
-        });
-        probe.body.appendChild(h('div', { class: 'ac-row' }, probeButton, probeBackHost));
-        probe.body.appendChild(probeOut);
-        probeButton.addEventListener('click', function () {
-            var id = el('acFallbackAnimeId').value.trim();
-            var season = parseInt(el('acFallbackSeason').value, 10);
-            var episode = parseInt(el('acFallbackEpisode').value, 10);
-            if (!id || isNaN(season) || isNaN(episode)) { ui.toast('Inserisci ID AnimeClick, stagione ed episodio.', 'error'); return; }
-            var runProbe = function () {
-                ui.setBusy(probeButton, true, 'Analisi…');
-                return api.request('POST', 'Plugins/AnimeClick/PreviewEpisodeFallback', { animeClickId: id, season: season, episode: episode })
-                    .then(renderProbe).catch(function (error) {
-                        renderProbe({ success: false, errorMessage: truncate(error.message, 300), chain: [] });
-                    }).finally(function () { ui.setBusy(probeButton, false); });
-            };
-            if (dirty) {
-                ui.setBusy(probeButton, true, 'Salvataggio e analisi…');
-                save().then(runProbe).catch(function () { ui.setBusy(probeButton, false); });
-                return;
-            }
-            runProbe();
-        });
+    /* ===== Strumenti: da dove arriva questa trama? ===== */
 
-        function renderProbe(result) {
-            clear(probeOut);
-            var epTitle = val(result, 'episodeTitle');
-            if (epTitle) {
-                probeOut.appendChild(h('div', { class: 'ac-row' },
-                    ui.badge('Titolo AnimeClick', 'info', 'title'),
-                    h('strong', { text: epTitle })));
-            }
-            if (!val(result, 'success')) {
-                probeOut.appendChild(ui.callout('Nessuna fonte disponibile', val(result, 'errorMessage') || 'La catena non ha prodotto una trama.', 'warn'));
-            } else {
-                probeOut.appendChild(h('div', { class: 'ac-row' },
-                    ui.badge(val(result, 'source') || 'Fonte', 'ok'), ui.badge(val(result, 'sourceLanguage') || 'it'),
-                    val(result, 'usedAi') ? ui.badge(val(result, 'model') || 'AI', 'warn') : null));
-                probeOut.appendChild(h('p', { class: 'ac-preview-text', text: val(result, 'overview') }));
-            }
-            if (!val(result, 'animeClickMatchConclusive')) {
-                probeOut.appendChild(ui.hint('Prova indicativa: usa solo serie, stagione e numero. Il vero aggiornamento considera anche titolo, file e struttura della libreria.'));
-            }
-            var steps = list(val(result, 'chain'));
-            if (steps.length) {
-                probeOut.appendChild(h('div', { class: 'ac-chain' }, steps.map(function (step, index) {
-                    var on = !!val(step, 'configured');
-                    return [index ? icon('chevronRight', 'ac-chain-arrow') : null,
-                        h('span', { class: 'ac-chain-step' + (on ? ' is-on' : '') }, h('span', { class: 'ac-led' + (on ? ' is-ok' : '') }),
-                            (val(step, 'source') || 'Fonte') + ' · ' + (val(step, 'language') || ''))];
-                })));
-            }
+    function renderProbe(result) {
+        var out = el('acFallbackResult');
+        clear(out);
+        var episodeTitle = val(result, 'episodeTitle');
+        if (episodeTitle) {
+            out.appendChild(h('div', { class: 'ac-row' }, ui.badge('Titolo AnimeClick', 'info', 'title'), h('strong', { text: episodeTitle })));
         }
+        if (!val(result, 'success')) {
+            out.appendChild(ui.callout('Nessuna fonte disponibile', val(result, 'errorMessage') || 'La catena non ha prodotto una trama.', 'warn'));
+        } else {
+            out.appendChild(h('div', { class: 'ac-row' },
+                ui.badge(val(result, 'source') || 'Fonte', 'ok'), ui.badge(val(result, 'sourceLanguage') || 'it'),
+                val(result, 'usedAi') ? ui.badge(val(result, 'model') || 'AI', 'warn') : null));
+            out.appendChild(h('p', { class: 'ac-preview-text', text: val(result, 'overview') }));
+        }
+        if (!val(result, 'animeClickMatchConclusive')) {
+            out.appendChild(ui.hint('Prova indicativa: usa solo serie, stagione e numero. Il vero aggiornamento considera anche titolo, file e struttura della libreria.'));
+        }
+        var steps = list(val(result, 'chain'));
+        if (steps.length) {
+            out.appendChild(h('div', { class: 'ac-chain' }, steps.map(function (step, index) {
+                var on = !!val(step, 'configured');
+                return [index ? icon('chevronRight', 'ac-chain-arrow') : null,
+                    h('span', { class: 'ac-chain-step' + (on ? ' is-on' : '') }, h('span', { class: 'ac-led' + (on ? ' is-ok' : '') }),
+                        (val(step, 'source') || 'Fonte') + ' · ' + (val(step, 'language') || ''))];
+            })));
+        }
+    }
 
-        var maintenance = ui.card({ icon: 'database', title: 'Cache e setup', text: 'Svuota la cache solo per forzare una nuova lettura di tutti i metadati.' });
+    function runProbe() {
+        var buttonNode = el('acBtnPreviewFallback');
+        var id = requireValue(el('acFallbackAnimeId'), 'Indica la scheda AnimeClick della serie.');
+        var season = parseInt(requireValue(el('acFallbackSeason'), 'Indica la stagione.'), 10);
+        var episode = parseInt(requireValue(el('acFallbackEpisode'), 'Indica l’episodio.'), 10);
+        if (!id || isNaN(season) || isNaN(episode)) return;
+
+        // The chain runs with the saved settings, so pending edits are saved first.
+        ui.setBusy(buttonNode, true, dirty ? 'Salvataggio e analisi…' : 'Analisi…');
+        (dirty ? save() : Promise.resolve()).then(function () {
+            return api.request('POST', 'Plugins/AnimeClick/PreviewEpisodeFallback', { animeClickId: id, season: season, episode: episode })
+                .then(renderProbe, function (error) {
+                    renderProbe({ success: false, errorMessage: truncate(error.message, 300), chain: [] });
+                });
+        }, function (error) {
+            if (!error.reported) ui.toast('Salvataggio non riuscito: ' + truncate(error.message, 240), 'error');
+        }).finally(function () { ui.setBusy(buttonNode, false); });
+    }
+
+    function buildProbeCard() {
+        var probe = ui.card({ icon: 'flask', title: 'Da dove arriva questa trama?', text: 'Esegue la catena delle fonti salvata su un episodio e mostra quale fonte risponde.' });
+        var probeButton = ui.button('Esegui la catena', { id: 'acBtnPreviewFallback', icon: 'play', onClick: runProbe });
+        var fields = [
+            ui.field('acFallbackAnimeId', 'ID AnimeClick', { placeholder: 'Es. 72/naruto…', spellcheck: false }),
+            ui.field('acFallbackSeason', 'Stagione', { type: 'number', min: '0', inputmode: 'numeric', hint: '0 per gli speciali.' }),
+            ui.field('acFallbackEpisode', 'Episodio', { type: 'number', min: '0', inputmode: 'numeric' })
+        ];
+        fieldControl(fields[1]).value = '1';
+        fieldControl(fields[2]).value = '1';
+        fields.forEach(function (fieldNode) { onEnter(fieldControl(fieldNode), runProbe); });
+        probe.body.appendChild(h('div', { class: 'ac-cols-3' }, fields));
+        probe.body.appendChild(h('div', { class: 'ac-row' }, probeButton, h('span', { id: 'acProbeBackHost', class: 'ac-row' })));
+        probe.body.appendChild(h('div', { id: 'acFallbackResult', class: 'ac-stack-s', 'aria-live': 'polite' }));
+        return probe.card;
+    }
+
+    /* ===== Strumenti: manutenzione ===== */
+
+    /* The server decides which source a cache entry belongs to; the page only names the sources. */
+    var CACHE_GROUPS = {
+        animeclick: 'AnimeClick', translation: 'Traduzioni AI', tmdb: 'TMDB', tvdb: 'TheTVDB', anilist: 'AniList',
+        fanart: 'Fanart', community: 'Comunità', ledger: 'Registro dei tentativi'
+    };
+    var cacheStats = { at: 0, loading: null };
+
+    function renderCacheStats(stats) {
+        var host = el('acCacheStats');
+        if (!host) return;
+        var entries = val(stats, 'entries') || 0;
+        if (!entries) {
+            replace(host, h('p', { class: 'ac-muted', text: 'La cache è vuota: i metadati verranno letti al prossimo aggiornamento.' }));
+            return;
+        }
+        var oldest = AC.util.relTime(val(stats, 'oldestEntryUtc'));
+        replace(host,
+            h('p', { id: 'acCacheSummary' }, h('strong', { text: AC.util.plural(entries, 'elemento', 'elementi') }), ' · ' + AC.util.bytes(val(stats, 'bytes'))
+                + (oldest ? ' · il più vecchio: ' + oldest : '')),
+            h('ul', { class: 'ac-cache-groups' }, list(val(stats, 'groups')).map(function (group) {
+                return h('li', null, h('span', { text: CACHE_GROUPS[val(group, 'id')] || val(group, 'id') }),
+                    h('span', { class: 'ac-muted', text: AC.util.num(val(group, 'entries')) + ' · ' + AC.util.bytes(val(group, 'bytes')) }));
+            })));
+    }
+
+    /**
+     * Counting the cache means reading the attributes of every file in it: the numbers are asked
+     * again only when a minute has passed or the cache has just been emptied (`force`).
+     */
+    function loadCacheStats(force) {
+        var host = el('acCacheStats');
+        if (!host) return Promise.resolve();
+        if (cacheStats.loading) return cacheStats.loading;
+        if (!force && Date.now() - cacheStats.at < 60000) return Promise.resolve();
+        cacheStats.loading = api.request('GET', 'Plugins/AnimeClick/CacheStats').then(function (stats) {
+            cacheStats.at = Date.now();
+            renderCacheStats(stats);
+        }).catch(function (error) {
+            replace(host, h('p', { class: 'ac-status is-bad', text: 'Stato della cache non disponibile: ' + truncate(error.message, 200) }));
+        }).finally(function () { cacheStats.loading = null; });
+        return cacheStats.loading;
+    }
+
+    function clearAllCache(buttonNode) {
+        ui.confirm({
+            title: 'Svuotare tutta la cache?',
+            message: ['Metadati, abbinamenti e traduzioni memorizzati verranno riletti al prossimo aggiornamento.',
+                'Le traduzioni AI già fatte andranno rifatte: con un servizio a pagamento hanno un costo.'],
+            confirmLabel: 'Svuota', tone: 'danger'
+        }).then(function (yes) {
+            if (!yes) return;
+            var out = el('acCacheResult');
+            ui.setBusy(buttonNode, true, 'Svuotamento…');
+            api.request('POST', 'Plugins/AnimeClick/ClearCache', {}).then(function (response) {
+                ui.status(out, 'Cache svuotata: ' + AC.util.plural(val(response, 'removed') || 0, 'elemento', 'elementi') + '.', 'ok');
+                ui.toast('Cache svuotata', 'success');
+                return loadCacheStats(true);
+            }).catch(function (error) { ui.status(out, truncate(error.message, 240), 'bad'); })
+                .finally(function () { ui.setBusy(buttonNode, false); });
+        });
+    }
+
+    /** Hands a JSON document to the browser as a file; nothing is sent anywhere. */
+    function downloadJson(fileName, content) {
+        var url = URL.createObjectURL(new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' }));
+        var link = h('a', { href: url, download: fileName });
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    /**
+     * Copies text to the clipboard. The asynchronous clipboard exists only on HTTPS and localhost,
+     * and a Jellyfin reached by its LAN address is neither: there the selection of a temporary
+     * field is copied instead.
+     */
+    function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+        return new Promise(function (resolve, reject) {
+            var holder = h('textarea', { class: 'ac-offscreen', 'aria-hidden': 'true', tabIndex: -1 });
+            holder.value = text;
+            document.body.appendChild(holder);
+            holder.select();
+            var copied = false;
+            try { copied = document.execCommand('copy'); } catch (error) { copied = false; }
+            holder.remove();
+            if (copied) resolve(); else reject(new Error('il browser non permette la copia: scarica il rapporto.'));
+        });
+    }
+
+    function diagnosticReport(buttonNode, deliver) {
+        var out = el('acReportResult');
+        ui.setBusy(buttonNode, true, 'Preparazione…');
+        api.request('GET', 'Plugins/AnimeClick/DiagnosticReport').then(deliver).then(function (message) {
+            ui.status(out, message, 'ok');
+        }).catch(function (error) {
+            ui.status(out, 'Rapporto non riuscito: ' + truncate(error.message, 200), 'bad');
+        }).finally(function () { ui.setBusy(buttonNode, false); });
+    }
+
+    function buildMaintenanceCard() {
+        var maintenance = ui.card({ icon: 'database', title: 'Cache e manutenzione', text: 'Quello che il plugin ha già letto resta in cache: svuotala solo per forzare una nuova lettura.' });
         var clearButton = ui.button('Svuota tutta la cache', { id: 'acBtnClearCache', variant: 'danger', icon: 'trash' });
-        var cacheOut = ui.liveStatus('acCacheResult');
-        clearButton.addEventListener('click', function () {
-            ui.confirm({ title: 'Svuotare tutta la cache?', message: 'Metadati, abbinamenti e traduzioni memorizzati verranno riletti al prossimo aggiornamento.', confirmLabel: 'Svuota', tone: 'danger' }).then(function (yes) {
-                if (!yes) return;
-                ui.setBusy(clearButton, true, 'Svuotamento…');
-                api.request('POST', 'Plugins/AnimeClick/ClearCache', {}).then(function (response) {
-                    ui.status(cacheOut, 'Cache svuotata: ' + (val(response, 'removed') || 0) + ' elementi.', 'ok');
-                    ui.toast('Cache svuotata', 'success');
-                }).catch(function (error) { ui.status(cacheOut, truncate(error.message, 240), 'bad'); })
-                    .finally(function () { ui.setBusy(clearButton, false); });
+        clearButton.addEventListener('click', function () { clearAllCache(clearButton); });
+        var setupButton = ui.button('Riapri il setup guidato', { id: 'acBtnReopenSetup', icon: 'sparkles', variant: 'ghost', onClick: function () { AC.setup.open('full'); } });
+        var download = ui.button('Scarica il rapporto', { id: 'acBtnReportDownload', icon: 'download', small: true });
+        download.addEventListener('click', function () {
+            diagnosticReport(download, function (report) {
+                downloadJson('animeclick-diagnostica.json', report);
+                return 'Rapporto scaricato: allegalo alla segnalazione.';
             });
         });
-        var setupButton = ui.button('Riapri il setup guidato', { id: 'acBtnReopenSetup', icon: 'sparkles', variant: 'ghost', onClick: function () { AC.setup.open('full'); } });
-        maintenance.body.appendChild(h('div', { class: 'ac-row' }, clearButton, setupButton));
-        maintenance.body.appendChild(cacheOut);
+        var copy = ui.button('Copia', { id: 'acBtnReportCopy', icon: 'copy', small: true, variant: 'ghost' });
+        copy.addEventListener('click', function () {
+            diagnosticReport(copy, function (report) {
+                return copyText(JSON.stringify(report, null, 2)).then(function () {
+                    copy.focus();
+                    return 'Rapporto copiato: incollalo nella segnalazione.';
+                });
+            });
+        });
 
+        maintenance.body.appendChild(h('div', { id: 'acCacheStats', class: 'ac-stack-s', 'aria-live': 'polite' }, ui.skeleton(64)));
+        maintenance.body.appendChild(h('div', { class: 'ac-row' }, clearButton, setupButton));
+        maintenance.body.appendChild(ui.liveStatus('acCacheResult'));
+        maintenance.body.appendChild(h('div', { class: 'ac-stack-s ac-subsection' },
+            h('h3', { class: 'ac-h3', text: 'Rapporto diagnostico' }),
+            h('p', { class: 'ac-hint', text: 'Per segnalare un problema: versioni, impostazioni senza chiavi, stato di librerie e cache. Non contiene titoli, percorsi, indirizzi o token.' }),
+            h('div', { class: 'ac-row' }, download, copy),
+            ui.liveStatus('acReportResult')));
+
+        AC.bus.on('view', function (name) { if (name === 'tools') loadCacheStats(false); });
+        return maintenance.card;
+    }
+
+    function buildAdvancedCard() {
         var advanced = ui.card({ icon: 'sliders', title: 'Parametri avanzati', text: 'Da toccare solo per diagnosi o se AnimeClick cambia comportamento.' });
         advanced.body.appendChild(ui.details('Ricerca, rete e compatibilità', [
             h('div', { class: 'ac-cols-2' },
-                ui.field('acMaxSearchResults', 'Risultati di ricerca', { type: 'number', min: '1', max: '50', key: 'MaxSearchResults', hint: 'Da 1 a 50.' }),
-                ui.field('acCacheHours', 'Durata della cache (ore)', { type: 'number', min: '1', max: '8760', key: 'CacheHours', hint: 'Da 1 a 8760.' }),
-                ui.field('acNegativeCacheHours', 'Attesa dopo una ricerca vuota (ore)', { type: 'number', min: '0', max: '8760', key: 'NegativeCacheHours', hint: '0 non ricorda le ricerche vuote.' }),
-                ui.field('acRequestDelayMilliseconds', 'Pausa fra le richieste (ms)', { type: 'number', min: '500', max: '60000', key: 'RequestDelayMilliseconds', hint: 'Almeno 500, per rispetto di AnimeClick.' })),
+                ui.field('acMaxSearchResults', 'Risultati di ricerca', { type: 'number', min: '1', max: '50', key: 'MaxSearchResults', inputmode: 'numeric', hint: 'Da 1 a 50.' }),
+                ui.field('acCacheHours', 'Durata della cache (ore)', { type: 'number', min: '1', max: '8760', key: 'CacheHours', inputmode: 'numeric', hint: 'Da 1 a 8760.' }),
+                ui.field('acNegativeCacheHours', 'Attesa dopo una ricerca vuota (ore)', { type: 'number', min: '0', max: '8760', key: 'NegativeCacheHours', inputmode: 'numeric', hint: '0 non ricorda le ricerche vuote.' }),
+                ui.field('acRequestDelayMilliseconds', 'Pausa fra le richieste (ms)', { type: 'number', min: '500', max: '60000', key: 'RequestDelayMilliseconds', inputmode: 'numeric', hint: 'Almeno 500, per rispetto di AnimeClick.' })),
             ui.field('acBaseUrl', 'Indirizzo di AnimeClick', { type: 'url', key: 'BaseUrl', spellcheck: false, hint: 'Cambialo solo se il sito cambia dominio.' }),
             ui.field('acUserAgent', 'User-Agent', { key: 'UserAgent', spellcheck: false, hint: 'Come il plugin si presenta al sito.' })
         ]));
@@ -1047,14 +1285,15 @@
             ui.callout('Solo per serie con numerazione eccezionale', 'Una riga per serie: ID=flat, ID=explicit oppure ID=13,24 con i confini cumulativi delle stagioni. Righe vuote, commenti con # e righe non valide vengono ignorati. Un override sbagliato può impedire un abbinamento che il riconoscimento automatico avrebbe trovato.', 'warn'),
             ui.field('acEpisodeLayoutOverrides', 'Override del layout', { multiline: true, rows: 6, key: 'EpisodeLayoutOverrides', spellcheck: false, placeholder: '# Solo eccezioni confermate\n72=flat\n456=13,24', hint: 'In 13,24 la stagione 1 termina all’episodio globale 13 e la 2 al 24.' })
         ]));
-
-        view.appendChild(fix.card);
-        view.appendChild(h('div', { class: 'ac-cols-2' }, probe.card, maintenance.card));
-        view.appendChild(advanced.card);
+        return advanced.card;
     }
 
-    function el2(root, id) {
-        return root.querySelector('#' + id);
+    function buildTools(view) {
+        view.appendChild(ui.sectionHead('ツール', 'Strumenti', 'Sistema, verifica, regola',
+            'Correggi un abbinamento sbagliato, controlla da dove arriva una trama e regola i parametri avanzati.'));
+        view.appendChild(buildFixCard());
+        view.appendChild(h('div', { class: 'ac-cols-2' }, buildProbeCard(), buildMaintenanceCard()));
+        view.appendChild(buildAdvancedCard());
     }
 
     /** Opens Strumenti with a title already chosen, e.g. from the library detail panel. */
@@ -1062,43 +1301,26 @@
         AC.app.go('tools');
         pickItem(item);
         var target = el('acAnimeClickSearch');
-        if (target) {
-            target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            if (target.value.trim().length >= 2 && el('acBtnLookup')) {
-                searchAnimeClick(el('acBtnLookup'));
-            }
-        }
-        if (el('acAnimeClickId')) el('acAnimeClickId').value = '';
+        AC.dom.reveal(target, 'center');
+        target.focus({ preventScroll: true });
+        if (target.value.trim().length >= 2) searchAnimeClick(el('acBtnLookup'));
     }
 
     /** Opens Strumenti → Da dove arriva questa trama? pre-filled for an episode and runs the probe. */
     function startProbe(options) {
         options = options || {};
         AC.app.go('tools');
-        var idInput = el('acFallbackAnimeId');
-        var seasonInput = el('acFallbackSeason');
-        var episodeInput = el('acFallbackEpisode');
-        if (idInput && options.animeClickId) idInput.value = options.animeClickId;
-        if (seasonInput) seasonInput.value = String(options.season != null ? options.season : 1);
-        if (episodeInput) episodeInput.value = String(options.episode != null ? options.episode : 1);
-        var backHost = el('acProbeBackHost');
-        if (backHost) {
-            clear(backHost);
-            if (options.returnToKey) {
-                backHost.appendChild(ui.button('Torna alla libreria', {
-                    id: 'acBtnProbeReturnLibrary', small: true, variant: 'ghost', icon: 'arrowLeft',
-                    onClick: function () {
-                        AC.app.go('library');
-                        if (AC.library && AC.library.openDetail) AC.library.openDetail(options.returnToKey);
-                    }
-                }));
-            }
-        }
-        var btn = el('acBtnPreviewFallback');
-        if (btn) {
-            btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            btn.click();
-        }
+        if (options.animeClickId) el('acFallbackAnimeId').value = options.animeClickId;
+        el('acFallbackSeason').value = String(options.season != null ? options.season : 1);
+        el('acFallbackEpisode').value = String(options.episode != null ? options.episode : 1);
+        replace(el('acProbeBackHost'), options.returnToKey ? ui.button('Torna alla libreria', {
+            id: 'acBtnProbeReturnLibrary', small: true, variant: 'ghost', icon: 'arrowLeft',
+            onClick: function () { returnToLibrary(options.returnToKey); }
+        }) : null);
+        var buttonNode = el('acBtnPreviewFallback');
+        AC.dom.reveal(buttonNode, 'center');
+        buttonNode.focus({ preventScroll: true });
+        runProbe();
     }
 
     /* ===== Comunità ===== */
@@ -1256,7 +1478,7 @@
         retryButton.addEventListener('click', function () {
             ui.setBusy(retryButton, true, 'Riprovo…');
             api.request('POST', 'Plugins/AnimeClick/Community/Retry').then(function () { return loadProposals(); })
-                .catch(function (error) { ui.status(queueOut, error.message, 'bad'); })
+                .catch(function (error) { ui.status(queueOut, truncate(error.message, 240), 'bad'); })
                 .finally(function () { ui.setBusy(retryButton, false); });
         });
         AC.bus.on('community-changed', function () { if (!view.hidden) loadProposals(); });
@@ -1271,21 +1493,16 @@
             ui.setBusy(previewButton, true, 'Caricamento…');
             api.request('GET', 'Plugins/AnimeClick/Community/Preview?itemId=' + encodeURIComponent(id)).then(function (mapping) {
                 previewOut.textContent = describeMapping(mapping) + '\n\n' + JSON.stringify(mapping, null, 2);
-            }).catch(function (error) { previewOut.textContent = error.message; })
+            }).catch(function (error) { previewOut.textContent = truncate(error.message, 240); })
                 .finally(function () { ui.setBusy(previewButton, false); });
         });
         var exportButton = ui.button('Esporta i collegamenti della libreria', { id: 'acCommunityExport', icon: 'download', variant: 'ghost', small: true });
         exportButton.addEventListener('click', function () {
             ui.setBusy(exportButton, true, 'Esportazione…');
             api.request('GET', 'Plugins/AnimeClick/Community/Export').then(function (dataset) {
-                var url = URL.createObjectURL(new Blob([JSON.stringify(dataset, null, 2)], { type: 'application/json' }));
-                var link = h('a', { href: url, download: 'animeclick-abbinamenti.json' });
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+                downloadJson('animeclick-abbinamenti.json', dataset);
                 ui.toast('File scaricato: nulla è stato pubblicato.', 'success');
-            }).catch(function (error) { ui.toast('Esportazione non riuscita: ' + error.message, 'error'); })
+            }).catch(function (error) { ui.toast('Esportazione non riuscita: ' + truncate(error.message, 200), 'error'); })
                 .finally(function () { ui.setBusy(exportButton, false); });
         });
 
@@ -1330,8 +1547,11 @@
             acAiProvider: 'ai', acAiModel: 'ai', acAiApiKey: 'ai', acAiEndpoint: 'ai', acClearAiKey: 'ai', acEnableAiTranslation: 'ai'
         };
         function onEdit(event) {
-            var source = event && event.target && sourceFields[event.target.id];
+            var target = event && event.target;
+            var source = target && sourceFields[target.id];
             if (source) delete verified[source];
+            // The problem shown under a field belongs to the value that was there.
+            if (target && target.getAttribute('aria-invalid')) ui.fieldError(target, '');
             markDirty();
         }
         bound().forEach(function (control) {
@@ -1357,12 +1577,13 @@
         buildSaveBar: buildSaveBar,
         wire: wire,
         load: function (config) { loaded = true; loadForm(config); loadAiProviders(); },
-        unload: function () { loaded = false; saved = null; dirty = false; verified = {}; },
+        unload: function () { loaded = false; saved = null; dirty = false; verified = {}; cacheStats.at = 0; },
         save: save,
         savePatch: savePatch,
         saved: function () { return saved; },
         isDirty: function () { return dirty; },
         sourceState: sourceState,
+        pointAt: pointAt,
         startIdentify: startIdentify,
         startProbe: startProbe,
         runTest: function (source, payload) {

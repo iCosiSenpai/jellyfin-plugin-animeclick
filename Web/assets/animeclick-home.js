@@ -17,14 +17,11 @@
     var showcaseLoading = null;
     var heroIndex = 0;
     var heroTimer = null;
-    var heroPaused = false;
+    var heroHeld = false;      // the pointer or the focus is on the showcase
+    var heroStopped = false;   // the administrator pressed pause: stays so until play
 
     function el(id) {
         return page ? page.querySelector('#' + id) : null;
-    }
-
-    function reducedMotion() {
-        return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     }
 
     /* ===== libraries (shared with the setup) ===== */
@@ -93,6 +90,10 @@
         });
     }
 
+    function showLibraries() {
+        AC.dom.reveal(el('acHomeLibraries'));
+    }
+
     /* ===== showcase ===== */
 
     function loadShowcase(force) {
@@ -110,24 +111,29 @@
         return list(val(showcase, 'items')).slice(0, HERO_ITEMS);
     }
 
+    /** The showcase rotates on its own only when nothing asks it not to. */
+    function heroRotates(items) {
+        return items.length > 1 && !heroStopped && !AC.dom.reducedMotion();
+    }
+
     function renderHero() {
         var host = el('acHomeHero');
         if (!host) return;
         stopHero();
-        heroPaused = false;
+        heroHeld = false;
         var items = heroItems();
         if (!items.length) {
             replace(host, h('section', { class: 'ac-hero ac-hero--empty', 'aria-label': 'Vetrina' },
                 h('div', { class: 'ac-hero-lines' }), h('div', { class: 'ac-hero-tone' }),
                 h('div', { class: 'ac-hero-body' },
-                    h('img', { class: 'ac-hero-mascot', src: api.asset('AnimeClickMascot'), alt: '' }),
+                    h('img', { class: 'ac-hero-mascot', src: api.asset('AnimeClickMascot'), alt: '', width: 360, height: 367 }),
                     h('div', { class: 'ac-hero-copy' },
                         h('span', { class: 'ac-hero-kicker' }, icon('sparkles'), 'La tua vetrina'),
                         h('h1', { class: 'ac-hero-title', text: 'Qui compariranno i tuoi anime' }),
                         h('p', { class: 'ac-hero-overview', text: 'Ogni volta che Jellyfin aggiorna un anime con AnimeClick, lo trovi qui con locandina, trama e generi in italiano.' }),
                         h('div', { class: 'ac-row' }, ui.button('Controlla le librerie', {
                             variant: 'primary', icon: 'folder',
-                            onClick: function () { var target = el('acHomeLibraries'); if (target) target.scrollIntoView({ behavior: 'smooth' }); }
+                            onClick: showLibraries
                         }))))));
             return;
         }
@@ -143,7 +149,16 @@
         meta.push(ui.badge(val(item, 'type') === 'Movie' ? 'Film' : 'Serie'));
         genres.forEach(function (genre) { meta.push(ui.badge(genre)); });
         if (val(item, 'communityRating')) meta.push(h('span', { text: '★ ' + Number(val(item, 'communityRating')).toFixed(1) }));
-        var dots = items.length > 1 ? h('div', { class: 'ac-hero-nav', role: 'group', 'aria-label': 'Scegli l’anime in vetrina' }, items.map(function (other, index) {
+        var toggle = null;
+        if (items.length > 1 && !AC.dom.reducedMotion()) {
+            // Content that changes by itself needs a way to stop it (WCAG 2.2.2).
+            toggle = h('button', {
+                type: 'button', class: 'ac-hero-toggle', id: 'acHeroToggle',
+                'aria-label': heroStopped ? 'Riprendi lo scorrimento della vetrina' : 'Ferma lo scorrimento della vetrina',
+                on: { click: function () { heroStopped = !heroStopped; renderHero(); el('acHeroToggle').focus(); } }
+            }, icon(heroStopped ? 'play' : 'pause'));
+        }
+        var dots = items.length > 1 ? h('div', { class: 'ac-hero-nav', role: 'group', 'aria-label': 'Scegli l’anime in vetrina' }, toggle, items.map(function (other, index) {
             return h('button', {
                 type: 'button', class: 'ac-hero-dot', 'aria-label': val(other, 'name'), 'aria-current': index === heroIndex ? 'true' : 'false',
                 on: { click: function () { heroIndex = index; renderHero(); } }
@@ -168,17 +183,22 @@
                 h('div', { class: 'ac-hero-poster' }, ui.poster(item, { height: 600 }))));
         replace(host, hero);
         requestAnimationFrame(function () { hero.classList.add('is-on'); });
-        hero.addEventListener('mouseenter', function () { heroPaused = true; });
-        hero.addEventListener('mouseleave', function () { heroPaused = false; });
-        hero.addEventListener('focusin', function () { heroPaused = true; });
-        hero.addEventListener('focusout', function () { heroPaused = false; });
-        if (items.length > 1 && !reducedMotion()) {
-            heroTimer = setTimeout(function () {
-                if (AC.app.current() !== 'home' || !page.isConnected) return;
-                if (!heroPaused && !document.hidden) heroIndex = (heroIndex + 1) % items.length;
-                renderHero();
-            }, HERO_INTERVAL);
-        }
+        hero.addEventListener('mouseenter', function () { heroHeld = true; });
+        hero.addEventListener('mouseleave', function () { heroHeld = false; });
+        hero.addEventListener('focusin', function () { heroHeld = true; });
+        hero.addEventListener('focusout', function () { heroHeld = false; });
+        scheduleHero(items);
+    }
+
+    function scheduleHero(items) {
+        if (!heroRotates(items)) return;
+        heroTimer = setTimeout(function () {
+            if (AC.app.current() !== 'home' || !page.isConnected) return;
+            // While someone is reading or using the showcase it waits, without redrawing under them.
+            if (heroHeld || document.hidden) { scheduleHero(items); return; }
+            heroIndex = (heroIndex + 1) % items.length;
+            renderHero();
+        }, HERO_INTERVAL);
     }
 
     function stopHero() {
@@ -202,7 +222,7 @@
         replace(host,
             h('div', { class: 'ac-rail-head' },
                 h('h2', { class: 'ac-h2 ac-grow' }, 'Ultimi aggiornati da AnimeClick'),
-                h('span', { class: 'ac-jp', 'aria-hidden': 'true' }, h('i', { text: '新着' }))),
+                h('span', { class: 'ac-jp', 'aria-hidden': 'true' }, h('i', { lang: 'ja', text: '新着' }))),
             h('div', { class: 'ac-rail-track', role: 'list' }, items.map(function (item) {
                 return h('div', { role: 'listitem' }, h('button', {
                     type: 'button', class: 'ac-poster-card', on: { click: function () { openInLibrary(val(item, 'id')); } }
@@ -286,15 +306,15 @@
                 items.push(todoItem('folder', 'bad', 'Nessuna libreria video', 'Crea in Jellyfin una libreria di serie o film per i tuoi anime.'));
             } else if (!active.length && !partial.length) {
                 items.push(todoItem('folder', 'bad', 'AnimeClick non è attivo in nessuna libreria', 'Attivalo nelle librerie anime qui sotto.',
-                    ui.button('Vedi', { small: true, onClick: function () { el('acHomeLibraries').scrollIntoView({ behavior: 'smooth' }); } })));
+                    ui.button('Vedi le librerie', { small: true, onClick: showLibraries })));
             } else if (partial.length) {
                 items.push(todoItem('folder', 'warn', 'Attivazione da completare', plural(partial.length, 'libreria usa', 'librerie usano') + ' AnimeClick, ma non come primo provider.',
-                    ui.button('Vedi', { small: true, onClick: function () { el('acHomeLibraries').scrollIntoView({ behavior: 'smooth' }); } })));
+                    ui.button('Vedi le librerie', { small: true, onClick: showLibraries })));
             }
         }
         if (!config.TmdbApiKey) {
             items.push(todoItem('key', 'warn', 'Aggiungi la chiave TMDB', 'Consigliata: identifica meglio le opere e porta immagini ad alta risoluzione.',
-                ui.button('Fonti', { small: true, onClick: function () { AC.app.go('sources'); } })));
+                ui.button('Apri Fonti', { small: true, onClick: function () { AC.app.go('sources'); } })));
         }
         if (config.EnableEpisodeTitles === false) {
             var enableTitlesHomeBtn = ui.button('Attiva ora', { small: true, variant: 'primary', icon: 'check' });
@@ -469,6 +489,63 @@
         replace(host, nodes);
     }
 
+    /* ===== what changed with this update ===== */
+
+    /*
+     * The notice has an edition of its own, not the plugin's version: a release without news leaves
+     * it alone, and one with news raises the edition and rewrites title and lines together.
+     */
+    var NEWS = {
+        edition: 1,
+        title: 'AnimeClick 1.7: cosa c’è di nuovo',
+        lines: [
+            'Anteprima della scheda AnimeClick prima di salvare un abbinamento, con l’avviso se è già usata.',
+            'Stato della cache e rapporto diagnostico senza dati personali, in Strumenti.',
+            'Lo sblocco toglie il lucchetto solo dove serve: le correzioni fatte a mano restano protette.'
+        ]
+    };
+
+    var noticeSeen = false;
+
+    /** Remembered in the browser, and in this page too in case the browser refuses to store it. */
+    function markNoticeSeen() {
+        noticeSeen = true;
+        AC.memory.set('seenNews', NEWS.edition, true);
+    }
+
+    /**
+     * After an update, says once what is new: a first installation has just been through the setup,
+     * so it only records the version. Remembered per browser; nothing is written to the server.
+     */
+    function renderUpdateNotice() {
+        var host = el('acHomeNews');
+        if (!host) return;
+        var seen = AC.memory.get('seenNews', true);
+        if (noticeSeen || Number(seen) >= NEWS.edition) { host.hidden = true; return; }
+        var config = AC.settings.saved() || {};
+        var returning = seen !== null || Number(config.SetupCompletedVersion) > 0;
+        if (!returning) {
+            markNoticeSeen();
+            host.hidden = true;
+            return;
+        }
+        var dismiss = ui.button('Ho capito', { id: 'acHomeNewsDismiss', small: true, variant: 'ghost', icon: 'check' });
+        dismiss.addEventListener('click', function () {
+            markNoticeSeen();
+            host.hidden = true;
+            var tab = el('acTab_home');
+            if (tab) tab.focus();
+        });
+        replace(host, h('section', { class: 'ac-news', 'aria-labelledby': 'acHomeNewsTitle' },
+            h('span', { class: 'ac-card-icon' }, icon('sparkles')),
+            h('div', { class: 'ac-stack-s ac-grow' },
+                h('h2', { class: 'ac-h3', id: 'acHomeNewsTitle', text: NEWS.title }),
+                h('ul', { class: 'ac-news-list' }, NEWS.lines.map(function (line) { return h('li', { text: line }); })),
+                h('div', { class: 'ac-row' }, dismiss,
+                    h('a', { class: 'ac-btn ac-btn--sm ac-btn--ghost', href: 'https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/blob/main/CHANGELOG.md', target: '_blank', rel: 'noopener noreferrer' }, icon('external'), 'Tutte le novità')))));
+        host.hidden = false;
+    }
+
     function renderJobs() {
         AC.library.updateJobPanel('titles', 'acHome');
         AC.library.updateJobPanel('synopses', 'acHome');
@@ -478,6 +555,7 @@
 
     function build(container) {
         page = container.closest('#AnimeClickConfigPage') || container.ownerDocument;
+        container.appendChild(h('div', { id: 'acHomeNews', hidden: true }));
         container.appendChild(h('div', { id: 'acHomeHero' }, h('div', { class: 'ac-hero' }, h('div', { class: 'ac-hero-body' }, h('div', { class: 'ac-stack', style: 'width:100%' }, ui.skeleton(26), ui.skeleton(54), ui.skeleton(70))))));
         container.appendChild(h('section', { id: 'acHomeRail', class: 'ac-rail', 'aria-label': 'Ultimi anime aggiornati', hidden: true }));
 
@@ -525,6 +603,7 @@
     }
 
     function enter() {
+        renderUpdateNotice();
         renderSources();
         loadShowcase(false).then(function () {
             renderHero();
@@ -544,6 +623,7 @@
         attach: function (pageElement) { page = pageElement; },
         enter: enter,
         leave: stopHero,
+        seen: markNoticeSeen,
         reset: function () {
             showcase = null; showcaseAt = 0; libraries.rows = null; libraries.error = null;
             community.summary = null; community.error = null; community.at = 0;

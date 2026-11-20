@@ -207,8 +207,7 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
 
     /// <summary>True when Jellyfin must not let an automated refresh alter the title.</summary>
     internal static bool IsNameLocked(Episode episode)
-        => episode.IsLocked
-            || (episode.LockedFields?.Contains(MetadataField.Name) ?? false);
+        => AnimeClickLocks.IsLocked(episode, MetadataField.Name);
 
     /// <summary>
     /// Selects missing, generic, file-derived or confidently English names.

@@ -121,14 +121,22 @@ after(async () => {
 });
 
 async function mount(options = {}) {
-    const page = await browser.newPage({ viewport: options.viewport || { width: 1280, height: 1000 } });
+    const page = await browser.newPage({ viewport: options.viewport || { width: 1280, height: 1000 }, ...options.browser });
     const state = {
         config: { ...defaults, ...options.config }, writes: [], errors: [], reads: 0, identifications: [], requests: [],
         activities: options.activities || [], titleRuns: 0, synopsisRuns: 0, enabled: [], libraries: librariesFixture(),
-        repairs: [], lookups: 0, unlocked: [], refreshed: [], seriesTitleRepairs: [], probes: [], cacheClears: []
+        repairs: [], lookups: 0, unlocked: [], refreshed: [], seriesTitleRepairs: [], probes: [], cacheClears: [],
+        previews: [], reports: 0, cacheEntries: 128
     };
     page.on('pageerror', error => state.errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) state.errors.push(message.text()); });
+    if (options.storage) {
+        await page.addInitScript(entries => {
+            if (sessionStorage.getItem('animeclick.test-seeded')) return;
+            sessionStorage.setItem('animeclick.test-seeded', '1');
+            Object.keys(entries).forEach(key => localStorage.setItem(key, entries[key]));
+        }, options.storage);
+    }
     await page.addInitScript(() => {
         window.ApiClient = {
             getUrl: route => '/base/' + route,
@@ -220,7 +228,31 @@ async function mount(options = {}) {
         }
         if (target.endsWith('/ClearCache')) {
             state.cacheClears.push(request.postDataJSON());
+            state.cacheEntries = 0;
             return route.fulfill({ json: { removed: 7 } });
+        }
+        if (target.endsWith('/CacheStats')) {
+            const entries = state.cacheEntries;
+            return route.fulfill({ json: entries ? { entries, bytes: 3456789, oldestEntryUtc: '2020-01-05T10:00:00Z', newestEntryUtc: '2026-10-04T10:00:00Z',
+                groups: [{ id: 'translation', entries: 40, bytes: 2000000 }, { id: 'animeclick', entries: 80, bytes: 1400000 },
+                    { id: 'tmdb', entries: 8, bytes: 56789 }] } : { entries: 0, bytes: 0, groups: [] } });
+        }
+        if (target.endsWith('/DiagnosticReport')) {
+            state.reports++;
+            if (options.failReport) return route.fulfill({ status: 500, json: { error: 'Rapporto non disponibile' } });
+            return route.fulfill({ json: { pluginVersion: '1.7.0.0', serverVersion: '12.0.0',
+                configuration: { TmdbApiKey: 'impostata', AiApiKey: 'impostata', EnablePlot: true }, libraries: [{ collectionType: 'tvshows', state: 'active' }],
+                cache: { entries: 128, bytes: 3456789 } } });
+        }
+        if (target.endsWith('/PreviewCard')) {
+            const cardId = url.searchParams.get('animeClickId');
+            if (options.previewDelay) await new Promise(resolve => setTimeout(resolve, options.previewDelay));
+            state.previews.push({ animeClickId: cardId, itemId: url.searchParams.get('itemId') });
+            if (options.failPreview) return route.fulfill({ status: 502, json: { error: 'Non riesco a leggere questa scheda su AnimeClick: controlla il link o riprova fra poco.' } });
+            return route.fulfill({ json: { animeClickId: cardId, url: 'https://www.animeclick.it/anime/' + cardId, title: 'Seishun Buta Yarou wa Bunny Girl Senpai no Yume wo Minai',
+                originalTitle: '青春ブタ野郎はバニーガール先輩の夢を見ない', year: 2018, category: 'Serie TV', status: 'completato', episodeCount: 13,
+                imageUrl: null, overview: 'Sakuta incontra in biblioteca una ragazza vestita da coniglietta che nessun altro sembra vedere.', genres: ['Sentimentale', 'Soprannaturale'],
+                usedBy: options.cardUsedBy || [] } });
         }
         if (target.endsWith('/IdentifyStatus')) {
             const isLocked = !!options.lockedItem && state.unlocked.length === 0;
@@ -239,8 +271,10 @@ async function mount(options = {}) {
             state.seriesTitleRepairs.push(body);
             const baseSeries = (options.titleReport || titleReport).series.find(s => s.id === body.itemId) || titleReport.series[0];
             return route.fulfill({ json: {
-                checkedCount: 3, appliedCount: 2, unlockedCount: body.unlock ? 1 : 0,
-                series: { ...baseSeries, missingTitleCount: 0, recoverableTitleCount: 0, waitingTitleCount: 0, reason: 'Ok', reasonLabel: '', seasons: [] }
+                checkedCount: 3, appliedCount: 2, unlockedCount: body.unlock ? 1 : 0, remainingCount: options.titlesRemaining || 0,
+                continueAfter: options.titlesRemaining ? 'episode-9' : null,
+                series: options.titlesRemaining ? baseSeries
+                    : { ...baseSeries, missingTitleCount: 0, recoverableTitleCount: 0, waitingTitleCount: 0, reason: 'Ok', reasonLabel: '', seasons: [] }
             } });
         }
         if (target.endsWith('/IdentifyAndRefresh')) {
@@ -271,9 +305,19 @@ async function mount(options = {}) {
         return route.fulfill({ json: {} });
     });
     await page.goto(origin);
+    await show(page, options);
+    return { page, state };
+}
+
+async function show(page, options = {}) {
     await page.evaluate(() => document.querySelector('#AnimeClickConfigPage').dispatchEvent(new Event('pageshow')));
     if (!options.failFirstLoad) await page.waitForFunction(() => document.querySelector('#acLoadState') && document.querySelector('#acLoadState').hidden);
-    return { page, state };
+}
+
+/** A full reload of the browser tab, as when the administrator presses F5. */
+async function reload(page) {
+    await page.reload();
+    await show(page);
 }
 
 async function select(page, tab) { await page.getByRole('tab', { name: tab, exact: true }).click(); }
@@ -517,6 +561,13 @@ test('an invalid number sends the user to the field instead of saving', async ()
         assert.equal(await page.locator('#acTab_preferences').getAttribute('aria-selected'), 'true');
         assert.equal(await page.evaluate(() => document.activeElement.id), 'acMinPosterWidth');
         assert.equal(state.writes.length, 0);
+        // The problem is also written next to the field, and announced with it.
+        assert.equal(await page.locator('#acMinPosterWidthError').innerText(), 'Inserisci un numero intero fra 0 e 4000.');
+        assert.equal(await page.locator('#acMinPosterWidth').getAttribute('aria-invalid'), 'true');
+        assert.match(await page.locator('#acMinPosterWidth').getAttribute('aria-describedby'), /acMinPosterWidthError/);
+        await page.locator('#acMinPosterWidth').fill('500');
+        assert.equal(await page.locator('#acMinPosterWidthError').isVisible(), false);
+        assert.equal(await page.locator('#acMinPosterWidth').getAttribute('aria-invalid'), null);
     } finally { await page.close(); }
 });
 
@@ -671,7 +722,7 @@ test('synopses without a source can be retried in a balanced batch', async () =>
         await page.getByText(/Analisi aggiornata alle/).waitFor();
         await page.locator('#acBtnQualityRetryNoSource').click();
         await confirmDialog(page, 'Riprova');
-        await page.getByText(/elementi accodati/).waitFor();
+        await page.getByText(/1 elemento accodato:/).waitFor();
         assert.deepEqual(state.repairs, [{ itemIds: ['e2'], force: true }]);
     } finally { await page.close(); }
 });
@@ -1013,6 +1064,244 @@ test('an episode can be probed from the detail panel and a series cache purge re
         assert.match(await page.locator('#acFallbackResult').innerText(), /Okarun incontra un fantasma/);
         await page.locator('#acBtnProbeReturnLibrary').click();
         await page.getByRole('dialog', { name: 'Dandadan' }).waitFor();
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+
+test('the chosen card is shown before it is saved, with a warning when the library already uses it', async () => {
+    const { page, state } = await mount({ cardUsedBy: [{ itemId: 'x1', name: 'Bunny Girl Senpai (BD)', type: 'Series' }] });
+    try {
+        await select(page, 'Strumenti');
+        await page.locator('#acBtnPreviewCard').click();
+        assert.equal(await page.locator('#acAnimeClickIdError').innerText(), 'Scegli un risultato o incolla il link della scheda.');
+        assert.equal(state.previews.length, 0, 'nothing is asked without a card');
+
+        await page.locator('#acItemSearch').fill('Un titolo');
+        await page.locator('#acItemSearch').press('Enter');
+        await page.locator('#acItemCandidates .ac-pick').click();
+        await page.locator('#acAnimeClickSearch').fill('Seishun Buta');
+        await page.locator('#acAnimeClickSearch').press('Enter');
+        await page.locator('#acAnimeClickCandidates .ac-pick').click();
+        const preview = page.locator('#acCardPreviewBody');
+        await preview.waitFor();
+        assert.deepEqual(state.previews, [{ animeClickId: '25493/seishun-buta-yarou', itemId: 'safe-item-id' }]);
+        assert.match(await preview.innerText(), /Seishun Buta Yarou wa Bunny Girl Senpai/);
+        assert.match(await preview.innerText(), /2018 · Serie TV · 13 episodi · completato/);
+        assert.equal(await preview.getByRole('link', { name: 'Apri su AnimeClick' }).getAttribute('href'), 'https://www.animeclick.it/anime/25493/seishun-buta-yarou');
+        assert.match(await page.locator('#acCardPreview').innerText(), /Scheda già usata nella libreria[\s\S]*«Bunny Girl Senpai \(BD\)» \(serie\)/);
+        assert.equal(state.identifications.length, 0, 'the preview saves nothing');
+        await shot(page, 'tools-card-preview');
+
+        // A preview describes the card that was in the field.
+        await page.locator('#acAnimeClickId').fill('999/altra-scheda');
+        assert.equal(await page.locator('#acCardPreviewBody').count(), 0);
+        await page.locator('#acBtnPreviewCard').click();
+        await page.locator('#acCardPreviewBody').waitFor();
+        assert.equal(state.previews[1].animeClickId, '999/altra-scheda');
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('a preview still on its way is dropped when the card field changes, and the button comes back', async () => {
+    const { page, state } = await mount({ previewDelay: 400 });
+    try {
+        await select(page, 'Strumenti');
+        await page.locator('#acAnimeClickId').fill('12345/scheda');
+        await page.locator('#acBtnPreviewCard').click();
+        await page.locator('#acAnimeClickId').fill('12345/scheda-diversa');
+        assert.equal(await page.locator('#acBtnPreviewCard').isEnabled(), true);
+        await page.waitForTimeout(700);
+        assert.equal(await page.locator('#acCardPreviewBody').count(), 0, 'the late answer describes another card');
+        assert.equal(await page.locator('#acCardPreview').innerText(), '', 'a withdrawn request is not an error to show');
+        assert.equal(state.previews.length, 1);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('a card that cannot be read says so and leaves the correction possible', async () => {
+    const { page, state } = await mount({ failPreview: true });
+    try {
+        await select(page, 'Strumenti');
+        await page.locator('#acAnimeClickId').fill('12345/scheda');
+        await page.locator('#acBtnPreviewCard').click();
+        await page.locator('#acCardPreview').getByText('Non riesco a mostrare questa scheda').waitFor();
+        assert.match(await page.locator('#acCardPreview').innerText(), /controlla il link o riprova fra poco/);
+        assert.equal(await page.locator('#acBtnPreviewCard').isEnabled(), true);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('maintenance shows what the cache holds, empties it after a confirmation and prepares a report', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'Strumenti');
+        await page.locator('#acCacheSummary').waitFor();
+        assert.match(await page.locator('#acCacheSummary').innerText(), /128 elementi · 3,5 MB · il più vecchio: 5 gen 2020/);
+        const groups = await page.locator('.ac-cache-groups li').allInnerTexts();
+        assert.deepEqual(groups.map(text => text.replace(/\s+/g, ' ')), ['Traduzioni AI 40 · 2 MB', 'AnimeClick 80 · 1,4 MB', 'TMDB 8 · 56,8 kB']);
+
+        const downloading = page.waitForEvent('download');
+        await page.locator('#acBtnReportDownload').click();
+        const download = await downloading;
+        assert.equal(download.suggestedFilename(), 'animeclick-diagnostica.json');
+        const report = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
+        assert.equal(report.configuration.TmdbApiKey, 'impostata');
+        await page.locator('#acReportResult', { hasText: 'Rapporto scaricato' }).waitFor();
+
+        await page.locator('#acBtnClearCache').click();
+        assert.match(await page.getByRole('dialog').innerText(), /Le traduzioni AI già fatte andranno rifatte/);
+        await confirmDialog(page, 'Svuota');
+        await page.locator('#acCacheResult', { hasText: 'Cache svuotata: 7 elementi.' }).waitFor();
+        await page.locator('#acCacheStats', { hasText: 'La cache è vuota' }).waitFor();
+        assert.deepEqual(state.cacheClears, [{}]);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('a report that cannot be prepared is reported next to its button', async () => {
+    const { page } = await mount({ failReport: true });
+    try {
+        await select(page, 'Strumenti');
+        await page.locator('#acBtnReportDownload').click();
+        await page.locator('#acReportResult', { hasText: 'Rapporto non riuscito: Rapporto non disponibile' }).waitFor();
+        assert.equal(await page.locator('#acBtnReportDownload').isEnabled(), true);
+    } finally { await page.close(); }
+});
+
+test('the showcase can be stopped, and does not move for who asked for less motion', async () => {
+    const { page, state } = await mount();
+    try {
+        await page.locator('.ac-hero-title', { hasText: 'Frieren' }).waitFor();
+        const toggle = page.locator('#acHeroToggle');
+        assert.equal(await toggle.getAttribute('aria-label'), 'Ferma lo scorrimento della vetrina');
+        await toggle.click();
+        assert.equal(await page.locator('#acHeroToggle').getAttribute('aria-label'), 'Riprendi lo scorrimento della vetrina');
+        assert.equal(await page.evaluate(() => document.activeElement.id), 'acHeroToggle', 'the focus stays on the control');
+        // Choosing an anime by hand still works while stopped.
+        await page.getByRole('button', { name: 'Dandadan', exact: true }).click();
+        await page.locator('.ac-hero-title', { hasText: 'Dandadan' }).waitFor();
+        assert.equal(await page.locator('#acHeroToggle').getAttribute('aria-label'), 'Riprendi lo scorrimento della vetrina');
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+
+    const still = await mount({ browser: { reducedMotion: 'reduce' } });
+    try {
+        await still.page.locator('.ac-hero-title', { hasText: 'Frieren' }).waitFor();
+        assert.equal(await still.page.locator('#acHeroToggle').count(), 0, 'nothing rotates, so there is nothing to stop');
+        assert.equal(await still.page.locator('.ac-hero-dot').count(), 3);
+    } finally { await still.page.close(); }
+});
+
+test('after an update the news are shown once per browser, and never to a new installation', async () => {
+    const { page, state } = await mount({ storage: { 'animeclick.seenNews': '0' } });
+    try {
+        const news = page.locator('#acHomeNews');
+        await news.getByRole('heading', { name: /cosa c’è di nuovo/ }).waitFor();
+        assert.equal(await news.locator('li').count(), 3);
+        await page.locator('#acHomeNewsDismiss').click();
+        assert.equal(await news.isVisible(), false);
+        await reload(page);
+        await page.locator('.ac-hero-title').waitFor();
+        assert.equal(await page.locator('#acHomeNews').isVisible(), false, 'dismissed for good');
+        assert.equal(state.writes.length, 0, 'remembered in the browser, not on the server');
+    } finally { await page.close(); }
+
+    const fresh = await mount({ config: { SetupCompletedVersion: 0 } });
+    try {
+        await fresh.page.locator('#acSetupSkip').click();
+        await confirmDialog(fresh.page, 'Salta');
+        await fresh.page.locator('.ac-hero-title').waitFor();
+        assert.equal(await fresh.page.locator('#acHomeNews').isVisible(), false);
+    } finally { await fresh.page.close(); }
+});
+
+test('the section, the filter and the order survive a reload of the page', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'Libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acFilter_all').click();
+        await page.locator('#acLibrarySort').selectOption('name');
+        await reload(page);
+        assert.equal(await page.locator('#acTab_library').getAttribute('aria-selected'), 'true');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        assert.equal(await page.locator('#acFilter_all').getAttribute('aria-pressed'), 'true');
+        assert.equal(await page.locator('#acLibrarySort').inputValue(), 'name');
+        const names = await page.locator('#acLibraryGrid .ac-poster-title').allInnerTexts();
+        assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b, 'it')));
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('the detail panel says why a season misses titles and repairs a long series a slice at a time', async () => {
+    const { page, state } = await mount({ titlesRemaining: 40 });
+    try {
+        await select(page, 'Libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acLibrarySearch').fill('dandadan');
+        await page.locator('#acLibraryGrid .ac-anime-card').click();
+        const drawer = page.getByRole('dialog', { name: 'Dandadan' });
+        const season = drawer.locator('.ac-season');
+        assert.match(await season.innerText(), /S1 · 3\s+Basta un ricontrollo\s+Scheda 46016 \(della serie\)/);
+        assert.equal(await drawer.getByRole('button', { name: 'Prova fonti: S1E5 · Episodio 5' }).count(), 1, 'row buttons name their episode');
+        await drawer.locator('#acBtnRepairSeriesTitles').click();
+        await page.getByText(/2 titoli aggiornati\. Ne restano 40 da verificare: premi di nuovo per continuare\./).waitFor();
+        assert.deepEqual(state.seriesTitleRepairs, [{ itemId: ids.dandadan, unlock: false }]);
+        // The second press continues from where the first one stopped.
+        await page.getByRole('dialog', { name: 'Dandadan' }).locator('#acBtnRepairSeriesTitles').click();
+        await page.waitForFunction(() => document.querySelectorAll('.ac-toast').length >= 2);
+        assert.deepEqual(state.seriesTitleRepairs[1], { itemId: ids.dandadan, unlock: false, continueAfter: 'episode-9' });
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('a long series queues its synopses in groups the server accepts, unlocking only what can improve', async () => {
+    const items = [
+        { id: 'a1', itemType: 'Episode', name: 'Episodio 1', seasonNumber: 1, episodeNumber: 1, status: 'English', canRepair: true, languageRepairable: true },
+        { id: 'a2', itemType: 'Episode', name: 'Episodio 2', seasonNumber: 1, episodeNumber: 2, status: 'Missing', canRepair: true, languageRepairable: true },
+        { id: 'a3', itemType: 'Episode', name: 'Episodio 3', seasonNumber: 1, episodeNumber: 3, status: 'English', canRepair: true, languageRepairable: true },
+        { id: 'l1', itemType: 'Episode', name: 'Episodio 4', seasonNumber: 1, episodeNumber: 4, status: 'English', locked: true, canUnlock: true },
+        { id: 'l2', itemType: 'Episode', name: 'Episodio 5', seasonNumber: 1, episodeNumber: 5, status: 'Unknown', locked: true }
+    ];
+    const { page, state } = await mount({ qualityReport: { ...qualityReport, maximumRepairItems: 2, repairableCount: 3,
+        series: [{ ...qualityReport.series[0], items }] } });
+    try {
+        await select(page, 'Libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acLibrarySearch').fill('dandadan');
+        await page.locator('#acLibraryGrid .ac-anime-card').click();
+        const drawer = page.getByRole('dialog', { name: 'Dandadan' });
+        await drawer.locator('#acBtnDrawerRepairSynopses').click();
+        await page.getByText('2 trame accodate per il completamento.').waitFor();
+        assert.deepEqual(state.repairs, [{ itemIds: ['a1', 'a2'], force: false }, { itemIds: ['a3'], force: false }]);
+
+        // The synopsis of uncertain language keeps its lock: unlocking it would improve nothing.
+        const unlock = page.getByRole('dialog', { name: 'Dandadan' }).locator('#acBtnDrawerUnlockSynopses');
+        assert.equal(await unlock.innerText(), 'Sblocca e completa trame (1)');
+        await unlock.click();
+        await page.getByText(/1 trama accodata\./).waitFor();
+        assert.deepEqual(state.repairs[2], { itemIds: ['l1'], force: true, unlock: true });
+        assert.equal(await page.getByRole('dialog', { name: 'Dandadan' }).locator('.ac-episode', { hasText: 'S1E5' }).getByRole('button', { name: /Sblocca/ }).count(), 0);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('messages can be closed, and small controls are large enough for a finger', async () => {
+    const { page, state } = await mount({ browser: { hasTouch: true, isMobile: true }, viewport: { width: 390, height: 844 } });
+    try {
+        await select(page, 'Libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        const sizes = await page.locator('#acView_library .ac-chip, #acView_library .ac-btn--sm:visible').evaluateAll(nodes =>
+            nodes.map(node => Math.round(node.getBoundingClientRect().height)));
+        assert.ok(sizes.length > 4 && sizes.every(height => height >= 44), 'heights: ' + sizes.join(', '));
+
+        await select(page, 'Strumenti');
+        await page.locator('#acBtnFindItem').click();
+        const toast = page.locator('.ac-toast', { hasText: 'Scrivi almeno due lettere del titolo.' });
+        await toast.waitFor();
+        await toast.getByRole('button', { name: 'Chiudi il messaggio' }).click();
+        await toast.waitFor({ state: 'detached' });
         assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });

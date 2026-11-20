@@ -100,7 +100,10 @@ Esplora tutti gli anime della tua collezione in una **griglia di locandine** che
 ### 3. Correggi un abbinamento
 Se un film o una serie ha un titolo ambiguo e non è stato abbinato alla scheda giusta, apri **Strumenti → Correggi un abbinamento** (oppure premi **Correggi abbinamento** direttamente dalla scheda dell'anime in *Libreria*):
 - Scegli l'opera dalla tua libreria e cerca il nome su AnimeClick, oppure incolla direttamente l'indirizzo della scheda di AnimeClick.it.
+- **Anteprima prima di salvare:** scegliendo un risultato (o premendo **Anteprima**) vedi titolo, anno, tipo, numero di episodi e trama della scheda, e un avviso se è già abbinata a un altro titolo della libreria. L'anteprima non scrive nulla: a salvare è **Identifica e aggiorna**.
 - **Anche per singola stagione:** se una stagione ha una scheda tutta sua su AnimeClick (come accade spesso per i sequel o gli archi finali), seleziona la stagione nel menu **Cosa correggere**: la serie principale terrà la sua scheda e quella stagione userà la scheda dedicata.
+
+Nella stessa sezione, **Cache e manutenzione** mostra quanto il plugin tiene in cache (schede, traduzioni, identità delle altre fonti) prima di svuotarla e prepara il **rapporto diagnostico** da allegare a una segnalazione: versioni, impostazioni senza chiavi, stato di librerie e cache. Non contiene titoli, percorsi, indirizzi o token.
 
 ### 4. Preferenze e Fonti
 Tutte le impostazioni sono raccolte in schede ordinate (**Preferenze** e **Fonti**), dove puoi accendere o spegnere ogni singolo elemento (titoli, trame, generi, cast, sigle, collezioni), scegliere il modello di traduzione AI con il pulsante **Elenca modelli** e salvare con la barra in fondo alla pagina. Se vuoi usare AnimeClick come **unico** provider remoto per le librerie anime, ti basta disattivare gli altri provider remoti dalle impostazioni della libreria di Jellyfin (lasciando attivi lettori NFO o immagini locali se li usi).
@@ -143,17 +146,17 @@ Quando correggi l'abbinamento di un anime o di una stagione, il tuo intervento p
 |---|---|
 | **Un anime non viene riconosciuto o ha la scheda sbagliata** | Verifica in **Inizio → Librerie** che AnimeClick sia attivo per quella libreria, poi apri **Strumenti → Correggi un abbinamento** e seleziona la scheda corretta. |
 | **Mancano i titoli o le trame di alcuni episodi** | Apri la scheda **Libreria** per vedere cosa manca e avvia **Sistema tutti i titoli**. Se su AnimeClick l'episodio non ha ancora una trama, verifica in **Fonti** di aver inserito la chiave TMDB e, per gli episodi disponibili solo in inglese, di aver configurato la **Traduzione AI**. |
-| **Un titolo o una trama non cambia anche aggiornando i metadati** | Controlla nell'editor metadati di Jellyfin che il campo non abbia il lucchetto attivo (**Bloccato**). Ricorda inoltre che *Sistema tutti i titoli* conserva per prudenza i titoli già in italiano o dalla lingua incerta. |
+| **Un titolo o una trama non cambia anche aggiornando i metadati** | Controlla che il campo non abbia il lucchetto attivo (**Bloccato**): dal pannello di dettaglio in *Libreria* puoi usare **Sblocca e sistema titoli** o **Sblocca e completa trame**, che tolgono il lucchetto solo agli elementi da riparare e lasciano protette le correzioni fatte a mano. Ricorda inoltre che *Sistema tutti i titoli* conserva per prudenza i titoli già in italiano o dalla lingua incerta. |
 | **La pagina del plugin resta bianca dopo un aggiornamento** | Riavvia il server Jellyfin e ricarica la pagina del browser svuotando la cache (`Ctrl+F5` o `Cmd+Shift+R`). Se avevi installato vecchie versioni manualmente, assicurati che non ci siano cartelle duplicate dentro `plugins`. |
 | **Dove vengono salvate le chiavi e cosa viene inviato all'AI?** | Le chiavi API restano salvate nella configurazione amministrativa del tuo server Jellyfin e non lasciano il server, salvo verso il rispettivo servizio. La traduzione AI invia al fornitore scelto esclusivamente il testo inglese da tradurre (eventuali costi dipendono dal fornitore scelto). |
 
-Hai trovato un bug o un caso particolare? **[Apri una segnalazione su GitHub](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues)** indicando la versione di Jellyfin, la versione del plugin, il link della scheda AnimeClick, come sono numerati gli episodi e il risultato che ti aspettavi *(ricorda sempre di rimuovere chiavi API, token e percorsi personali dai log prima di incollarli)*.
+Hai trovato un bug o un caso particolare? **[Apri una segnalazione su GitHub](https://github.com/iCosiSenpai/jellyfin-plugin-animeclick/issues)** allegando il rapporto di **Strumenti → Cache e manutenzione → Rapporto diagnostico** (contiene già le versioni e le impostazioni, senza chiavi) e indicando il link della scheda AnimeClick, come sono numerati gli episodi e il risultato che ti aspettavi *(se incolli anche dei log, rimuovi prima chiavi API, token e percorsi personali)*.
 
 ---
 
 ## Documentazione tecnica
 
-[Novità delle versioni (Changelog)](CHANGELOG.md) · [Audit e verifiche 1.6.1](docs/AUDIT-1.6.1.md) · [Procedura di rilascio](docs/RELEASING.md) · [Pipeline di test e CI](.github/workflows/build.yml)
+[Novità delle versioni (Changelog)](CHANGELOG.md) · [Audit e verifiche 1.7](docs/AUDIT-1.7.md) · [Procedura di rilascio](docs/RELEASING.md) · [Pipeline di test e CI](.github/workflows/build.yml)
 
 ---
 

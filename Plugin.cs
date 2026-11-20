@@ -9,6 +9,7 @@
 using System;
 using System.Collections.Generic;
 using AnimeClick.Plugin.Configuration;
+using AnimeClick.Plugin.Services;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Model.Plugins;
@@ -27,7 +28,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
         // Issue #2: an update can leave the previous copy next to this one, and Jellyfin would load both.
         var assembly = GetType().Assembly;
-        AnimeClick.Plugin.Services.AnimeClickPluginVersions.SupersedeOlderCopies(
+        AnimeClickPluginVersions.SupersedeOlderCopies(
             applicationPaths.PluginsPath,
             Id,
             assembly.GetName().Version ?? new Version(0, 0),
@@ -61,20 +62,18 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
                 && !string.IsNullOrWhiteSpace(previous.AiApiKey)
                 && string.Equals(animeClickConfiguration.AiApiKey?.Trim(), previous.AiApiKey.Trim(), StringComparison.Ordinal))
             {
-                var prevOk = AnimeClick.Plugin.Services.AnimeClickAiTranslator.TryNormalizeEndpoint(previous.AiEndpoint, out var prevUri);
-                var nextOk = AnimeClick.Plugin.Services.AnimeClickAiTranslator.TryNormalizeEndpoint(animeClickConfiguration.AiEndpoint, out var nextUri);
-                var sameDestination = prevOk && nextOk
-                    && string.Equals(prevUri.Scheme, nextUri.Scheme, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(prevUri.IdnHost, nextUri.IdnHost, StringComparison.OrdinalIgnoreCase)
-                    && prevUri.Port == nextUri.Port
-                    && string.Equals(prevUri.AbsolutePath, nextUri.AbsolutePath, StringComparison.Ordinal);
+                // A saved key never follows a different destination: the page enforces the same rule,
+                // but a direct POST to the configuration endpoint must not be able to bypass it.
+                var sameDestination = AnimeClickAiTranslator.TryNormalizeEndpoint(previous.AiEndpoint, out var previousUri)
+                    && AnimeClickAiTranslator.TryNormalizeEndpoint(animeClickConfiguration.AiEndpoint, out var nextUri)
+                    && AnimeClickAiTranslator.IsSameDestination(previousUri, nextUri);
                 if (!sameDestination)
                 {
                     animeClickConfiguration.AiApiKey = string.Empty;
                 }
             }
 
-            if (AnimeClick.Plugin.Services.AnimeClickAiTranslator.TryNormalizeEndpoint(animeClickConfiguration.AiEndpoint, out var normalizedAiUri)
+            if (AnimeClickAiTranslator.TryNormalizeEndpoint(animeClickConfiguration.AiEndpoint, out var normalizedAiUri)
                 && normalizedAiUri.Scheme != Uri.UriSchemeHttps)
             {
                 animeClickConfiguration.AiApiKey = string.Empty;

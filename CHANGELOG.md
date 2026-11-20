@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.0.0
+
+Anteprima della scheda AnimeClick prima di salvare un abbinamento, con l'avviso se è già usata nella libreria; stato della cache e rapporto diagnostico senza dati personali in Strumenti; sblocco mirato, che toglie il lucchetto solo agli elementi da riparare e lascia protette le correzioni fatte a mano; riparazione dei titoli di una serie lunga a tranche, senza più attese oltre il tempo massimo; trame di una serie accodate a gruppi. Audit completo di backend e frontend: errori di validazione accanto al campo, vetrina che si può fermare, messaggi chiudibili, bersagli più grandi sul touch, focus visibile in alto contrasto, sezione e filtri ricordati al ricaricamento.
+
+- [Note complete](docs/releases/1.7.0.0.md)
+- [Audit e verifiche](docs/AUDIT-1.7.md)
+
 ## 1.6.2.0
 
 Azioni rapide senza uscire dalla pagina del plugin: sblocco e identificazione in un solo clic per le schede bloccate in Jellyfin, riparazione dei titoli e completamento/sblocco delle trame direttamente dal pannello di dettaglio della serie o sul singolo episodio, abbinamento diretto della stagione con scheda propria, navigazione «Precedente» / «Successivo» tra gli anime nel pannello laterale, ricerca automatica su AnimeClick all'apertura dalla Libreria, supporto del tasto Invio nei campi di ricerca, prova diretta delle fonti episodio con titolo AnimeClick e azzeramento delle soppressioni del registro di riparazione allo svuotamento della cache.

@@ -90,6 +90,8 @@
     }
 
     function close() {
+        // Whoever has just been through the setup has seen what this version brings.
+        AC.home.seen();
         AC.app.showSetup(false);
         AC.app.go('home');
     }
@@ -138,19 +140,19 @@
         step.render(main, side);
         var heading = el('acSetupTitle');
         if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
-        host.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        AC.dom.reveal(host);
     }
 
     function heading(jp, kicker, title, lead) {
         return [
-            h('p', { class: 'ac-jp' }, kicker, h('i', { 'aria-hidden': 'true', text: jp })),
+            h('p', { class: 'ac-jp' }, kicker, h('i', { 'aria-hidden': 'true', lang: 'ja', text: jp })),
             h('h1', { id: 'acSetupTitle', class: 'ac-h1', text: title }),
             lead ? h('p', { class: 'ac-lead', text: lead }) : null
         ];
     }
 
     function mascot(side, line) {
-        side.appendChild(h('img', { src: api.asset('AnimeClickMascot'), alt: '' }));
+        side.appendChild(h('img', { src: api.asset('AnimeClickMascot'), alt: '', width: 360, height: 367 }));
         if (line) side.appendChild(h('p', { class: 'ac-bubble', text: line }));
     }
 

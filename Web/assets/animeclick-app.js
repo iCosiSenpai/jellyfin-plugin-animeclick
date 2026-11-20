@@ -17,7 +17,8 @@
     ];
 
     var page = null;
-    var current = 'home';
+    // The section survives a reload of the page, like the place in a book.
+    var current = AC.memory.pick('view', VIEWS.map(function (view) { return view.id; }), 'home');
     var loaded = false;
     var sequence = 0;
     var setupOpen = false;
@@ -38,8 +39,8 @@
         var live = h('button', { type: 'button', id: 'acLive', class: 'ac-live', hidden: true, on: { click: function () { go('library'); } } }, 'Attività in corso');
         root.appendChild(h('header', { class: 'ac-top' },
             h('div', { class: 'ac-brand' },
-                h('img', { class: 'ac-brand-mark', src: api.asset('AnimeClickMascotSmall'), alt: '' }),
-                h('div', { class: 'ac-wordmark' }, h('strong', null, 'Anime', h('span', { text: 'Click' })), h('small', { text: 'I tuoi anime, in italiano' }))),
+                h('img', { class: 'ac-brand-mark', src: api.asset('AnimeClickMascotSmall'), alt: '', width: 96, height: 98 }),
+                h('div', { class: 'ac-wordmark' }, h('strong', { translate: 'no' }, 'Anime', h('span', { text: 'Click' })), h('small', { text: 'I tuoi anime, in italiano' }))),
             live,
             h('span', { class: 'ac-version', id: 'acVersion', text: 'v' + AC.version }),
             h('nav', { class: 'ac-nav', id: 'acTabs', role: 'tablist', 'aria-label': 'Sezioni di AnimeClick' }, tabs)));
@@ -107,6 +108,7 @@
         if (!VIEWS.some(function (item) { return item.id === view; })) view = 'home';
         var previous = current;
         current = view;
+        AC.memory.set('view', view);
         VIEWS.forEach(function (item) {
             var tab = el('acTab_' + item.id);
             var panel = el('acView_' + item.id);

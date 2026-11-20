@@ -254,16 +254,9 @@ public class AnimeClickDiagnosticsController : ControllerBase
             };
 
             var reasons = new List<AnimeClickAuditReason>();
-            foreach (var seasonGroup in episodes
-                         .GroupBy(episode => (
-                             SeasonNumber: episode.ParentIndexNumber,
-                             FallbackSeasonId: episode.ParentIndexNumber.HasValue ? Guid.Empty : episode.SeasonId))
-                         .OrderBy(group => group.Key.SeasonNumber ?? int.MaxValue))
+            foreach (var (seasonNumber, seasonEpisodes) in GroupBySeason(episodes))
             {
-                var seasonEpisodes = seasonGroup.ToList();
-                var seasonNumber = seasonGroup.Key.SeasonNumber;
-                var seasonId = seasonEpisodes[0].SeasonId;
-                var storedSeasonCard = seasonCardIds.TryGetValue(seasonId, out var seasonCard)
+                var storedSeasonCard = seasonCardIds.TryGetValue(seasonEpisodes[0].SeasonId, out var seasonCard)
                     ? seasonCard
                     : null;
                 string? traversedCard = null;
@@ -300,58 +293,20 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 // traversal wins, then an explicit season ID, then the series card.
                 var cardId = traversedCard ?? storedSeasonCard ?? seriesAnimeClickId;
 
-                AnimeClickEpisodeCatalog? catalog = null;
-                if (!string.IsNullOrWhiteSpace(cardId))
+                var catalog = string.IsNullOrWhiteSpace(cardId)
+                    ? null
+                    : await GetCachedCatalogAsync(cardId, config, catalogs, cancellationToken).ConfigureAwait(false);
+                if (ClassifySeason(
+                        seasonEpisodes,
+                        seasonNumber,
+                        seriesAnimeClickId,
+                        cardId,
+                        traversedCard is not null || !string.IsNullOrWhiteSpace(storedSeasonCard),
+                        catalog,
+                        reasons) is { } seasonRow)
                 {
-                    catalog = await GetCachedCatalogAsync(cardId, config, catalogs, cancellationToken)
-                        .ConfigureAwait(false);
-
+                    row.Seasons.Add(seasonRow);
                 }
-
-                var seasonReasons = seasonEpisodes
-                    .Select(episode =>
-                    {
-                        var needsTitle = AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode);
-                        var result = string.IsNullOrWhiteSpace(seriesAnimeClickId)
-                            ? needsTitle ? AnimeClickAuditReason.NotIdentified : AnimeClickAuditReason.Ok
-                            : AnimeClickLibraryAudit.ClassifyEpisode(
-                                episode.GetProviderId("AnimeClick"),
-                                episode.Name,
-                                needsTitle,
-                                catalog);
-                        return AnimeClickLibraryAudit.ApplyNameLock(
-                            result,
-                            AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode));
-                    })
-                    .Where(reason => reason != AnimeClickAuditReason.Ok)
-                    .ToList();
-                if (seasonReasons.Count == 0)
-                {
-                    continue;
-                }
-
-                var seasonReason = AnimeClickLibraryAudit.Summarize(seasonReasons);
-                if (seasonReason == AnimeClickAuditReason.NotMatched
-                    && seasonNumber is > 1
-                    && traversedCard is null
-                    && string.IsNullOrWhiteSpace(storedSeasonCard))
-                {
-                    seasonReason = AnimeClickAuditReason.CardNotResolved;
-                    seasonReasons = [.. seasonReasons.Select(_ => AnimeClickAuditReason.CardNotResolved)];
-                }
-
-                reasons.AddRange(seasonReasons);
-                row.Seasons.Add(new LibraryAuditSeasonItem
-                {
-                    SeasonId = seasonId != Guid.Empty ? seasonId.ToString("N", CultureInfo.InvariantCulture) : string.Empty,
-                    SeasonNumber = seasonNumber,
-                    MissingTitleCount = seasonReasons.Count,
-                    AnimeClickId = cardId,
-                    CardIsResolved = traversedCard is not null || !string.IsNullOrWhiteSpace(storedSeasonCard),
-                    CardRowCount = catalog?.Episodes.Count,
-                    Reason = seasonReason.ToString(),
-                    ReasonLabel = AnimeClickLibraryAudit.Describe(seasonReason)
-                });
             }
 
             row.ApplyReasons(reasons);
@@ -445,18 +400,12 @@ public class AnimeClickDiagnosticsController : ControllerBase
         };
 
         var reasons = new List<AnimeClickAuditReason>();
-        foreach (var seasonGroup in episodes
-                     .GroupBy(episode => episode.ParentIndexNumber)
-                     .OrderBy(group => group.Key ?? int.MaxValue))
+        foreach (var (seasonNumber, seasonEpisodes) in GroupBySeason(episodes))
         {
-            var seasonEpisodes = seasonGroup.ToList();
-
             // Replay the provider's own decision instead of assuming the series card: on AnimeClick
             // a season is usually a card of its own, and reporting "no match" against the wrong card
             // would blame the plugin for a season it never looked at.
-            var seasonNumber = seasonGroup.Key;
-            var seasonEntityId = seasonEpisodes[0].SeasonId;
-            var storedSeasonId = _libraryManager.GetItemById(seasonEntityId) is Season season
+            var storedSeasonId = _libraryManager.GetItemById(seasonEpisodes[0].SeasonId) is Season season
                 ? season.GetProviderId("AnimeClick")
                 : null;
             var layout = _layoutResolver.Resolve(seasonEpisodes[0].Path);
@@ -485,51 +434,17 @@ public class AnimeClickDiagnosticsController : ControllerBase
                 .ConfigureAwait(false);
             var cardId = traversed ?? storedSeasonId ?? animeClickId;
             var catalog = await LoadCatalogAsync(cardId, config, cancellationToken).ConfigureAwait(false);
-
-            var seasonReasons = seasonEpisodes
-                .Select(episode =>
-                {
-                    var result = AnimeClickLibraryAudit.ClassifyEpisode(
-                        episode.GetProviderId("AnimeClick"),
-                        episode.Name,
-                        AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode),
-                        catalog);
-                    return AnimeClickLibraryAudit.ApplyNameLock(
-                        result,
-                        AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode));
-                })
-                .Where(reason => reason != AnimeClickAuditReason.Ok)
-                .ToList();
-            if (seasonReasons.Count == 0)
+            if (ClassifySeason(
+                    seasonEpisodes,
+                    seasonNumber,
+                    animeClickId,
+                    cardId,
+                    traversed is not null || !string.IsNullOrWhiteSpace(storedSeasonId),
+                    catalog,
+                    reasons) is { } seasonRow)
             {
-                continue;
+                result.Seasons.Add(seasonRow);
             }
-
-            // A season past the first, on a card that is not its own and that nothing resolved, is
-            // the case the season-level ID field exists for. Saying so is more useful than
-            // reporting a mismatch the user cannot act on.
-            var seasonReason = AnimeClickLibraryAudit.Summarize(seasonReasons);
-            if (seasonReason == AnimeClickAuditReason.NotMatched
-                && seasonNumber is > 1
-                && traversed is null
-                && string.IsNullOrWhiteSpace(storedSeasonId))
-            {
-                seasonReason = AnimeClickAuditReason.CardNotResolved;
-                seasonReasons = [.. seasonReasons.Select(_ => AnimeClickAuditReason.CardNotResolved)];
-            }
-
-            reasons.AddRange(seasonReasons);
-            result.Seasons.Add(new LibraryAuditSeasonItem
-            {
-                SeasonId = seasonEntityId != Guid.Empty ? seasonEntityId.ToString("N", CultureInfo.InvariantCulture) : string.Empty,
-                SeasonNumber = seasonNumber,
-                MissingTitleCount = seasonReasons.Count,
-                AnimeClickId = cardId,
-                CardIsResolved = traversed is not null || !string.IsNullOrWhiteSpace(storedSeasonId),
-                CardRowCount = catalog?.Episodes.Count,
-                Reason = seasonReason.ToString(),
-                ReasonLabel = AnimeClickLibraryAudit.Describe(seasonReason)
-            });
         }
 
         result.ApplyReasons(reasons);
@@ -540,6 +455,80 @@ public class AnimeClickDiagnosticsController : ControllerBase
             config);
         result.CardRowCount = result.Seasons.Sum(item => item.CardRowCount ?? 0);
         return Ok(result);
+    }
+
+    /// <summary>
+    /// The episodes of a series by season, in season order. Episodes Jellyfin gave no season number
+    /// are grouped by their season entity instead, so two unnumbered seasons are never merged.
+    /// </summary>
+    private static IEnumerable<(int? SeasonNumber, List<Episode> Episodes)> GroupBySeason(IEnumerable<Episode> episodes)
+        => episodes
+            .GroupBy(episode => (
+                SeasonNumber: episode.ParentIndexNumber,
+                FallbackSeasonId: episode.ParentIndexNumber.HasValue ? Guid.Empty : episode.SeasonId))
+            .OrderBy(group => group.Key.SeasonNumber ?? int.MaxValue)
+            .Select(group => (group.Key.SeasonNumber, group.ToList()));
+
+    /// <summary>
+    /// Why the episodes of one season still need a title, against the card chosen for it. Shared by
+    /// the library-wide report (cache only) and the single-series re-read (network allowed): they
+    /// differ in how they find the card and its rows, never in how they judge them. Returns null,
+    /// and adds nothing to <paramref name="reasons"/>, when the season has no episode to report.
+    /// </summary>
+    private static LibraryAuditSeasonItem? ClassifySeason(
+        List<Episode> seasonEpisodes,
+        int? seasonNumber,
+        string? seriesAnimeClickId,
+        string? cardId,
+        bool cardIsResolved,
+        AnimeClickEpisodeCatalog? catalog,
+        List<AnimeClickAuditReason> reasons)
+    {
+        var seasonReasons = seasonEpisodes
+            .Select(episode =>
+            {
+                var needsTitle = AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode);
+                var reason = string.IsNullOrWhiteSpace(seriesAnimeClickId)
+                    ? needsTitle ? AnimeClickAuditReason.NotIdentified : AnimeClickAuditReason.Ok
+                    : AnimeClickLibraryAudit.ClassifyEpisode(
+                        episode.GetProviderId("AnimeClick"),
+                        episode.Name,
+                        needsTitle,
+                        catalog);
+                return AnimeClickLibraryAudit.ApplyNameLock(
+                    reason,
+                    AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode));
+            })
+            .Where(reason => reason != AnimeClickAuditReason.Ok)
+            .ToList();
+        if (seasonReasons.Count == 0)
+        {
+            return null;
+        }
+
+        // A season past the first, on a card that is not its own and that nothing resolved, is the
+        // case the season-level ID field exists for. Saying so is more useful than reporting a
+        // mismatch the user cannot act on.
+        var seasonReason = AnimeClickLibraryAudit.Summarize(seasonReasons);
+        if (seasonReason == AnimeClickAuditReason.NotMatched && seasonNumber is > 1 && !cardIsResolved)
+        {
+            seasonReason = AnimeClickAuditReason.CardNotResolved;
+            seasonReasons = [.. seasonReasons.Select(_ => AnimeClickAuditReason.CardNotResolved)];
+        }
+
+        reasons.AddRange(seasonReasons);
+        var seasonId = seasonEpisodes[0].SeasonId;
+        return new LibraryAuditSeasonItem
+        {
+            SeasonId = seasonId != Guid.Empty ? seasonId.ToString("N", CultureInfo.InvariantCulture) : string.Empty,
+            SeasonNumber = seasonNumber,
+            MissingTitleCount = seasonReasons.Count,
+            AnimeClickId = cardId,
+            CardIsResolved = cardIsResolved,
+            CardRowCount = catalog?.Episodes.Count,
+            Reason = seasonReason.ToString(),
+            ReasonLabel = AnimeClickLibraryAudit.Describe(seasonReason)
+        };
     }
 
     /// <summary>
@@ -678,49 +667,14 @@ public class AnimeClickDiagnosticsController : ControllerBase
             .ThenBy(episode => episode.IndexNumber ?? int.MaxValue)
             .ToList();
 
-        var unlockedCount = 0;
-        if (request.Unlock)
-        {
-            if (await TryUnlockNameAsync(series, cancellationToken).ConfigureAwait(false))
-            {
-                unlockedCount++;
-            }
-
-            var unlockedSeasons = new HashSet<Guid>();
-            foreach (var episode in episodes)
-            {
-                if (episode.Season is { } parentSeason
-                    && unlockedSeasons.Add(parentSeason.Id)
-                    && await TryUnlockNameAsync(parentSeason, cancellationToken).ConfigureAwait(false))
-                {
-                    unlockedCount++;
-                }
-
-                if (await TryUnlockNameAsync(episode, cancellationToken).ConfigureAwait(false))
-                {
-                    unlockedCount++;
-                }
-            }
-        }
-
-        var session = new AnimeClickTitleRepairSession();
-        var checkedCount = 0;
-        var appliedCount = 0;
-        foreach (var episode in episodes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode)
-                || !AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode))
-            {
-                continue;
-            }
-
-            checkedCount++;
-            if (await repair.RepairAsync(episode, session, cancellationToken).ConfigureAwait(false))
-            {
-                appliedCount++;
-            }
-        }
+        var outcome = await repair
+            .RepairSeriesAsync(
+                episodes,
+                request.Unlock,
+                AnimeClickTitleRepairService.SeriesBudget,
+                cancellationToken,
+                Guid.TryParse(request.ContinueAfter, out var continueAfter) ? continueAfter : null)
+            .ConfigureAwait(false);
 
         var auditAction = await LibraryAuditSeries(
             new LibraryAuditSeriesRequest { ItemId = series.Id.ToString("N", CultureInfo.InvariantCulture) },
@@ -729,33 +683,22 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
         return Ok(new RepairSeriesTitlesResponse
         {
-            CheckedCount = checkedCount,
-            AppliedCount = appliedCount,
-            UnlockedCount = unlockedCount,
+            CheckedCount = outcome.Checked,
+            AppliedCount = outcome.Applied,
+            UnlockedCount = outcome.Unlocked,
+            RemainingCount = outcome.Remaining,
+            ContinueAfter = outcome.ContinueAfter?.ToString("N", CultureInfo.InvariantCulture),
             Series = updatedSeries
         });
-    }
-
-    private async Task<bool> TryUnlockNameAsync(BaseItem target, CancellationToken cancellationToken)
-    {
-        var lockedFields = target.LockedFields ?? [];
-        if (!target.IsLocked && !lockedFields.Contains(MetadataField.Name))
-        {
-            return false;
-        }
-
-        target.IsLocked = false;
-        target.LockedFields = lockedFields.Where(field => field != MetadataField.Name).ToArray();
-        await _libraryManager
-            .UpdateItemAsync(target, target.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken)
-            .ConfigureAwait(false);
-        return true;
     }
 
     public sealed class RepairSeriesTitlesRequest
     {
         public string ItemId { get; set; } = string.Empty;
         public bool Unlock { get; set; }
+
+        /// <summary>The episode a previous call stopped at, as that call returned it.</summary>
+        public string? ContinueAfter { get; set; }
     }
 
     public sealed class RepairSeriesTitlesResponse
@@ -763,6 +706,13 @@ public class AnimeClickDiagnosticsController : ControllerBase
         public int CheckedCount { get; set; }
         public int AppliedCount { get; set; }
         public int UnlockedCount { get; set; }
+
+        /// <summary>Episodes not reached within the time budget; pressing the button again continues.</summary>
+        public int RemainingCount { get; set; }
+
+        /// <summary>What to send back as <c>ContinueAfter</c> to resume; null when nothing is left.</summary>
+        public string? ContinueAfter { get; set; }
+
         public LibraryAuditSeriesItem? Series { get; set; }
     }
 
@@ -1664,7 +1614,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         }
 
         var endpointChanged = !string.IsNullOrWhiteSpace(requestedEndpoint)
-            && (!storedEndpointIsValid || !IsSameDestination(storedEndpointUri, endpointUri));
+            && (!storedEndpointIsValid || !AnimeClickAiTranslator.IsSameDestination(storedEndpointUri, endpointUri));
         var explicitApiKey = requestedApiKey?.Trim() ?? string.Empty;
         var storedApiKey = stored.AiApiKey?.Trim() ?? string.Empty;
 
@@ -1712,316 +1662,4 @@ public class AnimeClickDiagnosticsController : ControllerBase
         error = string.Empty;
         return true;
     }
-
-    private static bool IsSameDestination(Uri left, Uri right)
-        => string.Equals(left.Scheme, right.Scheme, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(left.IdnHost, right.IdnHost, StringComparison.OrdinalIgnoreCase)
-            && left.Port == right.Port
-            && string.Equals(left.AbsolutePath, right.AbsolutePath, StringComparison.Ordinal);
-}
-
-public sealed class LookupDiagnosticResponse
-{
-    public string? Name { get; set; }
-    public int? Year { get; set; }
-    public string? ImageUrl { get; set; }
-    public string? AnimeClickId { get; set; }
-}
-
-public sealed class EpisodesDiagnosticResponse
-{
-    public string AnimeClickId { get; set; } = string.Empty;
-    public int EpisodeCount { get; set; }
-    public int? DeclaredEpisodeCount { get; set; }
-    public int DeclaredSeasonsCount { get; set; }
-    public string LayoutFingerprint { get; set; } = string.Empty;
-    public bool PaginationComplete { get; set; }
-    public List<EpisodeDiagnosticItem> Episodes { get; set; } = [];
-    public string? MatchStrategy { get; set; }
-    public double? MatchConfidence { get; set; }
-    public string? MatchReason { get; set; }
-    public EpisodeDiagnosticItem? MatchedEpisode { get; set; }
-}
-
-public sealed class EpisodeDiagnosticItem
-{
-    public int? SeasonNumber { get; set; }
-    public int? RawSeasonNumber { get; set; }
-    public bool SeasonNumberIsSynthetic { get; set; }
-    public string RawNumberLabel { get; set; } = string.Empty;
-    public int Number { get; set; }
-    public int? NumberEnd { get; set; }
-    public int AbsoluteNumber { get; set; }
-    public int GlobalOrdinal { get; set; }
-    public int SeasonOrdinalNumber { get; set; }
-    public int SpecialOrdinalNumber { get; set; }
-    public bool IsSpecial { get; set; }
-    public bool HasNonStandardNumber { get; set; }
-    public bool NumberIsAmbiguous { get; set; }
-    public string? Title { get; set; }
-    public string? ProviderId { get; set; }
-    public string? DetailUrl { get; set; }
-
-    public static EpisodeDiagnosticItem From(AnimeClickEpisode episode)
-        => new()
-        {
-            SeasonNumber = episode.SeasonNumber,
-            RawSeasonNumber = episode.RawSeasonNumber,
-            SeasonNumberIsSynthetic = episode.SeasonNumberIsSynthetic,
-            RawNumberLabel = episode.RawNumberLabel,
-            Number = episode.Number,
-            NumberEnd = episode.NumberEnd,
-            AbsoluteNumber = episode.AbsoluteNumber,
-            GlobalOrdinal = episode.GlobalOrdinal,
-            SeasonOrdinalNumber = episode.SeasonOrdinalNumber,
-            SpecialOrdinalNumber = episode.SpecialOrdinalNumber,
-            IsSpecial = episode.IsSpecial,
-            HasNonStandardNumber = episode.HasNonStandardNumber,
-            NumberIsAmbiguous = episode.NumberIsAmbiguous,
-            Title = episode.Title,
-            ProviderId = episode.ProviderId,
-            DetailUrl = episode.DetailUrl
-        };
-}
-
-public sealed class ClearCacheRequest
-{
-    public string? Key { get; set; }
-    public string? Prefix { get; set; }
-    public string? AnimeClickId { get; set; }
-}
-
-public sealed class ClearCacheResponse
-{
-    public int Removed { get; set; }
-}
-
-public sealed class TestFanartRequest
-{
-    public string? PersonalApiKey { get; set; }
-    public string? ProjectApiKey { get; set; }
-}
-
-public sealed class TestTmdbRequest
-{
-    public string? ApiKey { get; set; }
-}
-
-public sealed class TestAiRequest
-{
-    /// <summary>Identifier of the selected service, empty to use the saved one.</summary>
-    public string? Provider { get; set; }
-
-    public string? Endpoint { get; set; }
-    public string? ApiKey { get; set; }
-    public string? Model { get; set; }
-    public int? TimeoutSec { get; set; }
-}
-
-public sealed class TestTvdbRequest
-{
-    public string? ApiKey { get; set; }
-}
-
-
-public sealed class TranslationPreviewRequest
-{
-    public string? SourceText { get; set; }
-    public string? Provider { get; set; }
-    public string? Endpoint { get; set; }
-    public string? ApiKey { get; set; }
-    public string? Model { get; set; }
-    public int? TimeoutSec { get; set; }
-}
-
-public sealed class TranslationPreviewResponse
-{
-    public bool Success { get; set; }
-    public string? Translation { get; set; }
-    public string Model { get; set; } = string.Empty;
-    public string SourceLanguage { get; set; } = "en";
-    public string TargetLanguage { get; set; } = "it";
-    public int SourceCharacterCount { get; set; }
-    public string? ErrorMessage { get; set; }
-}
-
-public sealed class EpisodeFallbackPreviewRequest
-{
-    public string AnimeClickId { get; set; } = string.Empty;
-    public int Season { get; set; } = 1;
-    public int Episode { get; set; } = 1;
-}
-
-public sealed class EpisodeFallbackPreviewResponse
-{
-    public bool Success { get; set; }
-    public string? Overview { get; set; }
-    public string? EpisodeTitle { get; set; }
-    public string? Source { get; set; }
-    public string? SourceLanguage { get; set; }
-    public bool UsedAi { get; set; }
-    public string? Model { get; set; }
-    public bool AnimeClickMatchConclusive { get; set; }
-    public string? AnimeClickMatchStrategy { get; set; }
-    public double? AnimeClickMatchConfidence { get; set; }
-    public string? AnimeClickMatchReason { get; set; }
-    public List<FallbackChainStep> Chain { get; set; } = [];
-    public string? ErrorMessage { get; set; }
-}
-
-public sealed record FallbackChainStep(
-    string Source,
-    string Language,
-    bool RequiresTranslation,
-    bool Configured);
-
-
-public sealed class LibraryAuditResponse
-{
-    public bool AlternativeTitleLookupEnabled { get; set; }
-    /// <summary>False when the whole feature is off, which explains every missing title at once.</summary>
-    public bool EpisodeTitlesEnabled { get; set; }
-
-    public int SeriesCount { get; set; }
-
-    public int EpisodeCount { get; set; }
-
-    public int MissingTitleCount { get; set; }
-
-    /// <summary>Episodes a recheck can still fix.</summary>
-    public int RecoverableTitleCount { get; set; }
-
-    /// <summary>Episodes "Sistema tutti i titoli" will inspect: not locked and with a source to ask.</summary>
-    public int CheckableTitleCount { get; set; }
-
-    /// <summary>Episodes whose row exists but whose title AnimeClick has not published yet.</summary>
-    public int WaitingTitleCount { get; set; }
-
-    /// <summary>
-    /// Episodes no request can fix: the card lists them without titles, the numbering is ambiguous,
-    /// the field is locked, or the season needs its own card ID.
-    /// </summary>
-    public int UnavailableTitleCount { get; set; }
-
-    public List<LibraryAuditReasonCount> Totals { get; set; } = [];
-
-    public List<LibraryAuditSeriesItem> Series { get; set; } = [];
-}
-
-public sealed class LibraryAuditReasonCount
-{
-    public string Reason { get; set; } = string.Empty;
-
-    public int SeriesCount { get; set; }
-
-    public int EpisodeCount { get; set; }
-}
-
-public sealed class LibraryAuditSeriesItem
-{
-    public string Id { get; set; } = string.Empty;
-
-    public string Name { get; set; } = string.Empty;
-
-    public int? Year { get; set; }
-
-    public string? AnimeClickId { get; set; }
-
-    public int EpisodeCount { get; set; }
-
-    public int MissingTitleCount { get; set; }
-
-    /// <summary>Of the missing ones, those a recheck can still fix.</summary>
-    public int RecoverableTitleCount { get; set; }
-
-    /// <summary>Of the missing ones, those "Sistema tutti i titoli" will inspect.</summary>
-    public int CheckableTitleCount { get; set; }
-
-    /// <summary>Of the missing ones, those only waiting for AnimeClick to publish the title.</summary>
-    public int WaitingTitleCount { get; set; }
-
-    /// <summary>Of the missing ones, those no request can change.</summary>
-    public int UnavailableTitleCount { get; set; }
-
-    /// <summary>Rows read from the card. Only filled by the single-series, network-allowed audit.</summary>
-    public int? CardRowCount { get; set; }
-
-    public string Reason { get; set; } = nameof(AnimeClickAuditReason.Ok);
-
-    public string ReasonLabel { get; set; } = string.Empty;
-
-    public List<LibraryAuditSeasonItem> Seasons { get; set; } = [];
-
-    /// <summary>
-    /// Fills the counts and the headline cause from the episodes that still need a title. Shared by
-    /// the library-wide report and the single-series re-read: the latter used to set only the total,
-    /// so re-reading a series made its recoverable, waiting and unavailable counts drop to zero.
-    /// </summary>
-    internal void ApplyReasons(IReadOnlyCollection<AnimeClickAuditReason> reasons)
-    {
-        ArgumentNullException.ThrowIfNull(reasons);
-
-        // Three separate numbers, because they mean three different things to the user: what a
-        // recheck can still fix, what is only waiting for AnimeClick to publish, and what no
-        // request will ever change.
-        MissingTitleCount = reasons.Count;
-        RecoverableTitleCount = reasons.Count(AnimeClickLibraryAudit.IsRecoverableByRecheck);
-        WaitingTitleCount = reasons.Count(AnimeClickLibraryAudit.IsWaitingForSource);
-        UnavailableTitleCount = MissingTitleCount - RecoverableTitleCount - WaitingTitleCount;
-        var reason = reasons.Count == 0 ? AnimeClickAuditReason.Ok : AnimeClickLibraryAudit.Summarize(reasons);
-        Reason = reason.ToString();
-        ReasonLabel = AnimeClickLibraryAudit.Describe(reason);
-    }
-}
-
-public sealed class LibraryAuditSeasonItem
-{
-    public string SeasonId { get; set; } = string.Empty;
-
-    public int? SeasonNumber { get; set; }
-
-    public int MissingTitleCount { get; set; }
-
-    public string? AnimeClickId { get; set; }
-
-    /// <summary>True when this card came from the traversal or from an ID stored on the season.</summary>
-    public bool CardIsResolved { get; set; }
-
-    /// <summary>Rows read from the card used for this season.</summary>
-    public int? CardRowCount { get; set; }
-
-    public string Reason { get; set; } = string.Empty;
-
-    public string ReasonLabel { get; set; } = string.Empty;
-}
-
-public sealed class LibraryAuditSeriesRequest
-{
-    public string? ItemId { get; set; }
-}
-
-public sealed class RunTaskResponse
-{
-    public bool Queued { get; set; }
-
-    public string Message { get; set; } = string.Empty;
-}
-
-
-/// <summary>One selectable AI service, as the configuration page needs to render it.</summary>
-public sealed class AiProviderInfo
-{
-    public string Id { get; set; } = string.Empty;
-
-    public string DisplayName { get; set; } = string.Empty;
-
-    public string ChatEndpoint { get; set; } = string.Empty;
-
-    public bool RequiresApiKey { get; set; }
-
-    public bool SupportsModelListing { get; set; }
-
-    public string CredentialUrl { get; set; } = string.Empty;
-
-    public string Note { get; set; } = string.Empty;
 }

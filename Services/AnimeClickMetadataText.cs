@@ -44,6 +44,27 @@ internal static partial class AnimeClickMetadataText
             || title.StartsWith('{') || title.StartsWith('[') ? null : title;
     }
 
+    /// <summary>
+    /// A text cut at a word boundary for the page: the showcase and the card preview show a taste of
+    /// the synopsis, not the whole of it.
+    /// </summary>
+    public static string? Excerpt(string? value, int maximumLength)
+    {
+        var text = value?.Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            return null;
+        }
+
+        if (maximumLength < 2 || text.Length <= maximumLength)
+        {
+            return text;
+        }
+
+        var cut = text.LastIndexOf(' ', maximumLength - 1);
+        return text[..(cut > maximumLength / 2 ? cut : maximumLength - 1)].TrimEnd(',', ';', ':', ' ') + "…";
+    }
+
     public static string[] Labels(IEnumerable<string> values)
         => values.Select(Title).Where(v => v is not null).Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 }

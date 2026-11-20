@@ -159,6 +159,13 @@ public sealed class AnimeClickLibraryWorkspace
         };
     }
 
+    /// <summary>How many series and films are bound to an AnimeClick card.</summary>
+    public (int Series, int Movies) CountIdentified()
+    {
+        var identified = GetIdentifiedItems();
+        return (identified.Count(item => item is Series), identified.Count(item => item is Movie));
+    }
+
     /// <summary>
     /// Every identified series and film, compact. The audits only list what needs attention (and the
     /// title audit only series), so without this a film already complete in Italian would be missing
@@ -205,7 +212,7 @@ public sealed class AnimeClickLibraryWorkspace
             Type = item is Movie ? "Movie" : "Series",
             AnimeClickId = animeClickId,
             AnimeClickUrl = AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, animeClickId, out var url) ? url : null,
-            Overview = Shorten(item.Overview),
+            Overview = AnimeClickMetadataText.Excerpt(item.Overview, OverviewLength),
             Genres = (item.Genres ?? []).Take(3).ToList(),
             CommunityRating = item.CommunityRating,
             UpdatedAt = item.DateLastRefreshed == default
@@ -215,23 +222,6 @@ public sealed class AnimeClickLibraryWorkspace
             HasBackdropImage = item.HasImage(ImageType.Backdrop, 0),
             HasLogoImage = item.HasImage(ImageType.Logo, 0)
         };
-    }
-
-    private static string? Shorten(string? overview)
-    {
-        var text = overview?.Trim();
-        if (string.IsNullOrEmpty(text))
-        {
-            return null;
-        }
-
-        if (text.Length <= OverviewLength)
-        {
-            return text;
-        }
-
-        var cut = text.LastIndexOf(' ', OverviewLength - 1);
-        return text[..(cut > OverviewLength / 2 ? cut : OverviewLength - 1)].TrimEnd(',', ';', ':', ' ') + "…";
     }
 
     private static AnimeClickLibraryStatus? Describe(

@@ -52,6 +52,9 @@
     font-size: 15px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    /* Scrollbars, number spinners, the list of a select and autofill follow the dark page. */
+    color-scheme: dark;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .ac-app *,
@@ -71,6 +74,27 @@
     letter-spacing: normal;
 }
 
+/* No 300 ms wait for a double tap on anything that is pressed. */
+.ac-app :where(a, button, summary, label, input, select),
+.ac-layer :where(a, button, summary, label, input, select) {
+    touch-action: manipulation;
+}
+
+/* The save bar sticks to the bottom: a control reached with Tab must not end up underneath it. */
+.ac-app :where(a, button, summary, input, select, textarea) {
+    scroll-margin-block: 24px 96px;
+}
+
+.ac-app :where(h1, h2, h3),
+.ac-layer :where(h1, h2, h3) {
+    text-wrap: balance;
+}
+
+.ac-app :where(p, li),
+.ac-layer :where(p, li) {
+    text-wrap: pretty;
+}
+
 .ac-app a,
 .ac-layer a {
     color: var(--ac-sakura);
@@ -78,9 +102,12 @@
     text-underline-offset: 3px;
 }
 
+/* The ring is a shadow so that it follows rounded corners. The outline stays, transparent: it is
+   what Windows high-contrast mode paints, where shadows are removed. */
 .ac-app :focus-visible,
 .ac-layer :focus-visible {
-    outline: none;
+    outline: 2px solid transparent;
+    outline-offset: 2px;
     box-shadow: var(--ac-focus);
 }
 
@@ -94,6 +121,14 @@
 .ac-app [hidden],
 .ac-layer [hidden] {
     display: none !important;
+}
+
+/* A field that exists only to hand its text to the clipboard. */
+.ac-offscreen {
+    position: fixed;
+    top: 0;
+    left: -9999px;
+    opacity: 0;
 }
 
 /* ---------------------------------------------------------------- page shell */
@@ -207,6 +242,10 @@
     font-weight: 700;
     border: 0;
     cursor: pointer;
+}
+
+.ac-live:hover {
+    background: rgba(236, 31, 39, 0.28);
 }
 
 .ac-live::before {
@@ -550,6 +589,10 @@
     text-underline-offset: 3px;
 }
 
+.ac-link:hover {
+    color: #ffb3cf;
+}
+
 /* ---------------------------------------------------------------- badges & chips */
 
 .ac-badge {
@@ -602,6 +645,12 @@
 
 .ac-chip:hover {
     color: var(--ac-text);
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.ac-chip[aria-pressed="true"]:hover {
+    background: #fff;
+    color: #160f1c;
 }
 
 .ac-chip[aria-pressed="true"] {
@@ -660,8 +709,15 @@
     box-shadow: inset 0 0 0 1px var(--ac-sakura), var(--ac-focus);
 }
 
-.ac-input:invalid {
+.ac-input:invalid,
+.ac-input[aria-invalid="true"] {
     box-shadow: inset 0 0 0 1px var(--ac-bad);
+}
+
+.ac-field-error {
+    color: #ff8d98;
+    font-size: 13px;
+    font-weight: 700;
 }
 
 .ac-select {
@@ -933,6 +989,7 @@
 
 .ac-progress.is-indeterminate > span {
     width: 35%;
+    transition: none;
     animation: ac-indeterminate 1.3s ease-in-out infinite;
 }
 
@@ -1078,25 +1135,66 @@
 
 .ac-hero-nav {
     position: absolute;
-    right: clamp(20px, 3.4vw, 40px);
-    top: 20px;
+    right: clamp(12px, 3vw, 32px);
+    top: 10px;
+    z-index: 1;
     display: flex;
-    gap: 6px;
+    align-items: center;
+    gap: 2px;
 }
 
+/* The mark is a thin bar; the button around it is a comfortable 36 px target. */
 .ac-hero-dot {
-    width: 30px;
-    height: 6px;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
     padding: 0;
     border: 0;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.25);
+    border-radius: 10px;
+    background: none;
     cursor: pointer;
 }
 
-.ac-hero-dot[aria-current="true"] {
+.ac-hero-dot::before {
+    content: "";
+    width: 28px;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.28);
+    transition: background 0.2s;
+}
+
+.ac-hero-dot:hover::before {
+    background: rgba(255, 255, 255, 0.6);
+}
+
+.ac-hero-dot[aria-current="true"]::before {
     background: var(--ac-red-hot);
     box-shadow: var(--ac-glow);
+}
+
+.ac-hero-toggle {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    margin-right: 4px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(10, 8, 16, 0.55);
+    color: var(--ac-text);
+    cursor: pointer;
+}
+
+.ac-hero-toggle:hover {
+    background: rgba(10, 8, 16, 0.85);
+}
+
+.ac-hero-toggle svg {
+    width: 15px;
+    height: 15px;
 }
 
 .ac-hero--empty .ac-hero-body {
@@ -1137,7 +1235,8 @@
     padding: 4px 4px 14px;
     margin: 0 -4px;
     overflow-x: auto;
-    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
     scrollbar-width: thin;
     scrollbar-color: var(--ac-surface-3) transparent;
 }
@@ -1459,9 +1558,19 @@
     border-top: 1px solid var(--ac-line);
 }
 
+.ac-list-item {
+    flex-wrap: wrap;
+}
+
 .ac-list-item > div {
-    flex: 1 1 auto;
+    flex: 1 1 180px;
     min-width: 0;
+}
+
+.ac-list-item > .ac-row,
+.ac-list-item > .ac-btn {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
 }
 
 .ac-list-item strong {
@@ -1808,8 +1917,9 @@ button.ac-number:hover {
     display: grid;
     gap: 18px;
     align-content: start;
-    padding: 4px 22px 28px;
+    padding: 4px 22px calc(28px + env(safe-area-inset-bottom, 0px));
     overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .ac-drawer-nav {
@@ -1823,9 +1933,26 @@ button.ac-number:hover {
 }
 
 .ac-seasons {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.ac-season {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    align-items: center;
+    gap: 6px 10px;
+}
+
+.ac-season-why {
+    display: grid;
+    flex: 1 1 180px;
+    min-width: 0;
+    color: var(--ac-text-2);
+    font-size: 13px;
 }
 
 .ac-episodes {
@@ -2035,6 +2162,11 @@ button.ac-number:hover {
     min-width: 0;
 }
 
+.ac-pick:hover {
+    background: rgba(255, 255, 255, 0.07);
+    box-shadow: inset 0 0 0 1px var(--ac-line-2);
+}
+
 .ac-pick .ac-poster {
     border-radius: 10px;
 }
@@ -2078,6 +2210,12 @@ button.ac-number:hover {
     flex: 1 1 auto;
 }
 
+/* The actions of the selected title stay at its right edge instead of floating in the row. */
+.ac-selected > .ac-row {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
 .ac-selected > #acItemSeasonField {
     flex: 1 1 100%;
 }
@@ -2086,7 +2224,87 @@ button.ac-number:hover {
     display: flex;
     align-items: center;
     gap: 10px;
+    font-size: 15px;
     font-weight: 800;
+}
+
+/* The card chosen for a binding, shown before anything is saved. */
+.ac-card-preview {
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+    padding: 12px;
+    border-radius: 14px;
+    background: rgba(0, 0, 0, 0.22);
+    box-shadow: inset 0 0 0 1px var(--ac-line-2);
+}
+
+.ac-card-preview-title {
+    display: block;
+    font-size: 17px;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
+.ac-card-preview-facts {
+    color: var(--ac-text-2);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+.ac-card-preview .ac-hint {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Maintenance: what the cache holds, and the report for a bug. */
+.ac-cache-groups {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+.ac-cache-groups li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 5px 0;
+}
+
+.ac-cache-groups li + li {
+    border-top: 1px solid var(--ac-line);
+}
+
+.ac-subsection {
+    padding-top: 14px;
+    border-top: 1px dashed var(--ac-line-2);
+}
+
+/* What changed with an update, once. */
+.ac-news {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    padding: 16px 18px;
+    border-radius: var(--ac-radius);
+    background: linear-gradient(135deg, rgba(255, 143, 184, 0.13), rgba(139, 108, 255, 0.07));
+    box-shadow: inset 0 0 0 1px rgba(255, 143, 184, 0.35);
+}
+
+.ac-news-list {
+    display: grid;
+    gap: 4px;
+    margin: 0;
+    padding-left: 18px;
+    color: var(--ac-text-2);
+    font-size: 14px;
 }
 
 .ac-step-num {
@@ -2293,7 +2511,7 @@ button.ac-number:hover {
 
 .ac-savebar {
     position: sticky;
-    bottom: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
     z-index: 30;
     display: flex;
     align-items: center;
@@ -2340,8 +2558,8 @@ button.ac-number:hover {
 
 .ac-toasts {
     position: fixed;
-    right: 18px;
-    bottom: 18px;
+    right: calc(18px + env(safe-area-inset-right, 0px));
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
     z-index: 1400;
     display: grid;
     gap: 10px;
@@ -2372,7 +2590,34 @@ button.ac-number:hover {
 .ac-toast.is-ok svg { color: var(--ac-ok); }
 .ac-toast.is-bad { box-shadow: inset 0 0 0 1px rgba(255, 96, 112, 0.5), 0 20px 40px -16px rgba(0, 0, 0, 0.9); }
 .ac-toast.is-bad svg { color: var(--ac-bad); }
-.ac-toast.is-leaving { opacity: 0; transform: translateY(6px); transition: 0.2s; }
+.ac-toast.is-leaving { opacity: 0; transform: translateY(6px); transition: opacity 0.2s, transform 0.2s; }
+
+.ac-toast-close {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 28px;
+    height: 28px;
+    margin: -5px -7px -5px 0;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--ac-text-3);
+    cursor: pointer;
+}
+
+.ac-toast-close:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--ac-text);
+}
+
+.ac-toast .ac-toast-close svg {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    color: inherit;
+}
 
 .ac-veil {
     position: fixed;
@@ -2391,7 +2636,9 @@ button.ac-number:hover {
     gap: 14px;
     width: min(480px, 100%);
     max-height: calc(100vh - 36px);
+    max-height: calc(100dvh - 36px);
     overflow: auto;
+    overscroll-behavior: contain;
     padding: 24px;
     border-radius: 22px;
     background: linear-gradient(180deg, #221c30, #18131f);
@@ -2399,7 +2646,7 @@ button.ac-number:hover {
     animation: ac-pop 0.25s var(--ac-ease);
 }
 
-.ac-modal h3 {
+.ac-modal h2 {
     font-size: 19px;
     font-weight: 900;
     letter-spacing: -0.02em;
@@ -2423,7 +2670,7 @@ button.ac-number:hover {
 @keyframes ac-slide { from { transform: translateX(40px); opacity: 0; } }
 @keyframes ac-float { 50% { transform: translateY(-8px) rotate(-1.5deg); } }
 @keyframes ac-shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
-@keyframes ac-indeterminate { 0% { left: -35%; } 100% { left: 100%; } }
+@keyframes ac-indeterminate { from { transform: translateX(-100%); } to { transform: translateX(286%); } }
 @keyframes ac-pulse {
     0% { box-shadow: 0 0 0 0 rgba(255, 59, 69, 0.7); }
     70% { box-shadow: 0 0 0 8px rgba(255, 59, 69, 0); }
@@ -2434,22 +2681,64 @@ button.ac-number:hover {
     .ac-app *,
     .ac-layer *,
     .ac-app *::before,
-    .ac-app *::after {
+    .ac-app *::after,
+    .ac-layer *::before,
+    .ac-layer *::after {
         animation-duration: 0.001ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.001ms !important;
     }
+
+    /* A bar that no longer slides must still read as "working". */
+    .ac-progress.is-indeterminate > span {
+        width: 100%;
+        opacity: 0.55;
+    }
 }
 
 @media (forced-colors: active) {
+    .ac-app :focus-visible,
+    .ac-layer :focus-visible {
+        outline-color: Highlight;
+    }
+
     .ac-tab[aria-selected="true"],
     .ac-chip[aria-pressed="true"],
-    .ac-pick[aria-pressed="true"] {
+    .ac-pick[aria-pressed="true"],
+    .ac-hero-dot[aria-current="true"] {
         outline: 2px solid Highlight;
     }
 
-    .ac-switch {
+    .ac-switch,
+    .ac-btn,
+    .ac-input,
+    .ac-select,
+    .ac-textarea {
         border: 1px solid ButtonText;
+    }
+}
+
+/* Fingers need more room than a pointer: small controls grow to WCAG's 44 px on touch screens. */
+@media (pointer: coarse) {
+    .ac-btn,
+    .ac-btn--sm,
+    .ac-chip,
+    .ac-tab,
+    .ac-input,
+    .ac-select {
+        min-height: 44px;
+    }
+
+    .ac-btn--icon,
+    .ac-hero-dot,
+    .ac-hero-toggle,
+    .ac-toast-close {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .ac-hero-dot::before {
+        width: 22px;
     }
 }
 
@@ -2535,6 +2824,10 @@ button.ac-number:hover {
 
     .ac-drawer {
         width: 100%;
+    }
+
+    .ac-card-preview {
+        grid-template-columns: 72px minmax(0, 1fr);
     }
 }
 

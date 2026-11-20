@@ -83,6 +83,108 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
         return true;
     }
 
+    /// <summary>
+    /// Repairs the titles of one series inside the request the page is waiting on.
+    /// <para>
+    /// With <paramref name="unlock"/>, an episode loses its lock only when it needs a title and at
+    /// the moment the repair tries it: a lock protects a manual edit, and the series, its seasons,
+    /// the episodes whose title is already fine and those this call does not reach keep theirs.
+    /// </para>
+    /// <para>
+    /// A long series whose titles need other sources or a translation can take minutes, so the work
+    /// stops at <paramref name="budget"/> and reports how many episodes are left, instead of the page
+    /// timing out with nothing to show. One slow episode cannot run away with the request either:
+    /// past the budget plus <see cref="OvertimeAllowance"/> the episode in hand is abandoned.
+    /// </para>
+    /// <para>
+    /// <paramref name="continueAfter"/> is the episode a previous call stopped at. Without it the
+    /// next call would start again from the episodes just found to have no title anywhere, and a
+    /// series that opens with enough of them would never get past them.
+    /// </para>
+    /// </summary>
+    public async Task<AnimeClickSeriesTitleRepair> RepairSeriesAsync(
+        IReadOnlyList<Episode> episodes,
+        bool unlock,
+        TimeSpan budget,
+        CancellationToken cancellationToken,
+        Guid? continueAfter = null)
+    {
+        ArgumentNullException.ThrowIfNull(episodes);
+        var resumeAt = 0;
+        if (continueAfter is { } cursor)
+        {
+            for (var index = 0; index < episodes.Count; index++)
+            {
+                if (episodes[index].Id == cursor)
+                {
+                    resumeAt = index + 1;
+                    break;
+                }
+            }
+        }
+
+        // The same conditions RepairAsync writes under, apart from the lock: an episode is unlocked
+        // only for a repair that is allowed to write.
+        var titlesEnabled = Plugin.Instance?.Configuration.EnableEpisodeTitles != false;
+        var candidates = episodes
+            .Skip(resumeAt)
+            .Where(episode => titlesEnabled
+                && AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode)
+                && ProviderEnabled(episode)
+                && (unlock || !AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode)))
+            .ToList();
+        var session = new AnimeClickTitleRepairSession();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        using var hardStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        hardStop.CancelAfter(budget + OvertimeAllowance);
+        var checkedCount = 0;
+        var applied = 0;
+        var unlocked = 0;
+        Guid? lastChecked = null;
+        foreach (var episode in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (checkedCount > 0 && clock.Elapsed > budget)
+            {
+                break;
+            }
+
+            if (await AnimeClickLocks.TryUnlockAsync(libraryManager, episode, MetadataField.Name, cancellationToken).ConfigureAwait(false))
+            {
+                unlocked++;
+            }
+
+            try
+            {
+                if (await RepairAsync(episode, session, hardStop.Token).ConfigureAwait(false))
+                {
+                    applied++;
+                }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Out of time in the middle of this episode: it is left for the next call.
+                break;
+            }
+
+            checkedCount++;
+            lastChecked = episode.Id;
+        }
+
+        var remaining = candidates.Count - checkedCount;
+        return new AnimeClickSeriesTitleRepair(checkedCount, applied, unlocked, remaining, remaining > 0 ? lastChecked ?? continueAfter : null);
+    }
+
+    /// <summary>
+    /// How long a single-series repair keeps starting new episodes. The page waits 130 seconds for
+    /// the answer (the default of its <c>request()</c>): this, plus <see cref="OvertimeAllowance"/>,
+    /// plus the audit of the series that follows, has to stay inside that.
+    /// </summary>
+    public static readonly TimeSpan SeriesBudget = TimeSpan.FromSeconds(75);
+
+    /// <summary>How far past its budget a single-series repair lets the episode in hand run.</summary>
+    internal static readonly TimeSpan OvertimeAllowance = TimeSpan.FromSeconds(15);
+
     private bool ProviderEnabled(Episode episode)
     {
         var fetchers = libraryManager.GetLibraryOptions(episode)?.TypeOptions?
@@ -90,3 +192,7 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
         return fetchers is null || fetchers.Contains("AnimeClick", StringComparer.OrdinalIgnoreCase);
     }
 }
+
+/// <summary>What one single-series title repair did, and how much it left for the next call.</summary>
+/// <param name="ContinueAfter">The episode to resume after, while <paramref name="Remaining"/> is not zero.</param>
+public sealed record AnimeClickSeriesTitleRepair(int Checked, int Applied, int Unlocked, int Remaining, Guid? ContinueAfter = null);

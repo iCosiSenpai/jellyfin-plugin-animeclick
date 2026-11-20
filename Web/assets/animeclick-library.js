@@ -298,23 +298,34 @@
                 'Utile dopo aver aggiunto una chiave TMDB o TheTVDB o configurato la traduzione. Il server ricontrolla lingua, blocchi e impostazioni prima di accodarli.']
         }).then(function (yes) {
             if (!yes) return;
-            ui.setBusy(buttonNode, true, 'Accodamento…');
-            api.request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: ids, force: true }).then(function (result) {
-                var queued = val(result, 'queuedCount') || 0;
-                ui.toast(queued ? num(queued) + ' elementi accodati: analizza di nuovo fra qualche minuto.' : 'Nessun elemento risulta ancora riparabile.', queued ? 'success' : 'error');
-            }).catch(function (error) {
-                ui.toast(truncate(error.message, 240), 'error');
-            }).finally(function () { ui.setBusy(buttonNode, false); });
+            ui.run(buttonNode, 'Accodamento…', function () {
+                return queueSynopses(ids, { force: true }).then(function (totals) {
+                    ui.toast(totals.queued ? plural(totals.queued, 'elemento accodato', 'elementi accodati') + ': analizza di nuovo fra qualche minuto.' : 'Nessun elemento risulta ancora riparabile.',
+                        totals.queued ? 'success' : 'error');
+                });
+            });
         });
     }
 
     /* ===== library view ===== */
 
-    var view = { query: '', filter: 'attention', sort: 'work', limit: PAGE_SIZE, scanning: false };
     var FILTERS = [
         ['attention', 'Da sistemare'], ['titles', 'Titoli mancanti'], ['synopses', 'Trame da completare'],
         ['unidentified', 'Da identificare'], ['complete', 'Completi'], ['all', 'Tutti']
     ];
+    var SORTS = [
+        { value: 'work', label: 'Prima da sistemare' }, { value: 'name', label: 'Nome A–Z' },
+        { value: 'recent', label: 'Aggiornati di recente' }, { value: 'year', label: 'Anno, dal più recente' }
+    ];
+
+    /* The filter and the order survive a reload of the page; the search text does not. */
+    var view = {
+        query: '',
+        filter: AC.memory.pick('library.filter', FILTERS.map(function (filter) { return filter[0]; }), 'attention'),
+        sort: AC.memory.pick('library.sort', SORTS.map(function (sort) { return sort.value; }), 'work'),
+        limit: PAGE_SIZE,
+        scanning: false
+    };
 
     function matches(e, filter) {
         if (filter === 'attention') return e.status !== 'complete';
@@ -392,12 +403,10 @@
         container.appendChild(h('p', { id: 'acActivityConnection', class: 'ac-status is-bad', role: 'status' }));
 
         var search = h('div', { class: 'ac-search' }, icon('search'),
-            h('input', { id: 'acLibrarySearch', class: 'ac-input', type: 'search', placeholder: 'Cerca per titolo, anno o ID', autocomplete: 'off', 'aria-label': 'Cerca nella libreria' }));
-        var sort = ui.select('acLibrarySort', null, [
-            { value: 'work', label: 'Prima da sistemare' }, { value: 'name', label: 'Nome A–Z' },
-            { value: 'recent', label: 'Aggiornati di recente' }, { value: 'year', label: 'Anno, dal più recente' }
-        ]);
+            h('input', { id: 'acLibrarySearch', name: 'acLibrarySearch', class: 'ac-input', type: 'search', placeholder: 'Titolo, anno o ID…', autocomplete: 'off', spellcheck: false, 'aria-label': 'Cerca nella libreria' }));
+        var sort = ui.select('acLibrarySort', null, SORTS);
         sort.setAttribute('aria-label', 'Ordina');
+        sort.value = view.sort;
         var reread = ui.button('Rileggi da AnimeClick', { id: 'acBtnRereadVisible', icon: 'refresh', variant: 'ghost', small: true, title: 'Rilegge le schede delle serie mostrate che possono ancora migliorare, fino a ' + REREAD_LIMIT + ' alla volta.' });
         reread.addEventListener('click', function () { rereadVisible(reread); });
         container.appendChild(h('div', { class: 'ac-toolbar' },
@@ -417,7 +426,12 @@
         container.appendChild(more);
 
         el('acLibrarySearch').addEventListener('input', function () { view.query = this.value; view.limit = PAGE_SIZE; renderGrid(); });
-        sort.addEventListener('change', function () { view.sort = this.value; view.limit = PAGE_SIZE; renderGrid(); });
+        sort.addEventListener('change', function () {
+            view.sort = this.value;
+            view.limit = PAGE_SIZE;
+            AC.memory.set('library.sort', view.sort);
+            renderGrid();
+        });
 
         AC.bus.on('reports', render);
         AC.bus.on('reports-loading', function () { renderScanning(true); });
@@ -467,7 +481,7 @@
         if (!filter) return h('div', { class: 'ac-number' + (tone ? ' is-' + tone : '') }, content);
         return h('button', {
             type: 'button', class: 'ac-number' + (tone ? ' is-' + tone : ''), title: 'Mostra questi anime',
-            on: { click: function () { setFilter(filter); el('acLibraryGrid').scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
+            on: { click: function () { setFilter(filter); AC.dom.reveal(el('acLibraryGrid')); } }
         }, content);
     }
 
@@ -525,6 +539,7 @@
     function setFilter(filter) {
         view.filter = filter;
         view.limit = PAGE_SIZE;
+        AC.memory.set('library.filter', filter);
         renderFilters();
         renderGrid();
     }
@@ -558,7 +573,7 @@
         if (!entries().length) {
             grid.appendChild(ui.empty('Nessun anime usa ancora AnimeClick',
                 'Attiva AnimeClick nelle librerie anime e aggiorna i metadati: le serie compariranno qui.',
-                ui.button('Controlla le librerie', { icon: 'folder', onClick: function () { AC.app.go('home'); var target = el('acHomeLibraries'); if (target) target.scrollIntoView({ behavior: 'smooth' }); } })));
+                ui.button('Controlla le librerie', { icon: 'folder', onClick: function () { AC.app.go('home'); AC.dom.reveal(el('acHomeLibraries')); } })));
         } else if (!rows.length) {
             grid.appendChild(ui.empty(view.query ? 'Nessun risultato' : view.filter === 'attention' ? 'Tutto in ordine!' : 'Niente in questo filtro',
                 view.query ? 'Nessun anime corrisponde alla ricerca e al filtro scelti.' : view.filter === 'attention' ? 'Titoli e trame risultano completi: buona visione.' : 'Prova un altro filtro.'));
@@ -648,8 +663,7 @@
                 .then(function () { index++; return next(); });
         }
         return next().then(function () {
-            render();
-            AC.bus.emit('reports');
+            AC.bus.emit('reports', data);
             ui.toast(errors.length ? 'Lettura completata con errori: ' + errors[0] : plural(targets.length, 'scheda riletta', 'schede rilette') + ' da AnimeClick.', errors.length ? 'error' : 'success');
         }).finally(function () { ui.setBusy(buttonNode, false); refreshControls(); });
     }
@@ -675,21 +689,52 @@
     var QUALITY_TONE = { Italian: 'ok', English: 'warn', Missing: 'bad', Unknown: '' };
     var REPAIR_STATE = {
         'waiting-translation': ['Traduzione in corso', 'info', 'La traduzione è già accodata: si applica da sola quando il servizio risponde.'],
-        'no-source': ['Nessuna fonte', '', 'AnimeClick, TheTVDB e TMDB non hanno questa trama. «Riprova senza fonte» la ricontrolla.'],
+        'no-source': ['Nessuna fonte', '', 'AnimeClick, TheTVDB e TMDB non hanno questa trama. «Riprova» la ricontrolla.'],
         blocked: ['Valore cambiato', 'warn', 'Il testo è cambiato durante la riparazione, quindi non è stato sovrascritto.'],
         error: ['Errore', 'bad', 'L’ultimo tentativo è finito con un errore: i dettagli sono nel log di Jellyfin.']
     };
 
     var detail = null;
 
+    /** The AnimeClick card of an entry, or null while only the audit says it is identified. */
+    function cardOf(e) {
+        return (e.titles && val(e.titles, 'animeClickId')) || (e.animeClickId && e.animeClickId !== 'identificato' ? e.animeClickId : null);
+    }
+
     function animeClickUrl(e) {
         var base = (AC.settings.saved() && AC.settings.saved().BaseUrl) || 'https://www.animeclick.it';
-        var id = e.animeClickId && e.animeClickId !== 'identificato' ? e.animeClickId : (e.titles && val(e.titles, 'animeClickId'));
+        var id = cardOf(e);
         return id && /^\d+(\/[\w-]+)?$/.test(id) ? base.replace(/\/+$/, '') + '/anime/' + id : null;
     }
 
+    function entryByKey(entryKey) {
+        return entries().find(function (item) { return item.key === entryKey; }) || null;
+    }
+
+    /** Redraws the panel from the data already in memory, if it still shows this anime. */
+    function redrawDetail(entryKey) {
+        var fresh = entryByKey(entryKey);
+        if (fresh && detail && detail.isOpen() && detail.entryKey === entryKey) renderDetail(fresh);
+    }
+
+    /** Reads the audits again, then redraws the panel. */
+    function reloadDetail(entryKey) {
+        return loadReports(true).then(function () { redrawDetail(entryKey); });
+    }
+
+    /** Opens «Correggi un abbinamento» on this anime, or on one of its seasons. */
+    function identifyFromDetail(e, season) {
+        var target = { id: e.id, name: e.name, type: e.type, year: e.year, hasPrimaryImage: e.hasPrimaryImage, returnToKey: e.key };
+        if (season) {
+            target.seasonId = val(season, 'seasonId');
+            target.seasonNumber = val(season, 'seasonNumber');
+        }
+        detail.close();
+        AC.settings.startIdentify(target);
+    }
+
     function openDetail(entryKey) {
-        var e = entries().find(function (item) { return item.key === entryKey; });
+        var e = entryByKey(entryKey);
         if (!e) {
             ui.toast('Questo anime non compare nell’ultima analisi: aggiornala e riprova.', 'error');
             return;
@@ -699,8 +744,7 @@
         detail.entryKey = entryKey;
         detail.panel.addEventListener('keydown', function (event) {
             if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
-            var target = event.target;
-            if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+            if (event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
             event.preventDefault();
             stepDetail(event.key === 'ArrowLeft' ? -1 : 1);
         });
@@ -721,17 +765,15 @@
         detail.entryKey = next.key;
         detail.panel.setAttribute('aria-label', next.name);
         renderDetail(next);
-        detail.panel.scrollTop = 0;
-        if (detail.body) detail.body.scrollTop = 0;
-        var focusTarget = detail.panel.querySelector(delta < 0 ? '#acBtnDrawerPrev' : '#acBtnDrawerNext') || detail.panel;
-        focusTarget.focus();
+        detail.body.scrollTop = 0;
+        (detail.panel.querySelector(delta < 0 ? '#acBtnDrawerPrev' : '#acBtnDrawerNext') || detail.panel).focus();
     }
 
     function detailNav(e) {
         var rows = detailSiblings();
         var index = rows.findIndex(function (item) { return item.key === e.key; });
         if (index < 0 || rows.length < 2) return null;
-        return h('div', { class: 'ac-row ac-drawer-nav', id: 'acDrawerNav' },
+        return h('nav', { class: 'ac-row ac-drawer-nav', id: 'acDrawerNav', 'aria-label': 'Altri anime mostrati' },
             ui.button('Precedente', {
                 id: 'acBtnDrawerPrev', small: true, variant: 'ghost', icon: 'chevronLeft',
                 title: 'Anime precedente (Alt+←)', onClick: function () { stepDetail(-1); }
@@ -744,320 +786,324 @@
     }
 
     function renderDetail(e) {
-        var head = detail.head;
-        clear(head);
-        if (e.hasPrimaryImage) {
-            head.appendChild(h('div', { class: 'ac-hero-bg is-blur', style: 'background-image:url("' + api.image(e.id, 'Primary', { fillHeight: 300, quality: 60 }) + '")' }));
-        }
-        head.appendChild(h('div', { class: 'ac-hero-shade' }));
+        renderDetailHead(e);
+        replace(detail.body,
+            detailNav(e),
+            e.identified ? null : ui.callout('Non ancora identificato', 'Jellyfin non ha collegato questo titolo a una scheda AnimeClick. Indicala tu: il plugin la verifica e aggiorna i metadati.', 'warn'),
+            e.titles ? titlesSection(e) : null,
+            synopsesSection(e),
+            bindingSection(e));
+    }
+
+    function renderDetailHead(e) {
         var url = animeClickUrl(e);
-        var refreshMetaBtn = ui.button('Aggiorna metadati', { id: 'acBtnDrawerRefresh', small: true, variant: 'ghost', icon: 'refresh' });
-        refreshMetaBtn.addEventListener('click', function () {
-            ui.setBusy(refreshMetaBtn, true, 'Accodamento…');
-            api.request('POST', 'Plugins/AnimeClick/RefreshItem', { itemId: e.id, replaceAllMetadata: false, replaceAllImages: false }).then(function () {
-                ui.toast('Aggiornamento dei metadati avviato in Jellyfin', 'success');
-            }).catch(function (error) {
-                ui.toast(truncate(error.message, 240), 'error');
-            }).finally(function () { ui.setBusy(refreshMetaBtn, false); });
+        var refresh = ui.button('Aggiorna metadati', { id: 'acBtnDrawerRefresh', small: true, variant: 'ghost', icon: 'refresh' });
+        refresh.addEventListener('click', function () {
+            ui.run(refresh, 'Accodamento…', function () {
+                return api.request('POST', 'Plugins/AnimeClick/RefreshItem', { itemId: e.id, replaceAllMetadata: false, replaceAllImages: false }).then(function () {
+                    ui.toast('Aggiornamento dei metadati avviato in Jellyfin', 'success');
+                });
+            });
         });
-        head.appendChild(ui.poster(e, { height: 300 }));
-        head.appendChild(h('div', { class: 'ac-drawer-title' },
-            h('p', { class: 'ac-jp' }, e.type === 'Movie' ? 'Film' : 'Serie', e.year ? h('i', { text: String(e.year) }) : null),
-            h('h2', { text: e.name }),
-            h('div', { class: 'ac-row' }, cardBadge(e),
-                url ? h('a', { class: 'ac-btn ac-btn--sm ac-btn--ghost', href: url, target: '_blank', rel: 'noopener noreferrer' }, icon('external'), 'AnimeClick') : null,
-                refreshMetaBtn,
-                h('a', { class: 'ac-btn ac-btn--sm ac-btn--ghost', href: api.itemUrl(e.id) }, icon('tv'), 'Apri in Jellyfin'))));
+        replace(detail.head,
+            e.hasPrimaryImage
+                ? h('div', { class: 'ac-hero-bg is-blur', style: 'background-image:url("' + api.image(e.id, 'Primary', { fillHeight: 300, quality: 60 }) + '")' })
+                : null,
+            h('div', { class: 'ac-hero-shade' }),
+            ui.poster(e, { height: 300 }),
+            h('div', { class: 'ac-drawer-title' },
+                h('p', { class: 'ac-jp' }, e.type === 'Movie' ? 'Film' : 'Serie', e.year ? h('i', { text: String(e.year) }) : null),
+                h('h2', { text: e.name }),
+                h('div', { class: 'ac-row' }, cardBadge(e),
+                    url ? h('a', { class: 'ac-btn ac-btn--sm ac-btn--ghost', href: url, target: '_blank', rel: 'noopener noreferrer' }, icon('external'), 'AnimeClick') : null,
+                    refresh,
+                    h('a', { class: 'ac-btn ac-btn--sm ac-btn--ghost', href: api.itemUrl(e.id) }, icon('tv'), 'Apri in Jellyfin'))));
+    }
 
-        var body = detail.body;
-        clear(body);
+    /* ----- titles ----- */
 
-        var nav = detailNav(e);
-        if (nav) body.appendChild(nav);
+    /** One season that still misses titles: how many, why, and on which card it was looked for. */
+    function seasonRow(e, season) {
+        var number = val(season, 'seasonNumber');
+        var reason = val(season, 'reason');
+        var label = number == null ? 'Speciali' : 'S' + number;
+        var card = val(season, 'animeClickId');
+        var needsOwnCard = reason === 'CardNotResolved' || (reason === 'NotMatched' && number != null && number > 1);
+        return h('li', { class: 'ac-season' },
+            ui.badge(label + ' · ' + num(val(season, 'missingTitleCount')), REASON_TONE[reason] || ''),
+            h('span', { class: 'ac-season-why' },
+                val(season, 'reasonLabel') || '',
+                card ? h('small', { class: 'ac-muted', text: 'Scheda ' + card + (val(season, 'cardIsResolved') ? ' (della stagione)' : ' (della serie)') }) : null),
+            needsOwnCard ? ui.button('Abbina ' + label, {
+                small: true, variant: 'ghost', icon: 'link',
+                ariaLabel: 'Scegli su AnimeClick la scheda di ' + (number == null ? 'Speciali' : 'Stagione ' + number),
+                onClick: function () { identifyFromDetail(e, season); }
+            }) : null);
+    }
 
-        if (!e.identified) {
-            body.appendChild(ui.callout('Non ancora identificato', 'Jellyfin non ha collegato questo titolo a una scheda AnimeClick. Indicala tu: il plugin la verifica e aggiorna i metadati.', 'warn'));
-        }
+    // Where the repair of a long series stopped, by anime: the next press continues from there
+    // instead of asking again for the episodes that have just been found without a title.
+    var titleCursors = Object.create(null);
 
-        var refreshDrawer = function () {
-            return loadReports(true).then(function () {
-                if (detail && detail.isOpen() && detail.entryKey === e.key) {
-                    var updated = entries().find(function (item) { return item.key === e.key; });
-                    if (updated) renderDetail(updated);
-                }
+    function repairSeriesTitles(e, unlock, buttonNode) {
+        return ui.run(buttonNode, unlock ? 'Sblocco e riparazione…' : 'Riparazione…', function () {
+            var payload = { itemId: e.id, unlock: unlock };
+            if (titleCursors[e.key]) payload.continueAfter = titleCursors[e.key];
+            return api.request('POST', 'Plugins/AnimeClick/RepairSeriesTitles', payload).then(function (response) {
+                var applied = val(response, 'appliedCount') || 0;
+                var unlocked = val(response, 'unlockedCount') || 0;
+                var remaining = val(response, 'remainingCount') || 0;
+                if (remaining && val(response, 'continueAfter')) titleCursors[e.key] = val(response, 'continueAfter');
+                else delete titleCursors[e.key];
+                if (val(response, 'series')) replaceSeries(val(response, 'series'));
+                AC.bus.emit('reports', data);
+                redrawDetail(e.key);
+                var message = applied ? plural(applied, 'titolo aggiornato', 'titoli aggiornati') + (unlocked ? ' (' + num(unlocked) + ' sbloccati)' : '')
+                    : unlocked ? plural(unlocked, 'episodio sbloccato', 'episodi sbloccati') + ', nessun nuovo titolo trovato'
+                        : 'Nessun nuovo titolo disponibile ora per questa serie';
+                // A long series is repaired a slice at a time, so the page never waits past its timeout.
+                ui.toast(message + (remaining ? '. Ne restano ' + num(remaining) + ' da verificare: premi di nuovo per continuare.' : '.'),
+                    applied || unlocked ? 'success' : 'info');
             });
-        };
+        });
+    }
 
-        if (e.titles) {
-            var section = h('section', { class: 'ac-stack-s' }, h('h3', { class: 'ac-h3', text: 'Titoli degli episodi' }));
-            var reason = val(e.titles, 'reason');
-            section.appendChild(h('div', { class: 'ac-row' },
+    function openLayoutOverrides() {
+        detail.close();
+        AC.settings.pointAt(el('acEpisodeLayoutOverrides'));
+    }
+
+    function titlesSection(e) {
+        var reason = val(e.titles, 'reason');
+        var seasons = list(val(e.titles, 'seasons'));
+        var section = h('section', { class: 'ac-stack-s' },
+            h('h3', { class: 'ac-h3', text: 'Titoli degli episodi' }),
+            h('div', { class: 'ac-row' },
                 ui.badge(e.titleMissing ? plural(e.titleMissing, 'titolo da sistemare', 'titoli da sistemare') : 'Tutti i titoli presenti', e.titleMissing ? 'warn' : 'ok'),
-                h('span', { class: 'ac-muted', text: 'su ' + plural(e.titleTotal, 'episodio', 'episodi') })));
-            if (reason && reason !== 'Ok') section.appendChild(ui.callout(null, val(e.titles, 'reasonLabel') || reason, REASON_TONE[reason] === 'bad' ? 'bad' : REASON_TONE[reason] === 'warn' ? 'warn' : 'info'));
-            var seasons = list(val(e.titles, 'seasons'));
-            if (seasons.length) {
-                section.appendChild(h('div', { class: 'ac-seasons' }, seasons.map(function (season) {
-                    var number = val(season, 'seasonNumber');
-                    var sReason = val(season, 'reason');
-                    var label = number == null ? 'Speciali' : 'S' + number;
-                    var chip = ui.badge(label + ' · ' + num(val(season, 'missingTitleCount')), REASON_TONE[sReason] || '');
-                    var card = val(season, 'animeClickId');
-                    chip.title = (val(season, 'reasonLabel') || '') + (card ? '\nScheda usata: ' + card + (val(season, 'cardIsResolved') ? ' (della stagione)' : ' (della serie)') : '');
-                    if (sReason === 'CardNotResolved' || (sReason === 'NotMatched' && number != null && number > 1)) {
-                        var bindSeasonBtn = ui.button('Abbina ' + label, {
-                            small: true, variant: 'ghost', icon: 'link',
-                            title: 'Scegli su AnimeClick la scheda specifica di ' + label,
-                            onClick: function () {
-                                detail.close();
-                                AC.settings.startIdentify({
-                                    id: e.id, name: e.name, type: e.type, year: e.year, hasPrimaryImage: e.hasPrimaryImage,
-                                    seasonId: val(season, 'seasonId'), seasonNumber: number, returnToKey: e.key
-                                });
-                            }
-                        });
-                        return h('span', { class: 'ac-row' }, chip, bindSeasonBtn);
-                    }
-                    return chip;
-                })));
-            }
-            var actions = h('div', { class: 'ac-row' });
-            if (val(e.titles, 'animeClickId')) {
-                var hasLockedTitles = reason === 'Locked' || seasons.some(function (s) { return val(s, 'reason') === 'Locked'; });
-                if (e.titleMissing > 0) {
-                    var repairSeriesBtn = ui.button(hasLockedTitles ? 'Sblocca e sistema titoli' : 'Sistema titoli della serie', {
-                        id: 'acBtnRepairSeriesTitles', small: true, variant: 'primary', icon: hasLockedTitles ? 'lock' : 'sparkles',
-                        title: hasLockedTitles ? 'Rimuove il blocco sul titolo degli episodi di questa serie e applica i titoli italiani disponibili.' : 'Ripara subito i titoli mancanti o inglesi di questa sola serie.'
-                    });
-                    repairSeriesBtn.addEventListener('click', function () {
-                        ui.setBusy(repairSeriesBtn, true, hasLockedTitles ? 'Sblocco e riparazione…' : 'Riparazione…');
-                        api.request('POST', 'Plugins/AnimeClick/RepairSeriesTitles', { itemId: e.id, unlock: hasLockedTitles }).then(function (response) {
-                            var fresh = val(response, 'series');
-                            if (fresh) replaceSeries(fresh);
-                            var applied = val(response, 'appliedCount') || 0;
-                            var unlocked = val(response, 'unlockedCount') || 0;
-                            render();
-                            AC.bus.emit('reports');
-                            if (detail && detail.isOpen() && detail.entryKey === e.key) {
-                                renderDetail(entries().find(function (item) { return item.key === e.key; }) || e);
-                            }
-                            ui.toast(applied ? plural(applied, 'titolo aggiornato', 'titoli aggiornati') + (unlocked ? ' (' + unlocked + ' sbloccati).' : '.')
-                                : (unlocked ? plural(unlocked, 'elemento sbloccato', 'elementi sbloccati') + '; nessun nuovo titolo trovato ora.' : 'Nessun nuovo titolo disponibile ora per questa serie.'),
-                                applied || unlocked ? 'success' : 'info');
-                        }).catch(function (error) {
-                            ui.toast(truncate(error.message, 240), 'error');
-                        }).finally(function () { ui.setBusy(repairSeriesBtn, false); });
-                    });
-                    actions.appendChild(repairSeriesBtn);
-                }
-                var rereadButton = ui.button('Rileggi da AnimeClick', { small: true, icon: 'refresh', title: 'Rilegge la scheda e ricalcola la causa.' });
-                rereadButton.addEventListener('click', function () {
-                    reread([e], rereadButton).then(function () {
-                        if (detail && detail.entryKey === e.key) renderDetail(entries().find(function (item) { return item.key === e.key; }) || e);
-                    });
-                });
-                var purge = ui.button('Svuota la cache della serie', { id: 'acBtnDrawerPurge', small: true, variant: 'ghost', icon: 'trash', title: 'Il prossimo aggiornamento rileggerà le schede di questa serie; anche i tentativi «senza fonte» ripartono da zero.' });
-                purge.addEventListener('click', function () {
-                    ui.setBusy(purge, true, 'Svuotamento…');
-                    api.request('POST', 'Plugins/AnimeClick/ClearCache', { animeClickId: val(e.titles, 'animeClickId') }).then(function (response) {
-                        ui.toast('Cache della serie svuotata: ' + (val(response, 'removed') || 0) + ' elementi.', 'success');
-                        return refreshDrawer();
-                    }).catch(function (error) { ui.toast(truncate(error.message, 240), 'error'); })
-                        .finally(function () { ui.setBusy(purge, false); });
-                });
-                actions.appendChild(rereadButton);
-                actions.appendChild(purge);
-                if (reason === 'NumberingCollision' || reason === 'NotMatched') {
-                    var layoutBtn = ui.button('Configura layout', {
-                        id: 'acBtnOpenLayoutOverride', small: true, variant: 'ghost', icon: 'sliders',
-                        onClick: function () {
-                            detail.close();
-                            AC.app.go('tools');
-                            var input = el('acEpisodeLayoutOverrides');
-                            if (input) {
-                                var details = input.closest('details');
-                                if (details) details.open = true;
-                                input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                input.focus();
-                            }
-                        }
-                    });
-                    actions.appendChild(layoutBtn);
-                }
-            }
-            section.appendChild(actions);
-            body.appendChild(section);
-        }
+                h('span', { class: 'ac-muted', text: 'su ' + plural(e.titleTotal, 'episodio', 'episodi') })),
+            reason && reason !== 'Ok'
+                ? ui.callout(null, val(e.titles, 'reasonLabel') || reason, REASON_TONE[reason] === 'bad' ? 'bad' : REASON_TONE[reason] === 'warn' ? 'warn' : 'info')
+                : null,
+            seasons.length ? h('ul', { class: 'ac-seasons' }, seasons.map(function (season) { return seasonRow(e, season); })) : null);
+        var card = val(e.titles, 'animeClickId');
+        if (!card) return section;
 
-        var items = e.synopses ? list(val(e.synopses, 'items')) : [];
-        var synSection = h('section', { class: 'ac-stack-s' }, h('h3', { class: 'ac-h3', text: 'Trame' }));
-        if (!items.length) {
-            synSection.appendChild(ui.badge(e.synTotal > 1 ? 'Tutte le trame sono in italiano' : 'Trama in italiano', 'ok', 'check'));
-        } else {
-            var repairableIds = items.filter(function (i) { return val(i, 'canRepair') && val(i, 'id'); }).map(function (i) { return val(i, 'id'); });
-            var lockedIds = items.filter(function (i) { return val(i, 'locked') && val(i, 'id'); }).map(function (i) { return val(i, 'id'); });
-            var noSourceIds = items.filter(function (i) { return val(i, 'repairState') === 'no-source' && val(i, 'id'); }).map(function (i) { return val(i, 'id'); });
-            var hasDisabledSynopses = items.some(function (i) {
-                var st = val(i, 'status');
-                return !val(i, 'locked') && !val(i, 'languageRepairable') && (st === 'English' || st === 'Missing');
+        var actions = h('div', { class: 'ac-row' });
+        if (e.titleMissing > 0) {
+            var locked = reason === 'Locked' || seasons.some(function (season) { return val(season, 'reason') === 'Locked'; });
+            var repair = ui.button(locked ? 'Sblocca e sistema titoli' : 'Sistema titoli della serie', {
+                id: 'acBtnRepairSeriesTitles', small: true, variant: 'primary', icon: locked ? 'unlock' : 'sparkles',
+                title: locked ? 'Toglie il blocco solo agli episodi con titolo mancante, generico o inglese e applica i titoli italiani disponibili.'
+                    : 'Ripara subito i titoli mancanti o inglesi di questa sola serie.'
             });
-            synSection.appendChild(h('div', { class: 'ac-row' },
-                e.synBad ? ui.badge(plural(e.synBad, 'trama da completare', 'trame da completare'), 'warn') : null,
-                e.synUnknown ? ui.badge(plural(e.synUnknown, 'di lingua incerta', 'di lingua incerta')) : null));
-            var synActions = h('div', { class: 'ac-row' });
-            if (repairableIds.length) {
-                var repairSynBtn = ui.button('Completa trame della serie (' + num(repairableIds.length) + ')', {
-                    id: 'acBtnDrawerRepairSynopses', small: true, variant: 'primary', icon: 'sparkles'
-                });
-                repairSynBtn.addEventListener('click', function () {
-                    ui.setBusy(repairSynBtn, true, 'Accodamento…');
-                    api.request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: repairableIds, force: false }).then(function (res) {
-                        var queued = val(res, 'queuedCount') || 0;
-                        ui.toast(queued ? plural(queued, 'trama accodata', 'trame accodate') + ' per il completamento.' : 'Nessuna trama accodata.', queued ? 'success' : 'info');
-                        return refreshDrawer();
-                    }).catch(function (err) { ui.toast(truncate(err.message, 240), 'error'); })
-                        .finally(function () { ui.setBusy(repairSynBtn, false); });
-                });
-                synActions.appendChild(repairSynBtn);
-            }
-            if (lockedIds.length) {
-                var unlockSynBtn = ui.button('Sblocca e completa trame (' + num(lockedIds.length) + ')', {
-                    id: 'acBtnDrawerUnlockSynopses', small: true, variant: 'ghost', icon: 'lock'
-                });
-                unlockSynBtn.addEventListener('click', function () {
-                    ui.setBusy(unlockSynBtn, true, 'Sblocco…');
-                    api.request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: lockedIds, force: true, unlock: true }).then(function (res) {
-                        var queued = val(res, 'queuedCount') || 0;
-                        var unlocked = val(res, 'unlockedCount') || 0;
-                        ui.toast((unlocked ? plural(unlocked, 'trama sbloccata', 'trame sbloccate') + ' · ' : '') + plural(queued, 'trama accodata', 'trame accodate') + '.', 'success');
-                        return refreshDrawer();
-                    }).catch(function (err) { ui.toast(truncate(err.message, 240), 'error'); })
-                        .finally(function () { ui.setBusy(unlockSynBtn, false); });
-                });
-                synActions.appendChild(unlockSynBtn);
-            }
-            if (noSourceIds.length) {
-                var retrySynBtn = ui.button('Riprova senza fonte (' + num(noSourceIds.length) + ')', {
-                    id: 'acBtnDrawerRetrySynopses', small: true, variant: 'ghost', icon: 'undo'
-                });
-                retrySynBtn.addEventListener('click', function () {
-                    ui.setBusy(retrySynBtn, true, 'Accodamento…');
-                    api.request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: noSourceIds, force: true }).then(function (res) {
-                        var queued = val(res, 'queuedCount') || 0;
-                        ui.toast(queued ? plural(queued, 'trama riaccodata', 'trame riaccodate') + '.' : 'Nessun elemento riparabile.', queued ? 'success' : 'info');
-                        return refreshDrawer();
-                    }).catch(function (err) { ui.toast(truncate(err.message, 240), 'error'); })
-                        .finally(function () { ui.setBusy(retrySynBtn, false); });
-                });
-                synActions.appendChild(retrySynBtn);
-            }
-            if (hasDisabledSynopses) {
-                var enableSynBtn = ui.button('Attiva trame ora', {
-                    id: 'acBtnDrawerEnableSynopses', small: true, variant: 'ghost', icon: 'check'
-                });
-                enableSynBtn.addEventListener('click', function () {
-                    ui.setBusy(enableSynBtn, true, 'Attivazione…');
-                    AC.settings.savePatch({ EnablePlot: true, EnableEpisodeSynopsisTranslation: true }).then(function () {
-                        ui.toast('Importazione trame attivata', 'success');
-                        return refreshDrawer();
-                    }).catch(function (err) { ui.toast(truncate(err.message, 240), 'error'); })
-                        .finally(function () { ui.setBusy(enableSynBtn, false); });
-                });
-                synActions.appendChild(enableSynBtn);
-            }
-            if (synActions.childNodes.length) synSection.appendChild(synActions);
-            var listHost = h('div', { class: 'ac-episodes' });
-            synSection.appendChild(listHost);
-            var shown = EPISODE_PAGE;
-            var renderItems = function () {
-                clear(listHost);
-                items.slice(0, shown).forEach(function (item) { listHost.appendChild(episodeRow(item, refreshDrawer, e)); });
-                if (shown < items.length) {
-                    listHost.appendChild(ui.button('Mostra altri ' + Math.min(EPISODE_PAGE, items.length - shown), {
-                        small: true, variant: 'ghost', onClick: function () { shown += EPISODE_PAGE; renderItems(); }
-                    }));
-                }
-            };
-            renderItems();
+            repair.addEventListener('click', function () { repairSeriesTitles(e, locked, repair); });
+            actions.appendChild(repair);
         }
-        body.appendChild(synSection);
+        var rereadButton = ui.button('Rileggi da AnimeClick', { small: true, icon: 'refresh', title: 'Rilegge la scheda e ricalcola la causa.' });
+        rereadButton.addEventListener('click', function () {
+            reread([e], rereadButton).then(function () { redrawDetail(e.key); });
+        });
+        var purge = ui.button('Svuota la cache della serie', {
+            id: 'acBtnDrawerPurge', small: true, variant: 'ghost', icon: 'trash',
+            title: 'Il prossimo aggiornamento rileggerà le schede di questa serie; anche i tentativi «senza fonte» ripartono da zero.'
+        });
+        purge.addEventListener('click', function () {
+            ui.run(purge, 'Svuotamento…', function () {
+                return api.request('POST', 'Plugins/AnimeClick/ClearCache', { animeClickId: card }).then(function (response) {
+                    ui.toast('Cache della serie svuotata: ' + plural(val(response, 'removed') || 0, 'elemento', 'elementi') + '.', 'success');
+                    return reloadDetail(e.key);
+                });
+            });
+        });
+        actions.appendChild(rereadButton);
+        actions.appendChild(purge);
+        if (reason === 'NumberingCollision' || reason === 'NotMatched') {
+            actions.appendChild(ui.button('Configura layout', {
+                id: 'acBtnOpenLayoutOverride', small: true, variant: 'ghost', icon: 'sliders', onClick: openLayoutOverrides
+            }));
+        }
+        section.appendChild(actions);
+        return section;
+    }
 
-        body.appendChild(h('section', { class: 'ac-stack-s' },
+    /* ----- synopses ----- */
+
+    function needsSynopsis(item) {
+        var status = val(item, 'status');
+        return status === 'English' || status === 'Missing';
+    }
+
+    /**
+     * Queues synopsis repairs in groups the server accepts in one request, so a long series is not
+     * silently cut at the first hundred. Resolves the totals of every group.
+     */
+    function queueSynopses(ids, options) {
+        var totals = { queued: 0, unlocked: 0 };
+        var size = val(data.quality, 'maximumRepairItems') || 100;
+        return AC.util.chunk(ids, size).reduce(function (chain, group) {
+            return chain.then(function () {
+                return api.request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', Object.assign({ itemIds: group }, options)).then(function (result) {
+                    totals.queued += val(result, 'queuedCount') || 0;
+                    totals.unlocked += val(result, 'unlockedCount') || 0;
+                });
+            });
+        }, Promise.resolve()).then(function () { return totals; });
+    }
+
+    /** A button that queues some synopses of this anime and then refreshes the panel. */
+    function synopsisAction(e, label, options) {
+        var buttonNode = ui.button(label, { id: options.id, small: true, variant: options.variant || 'ghost', icon: options.icon });
+        buttonNode.addEventListener('click', function () {
+            ui.run(buttonNode, options.busy || 'Accodamento…', function () {
+                return queueSynopses(options.ids, options.request).then(function (totals) {
+                    ui.toast(options.done(totals), totals.queued || totals.unlocked ? 'success' : 'info');
+                    return reloadDetail(e.key);
+                });
+            });
+        });
+        return buttonNode;
+    }
+
+    function idsWhere(items, test) {
+        return items.filter(function (item) { return val(item, 'id') && test(item); }).map(function (item) { return val(item, 'id'); });
+    }
+
+    function synopsisActions(e, items) {
+        var repairable = idsWhere(items, function (item) { return val(item, 'canRepair'); });
+        // The server says which locks are worth removing: those that hide a synopsis it would
+        // rewrite. A text corrected by hand keeps its lock.
+        var locked = idsWhere(items, function (item) { return val(item, 'canUnlock'); });
+        var withoutSource = idsWhere(items, function (item) { return val(item, 'repairState') === 'no-source'; });
+        var switchedOff = items.some(function (item) { return !val(item, 'locked') && !val(item, 'languageRepairable') && needsSynopsis(item); });
+        var row = h('div', { class: 'ac-row' });
+        if (repairable.length) {
+            row.appendChild(synopsisAction(e, 'Completa trame della serie (' + num(repairable.length) + ')', {
+                id: 'acBtnDrawerRepairSynopses', variant: 'primary', icon: 'sparkles', ids: repairable, request: { force: false },
+                done: function (totals) { return totals.queued ? plural(totals.queued, 'trama accodata', 'trame accodate') + ' per il completamento.' : 'Nessuna trama accodata.'; }
+            }));
+        }
+        if (locked.length) {
+            row.appendChild(synopsisAction(e, 'Sblocca e completa trame (' + num(locked.length) + ')', {
+                id: 'acBtnDrawerUnlockSynopses', icon: 'unlock', busy: 'Sblocco…', ids: locked, request: { force: true, unlock: true },
+                done: function (totals) {
+                    return (totals.unlocked ? plural(totals.unlocked, 'trama sbloccata', 'trame sbloccate') + ' · ' : '') + plural(totals.queued, 'trama accodata', 'trame accodate') + '.';
+                }
+            }));
+        }
+        if (withoutSource.length) {
+            row.appendChild(synopsisAction(e, 'Riprova senza fonte (' + num(withoutSource.length) + ')', {
+                id: 'acBtnDrawerRetrySynopses', icon: 'undo', ids: withoutSource, request: { force: true },
+                done: function (totals) { return totals.queued ? plural(totals.queued, 'trama riaccodata', 'trame riaccodate') + '.' : 'Nessun elemento riparabile.'; }
+            }));
+        }
+        if (switchedOff) {
+            var enable = ui.button('Attiva trame ora', { id: 'acBtnDrawerEnableSynopses', small: true, variant: 'ghost', icon: 'check' });
+            enable.addEventListener('click', function () {
+                ui.run(enable, 'Attivazione…', function () {
+                    return AC.settings.savePatch({ EnablePlot: true, EnableEpisodeSynopsisTranslation: true }).then(function () {
+                        ui.toast('Importazione trame attivata', 'success');
+                        return reloadDetail(e.key);
+                    });
+                });
+            });
+            row.appendChild(enable);
+        }
+        return row.childNodes.length ? row : null;
+    }
+
+    function synopsesSection(e) {
+        var items = e.synopses ? list(val(e.synopses, 'items')) : [];
+        var section = h('section', { class: 'ac-stack-s' }, h('h3', { class: 'ac-h3', text: 'Trame' }));
+        if (!items.length) {
+            section.appendChild(h('div', { class: 'ac-row' }, ui.badge(e.synTotal > 1 ? 'Tutte le trame sono in italiano' : 'Trama in italiano', 'ok', 'check')));
+            return section;
+        }
+        section.appendChild(h('div', { class: 'ac-row' },
+            e.synBad ? ui.badge(plural(e.synBad, 'trama da completare', 'trame da completare'), 'warn') : null,
+            e.synUnknown ? ui.badge(plural(e.synUnknown, 'di lingua incerta', 'di lingua incerta')) : null));
+        var actions = synopsisActions(e, items);
+        if (actions) section.appendChild(actions);
+
+        var listHost = h('div', { class: 'ac-episodes' });
+        var shown = EPISODE_PAGE;
+        (function renderItems() {
+            replace(listHost, items.slice(0, shown).map(function (item) { return episodeRow(item, e); }),
+                shown < items.length ? ui.button('Mostra altri ' + Math.min(EPISODE_PAGE, items.length - shown), {
+                    small: true, variant: 'ghost', onClick: function () { shown += EPISODE_PAGE; renderItems(); }
+                }) : null);
+        }());
+        section.appendChild(listHost);
+        return section;
+    }
+
+    function episodeHeading(item) {
+        var type = val(item, 'itemType');
+        var name = val(item, 'name') || 'Senza titolo';
+        if (type !== 'Episode') return (type === 'Movie' ? 'Film' : 'Serie') + ' · ' + name;
+        var season = val(item, 'seasonNumber'), episode = val(item, 'episodeNumber');
+        return 'S' + (season == null ? '?' : season) + 'E' + (episode == null ? '?' : episode) + ' · ' + name;
+    }
+
+    function episodeRow(item, e) {
+        var itemId = val(item, 'id');
+        var status = val(item, 'status');
+        var locked = !!val(item, 'locked');
+        var state = val(item, 'repairState');
+        var heading = episodeHeading(item);
+        var parts = [ui.badge(QUALITY_LABEL[status] || status || 'Sconosciuto', QUALITY_TONE[status])];
+        if (locked) parts.push(ui.badge('Bloccato', 'warn', 'lock'));
+        else if (!val(item, 'languageRepairable') && needsSynopsis(item)) parts.push(ui.badge('Funzione disattivata'));
+
+        var repair = REPAIR_STATE[state];
+        if (repair) {
+            var chip = ui.badge(repair[0], repair[1]);
+            chip.title = repair[2] + (val(item, 'attemptCount') ? ' Tentativi: ' + val(item, 'attemptCount') + '.' : '');
+            parts.push(chip);
+        }
+
+        if (itemId && val(item, 'canUnlock')) {
+            parts.push(synopsisAction(e, 'Sblocca e completa', {
+                icon: 'unlock', busy: 'Sblocco…', ids: [itemId], request: { force: true, unlock: true },
+                done: function () { return 'Trama sbloccata e accodata'; }
+            }));
+        } else if (itemId && !locked && (val(item, 'canRepair') || state === 'no-source')) {
+            parts.push(synopsisAction(e, state === 'no-source' ? 'Riprova' : 'Completa', {
+                icon: state === 'no-source' ? 'undo' : 'sparkles', ids: [itemId], request: { force: true },
+                done: function (totals) { return totals.queued ? 'Trama accodata per il completamento' : 'Elemento non accodabile ora'; }
+            }));
+        }
+
+        var card = cardOf(e);
+        var season = val(item, 'seasonNumber'), episode = val(item, 'episodeNumber');
+        if (val(item, 'itemType') === 'Episode' && card && season != null && episode != null) {
+            parts.push(ui.button('Prova fonti', {
+                small: true, variant: 'ghost', icon: 'flask',
+                title: 'Apre «Da dove arriva questa trama?» con questo episodio e mostra quale fonte risponde.',
+                onClick: function () {
+                    detail.close();
+                    AC.settings.startProbe({ animeClickId: card, season: season, episode: episode, returnToKey: e.key });
+                }
+            }));
+        }
+        // Every row has the same buttons: their accessible name says which episode they act on.
+        parts.forEach(function (node) {
+            if (node.tagName === 'BUTTON') node.setAttribute('aria-label', node.textContent + ': ' + heading);
+        });
+        return h('div', { class: 'ac-episode' },
+            h('div', { class: 'ac-episode-head' }, h('strong', { text: heading }), parts),
+            val(item, 'preview') ? h('p', { text: val(item, 'preview') }) : null);
+    }
+
+    /* ----- binding ----- */
+
+    function bindingSection(e) {
+        return h('section', { class: 'ac-stack-s' },
             h('h3', { class: 'ac-h3', text: 'Abbinamento' }),
             h('p', { class: 'ac-hint', text: e.identified ? 'Se la scheda AnimeClick non è quella giusta, correggila: il plugin verifica la nuova scheda prima di salvarla.' : 'Scegli la scheda giusta su AnimeClick.' }),
             h('div', { class: 'ac-row' }, ui.button(e.identified ? 'Correggi abbinamento' : 'Identifica su AnimeClick', {
                 small: true, variant: e.identified ? 'ghost' : 'primary', icon: 'link',
-                onClick: function () { detail.close(); AC.settings.startIdentify({ id: e.id, name: e.name, type: e.type, year: e.year, hasPrimaryImage: e.hasPrimaryImage, returnToKey: e.key }); }
-            }))));
-    }
-
-    function episodeRow(item, onUpdated, owner) {
-        var itemId = val(item, 'id');
-        var type = val(item, 'itemType');
-        var name = val(item, 'name') || 'Senza titolo';
-        var heading = type === 'Episode'
-            ? 'S' + (val(item, 'seasonNumber') == null ? '?' : val(item, 'seasonNumber')) + 'E' + (val(item, 'episodeNumber') == null ? '?' : val(item, 'episodeNumber')) + ' · ' + name
-            : (type === 'Movie' ? 'Film' : 'Serie') + ' · ' + name;
-        var status = val(item, 'status');
-        var badges = [ui.badge(QUALITY_LABEL[status] || status || 'Sconosciuto', QUALITY_TONE[status])];
-        if (val(item, 'locked')) {
-            badges.push(ui.badge('Bloccato', 'warn', 'lock'));
-            if (itemId) {
-                var unlockRowBtn = ui.button('Sblocca e completa', { small: true, variant: 'ghost', icon: 'lock' });
-                unlockRowBtn.addEventListener('click', function () {
-                    ui.setBusy(unlockRowBtn, true, 'Sblocco…');
-                    api.request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: [itemId], force: true, unlock: true }).then(function () {
-                        ui.toast('Trama sbloccata e accodata', 'success');
-                        if (onUpdated) onUpdated();
-                    }).catch(function (err) {
-                        ui.toast(truncate(err.message, 240), 'error');
-                        ui.setBusy(unlockRowBtn, false);
-                    });
-                });
-                badges.push(unlockRowBtn);
-            }
-        } else if (!val(item, 'languageRepairable') && (status === 'English' || status === 'Missing')) {
-            badges.push(ui.badge('Funzione disattivata'));
-        }
-        var repair = REPAIR_STATE[val(item, 'repairState')];
-        if (repair) {
-            var chip = ui.badge(repair[0], repair[1]);
-            chip.title = repair[2] + (val(item, 'attemptCount') ? ' Tentativi: ' + val(item, 'attemptCount') + '.' : '');
-            badges.push(chip);
-        }
-        if (!val(item, 'locked') && itemId && (val(item, 'canRepair') || val(item, 'repairState') === 'no-source')) {
-            var isRetry = val(item, 'repairState') === 'no-source';
-            var repairRowBtn = ui.button(isRetry ? 'Riprova' : 'Completa', { small: true, variant: 'ghost', icon: isRetry ? 'undo' : 'sparkles' });
-            repairRowBtn.addEventListener('click', function () {
-                ui.setBusy(repairRowBtn, true, 'Accodamento…');
-                api.request('POST', 'Plugins/AnimeClick/LibraryQualityRepair', { itemIds: [itemId], force: true }).then(function (res) {
-                    var queued = val(res, 'queuedCount') || 0;
-                    ui.toast(queued ? 'Trama accodata per il completamento' : 'Elemento non accodabile ora', queued ? 'success' : 'info');
-                    if (onUpdated) onUpdated();
-                }).catch(function (err) {
-                    ui.toast(truncate(err.message, 240), 'error');
-                    ui.setBusy(repairRowBtn, false);
-                });
-            });
-            badges.push(repairRowBtn);
-        }
-        var seasonNumber = val(item, 'seasonNumber');
-        var episodeNumber = val(item, 'episodeNumber');
-        var seriesCard = owner ? (owner.titles && val(owner.titles, 'animeClickId'))
-            || (owner.animeClickId && owner.animeClickId !== 'identificato' ? owner.animeClickId : null) : null;
-        if (type === 'Episode' && seriesCard && seasonNumber != null && episodeNumber != null && AC.settings.startProbe) {
-            badges.push(ui.button('Prova fonti', {
-                small: true, variant: 'ghost', icon: 'flask',
-                title: 'Apre «Da dove arriva questa trama?» con questo episodio e mostra quale fonte risponde.',
-                onClick: function () {
-                    if (detail) detail.close();
-                    AC.settings.startProbe({ animeClickId: seriesCard, season: seasonNumber, episode: episodeNumber, returnToKey: owner.key });
-                }
-            }));
-        }
-        return h('div', { class: 'ac-episode' },
-            h('div', { class: 'ac-episode-head' }, h('strong', { text: heading }), badges),
-            val(item, 'preview') ? h('p', { text: val(item, 'preview') }) : null);
+                onClick: function () { identifyFromDetail(e); }
+            })));
     }
 
     AC.library = {

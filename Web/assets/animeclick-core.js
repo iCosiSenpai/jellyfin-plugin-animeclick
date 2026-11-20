@@ -3,7 +3,7 @@
     'use strict';
 
     var AC = window.AnimeClickUI = window.AnimeClickUI || {};
-    AC.version = '1.6.2.0';
+    AC.version = '1.7.0.0';
     AC.pluginId = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
 
     /* ===== DOM ===== */
@@ -11,7 +11,8 @@
     var PROPERTIES = {
         id: 1, type: 1, value: 1, checked: 1, disabled: 1, hidden: 1, htmlFor: 1, tabIndex: 1, title: 1,
         src: 1, alt: 1, href: 1, target: 1, rel: 1, download: 1, name: 1, placeholder: 1, min: 1, max: 1,
-        step: 1, rows: 1, maxLength: 1, autocomplete: 1, spellcheck: 1, open: 1, loading: 1, decoding: 1
+        step: 1, rows: 1, maxLength: 1, autocomplete: 1, spellcheck: 1, open: 1, loading: 1, decoding: 1,
+        width: 1, height: 1, lang: 1
     };
 
     function append(node, children) {
@@ -50,6 +51,16 @@
         return append(node, Array.prototype.slice.call(arguments, 1));
     }
 
+    function reducedMotion() {
+        return !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+
+    /** Scrolls a node into view, without the glide for people who asked for less motion. */
+    function reveal(node, block) {
+        if (!node) return;
+        node.scrollIntoView({ block: block || 'start', behavior: reducedMotion() ? 'auto' : 'smooth' });
+    }
+
     /* Trusted, static markup only: every path below is a constant of this file. */
     var ICONS = {
         home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/>',
@@ -68,6 +79,8 @@
         search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
         play: '<path d="M7 4.5v15l12.5-7.5z"/>',
         stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+        pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+        copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
         chevronRight: '<path d="m9 18 6-6-6-6"/>',
         chevronLeft: '<path d="m15 18-6-6 6-6"/>',
         arrowRight: '<path d="M5 12h14M13 5l7 7-7 7"/>',
@@ -139,6 +152,9 @@
         return num(count) + ' ' + (count === 1 ? one : many);
     }
 
+    var relativeFormat = new Intl.RelativeTimeFormat('it', { numeric: 'auto' });
+    var dateFormat = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', year: 'numeric' });
+
     function relTime(value) {
         if (!value) return '';
         var date = new Date(value);
@@ -146,18 +162,57 @@
         if (!isFinite(seconds)) return '';
         if (seconds < 60) return 'adesso';
         var minutes = Math.round(seconds / 60);
-        if (minutes < 60) return minutes === 1 ? '1 minuto fa' : minutes + ' minuti fa';
+        if (minutes < 60) return relativeFormat.format(-minutes, 'minute');
         var hours = Math.round(minutes / 60);
-        if (hours < 24) return hours === 1 ? '1 ora fa' : hours + ' ore fa';
+        if (hours < 24) return relativeFormat.format(-hours, 'hour');
         var days = Math.round(hours / 24);
-        if (days < 30) return days === 1 ? 'ieri' : days + ' giorni fa';
-        return date.toLocaleDateString('it-IT', { day: 'numeric', month: 'short', year: 'numeric' });
+        if (days < 30) return relativeFormat.format(-days, 'day');
+        return dateFormat.format(date);
+    }
+
+    var sizeFormats = ['byte', 'kilobyte', 'megabyte', 'gigabyte'].map(function (unit, index) {
+        return new Intl.NumberFormat('it-IT', { style: 'unit', unit: unit, unitDisplay: 'short', maximumFractionDigits: index ? 1 : 0 });
+    });
+
+    /** 1536 → «1,5 kB». Decimal units, as file managers show them. */
+    function bytes(value) {
+        var size = Math.max(0, Number(value) || 0);
+        var unit = 0;
+        while (size >= 1000 && unit < sizeFormats.length - 1) { size /= 1000; unit++; }
+        return sizeFormats[unit].format(size);
+    }
+
+    /** Splits a list into consecutive groups of at most `size` items. */
+    function chunk(items, size) {
+        var groups = [];
+        for (var index = 0; index < items.length; index += size) groups.push(items.slice(index, index + size));
+        return groups;
     }
 
     function normalize(value) {
         return String(value == null ? '' : value).trim().toLowerCase()
             .normalize('NFD').replace(/[̀-ͯ]/g, '');
     }
+
+    /* ===== remembered choices ===== */
+
+    /**
+     * Where the administrator was (section, filter, order) and which version they have already seen.
+     * Storage may be unavailable or full: nothing here is essential, so every failure is silent.
+     */
+    AC.memory = {
+        get: function (key, persistent) {
+            try { return window[persistent ? 'localStorage' : 'sessionStorage'].getItem('animeclick.' + key); } catch (error) { return null; }
+        },
+        set: function (key, value, persistent) {
+            try { window[persistent ? 'localStorage' : 'sessionStorage'].setItem('animeclick.' + key, String(value)); } catch (error) { /* Private mode or quota: the page works without it. */ }
+        },
+        /** A remembered choice, if it is still one of the allowed ones. */
+        pick: function (key, allowed, fallback) {
+            var stored = AC.memory.get(key);
+            return allowed.indexOf(stored) > -1 ? stored : fallback;
+        }
+    };
 
     /* ===== events ===== */
 
@@ -192,13 +247,18 @@
         return path;
     }
 
-    function request(method, path, body, timeoutMilliseconds) {
+    /**
+     * `cancel`, when given, is an AbortSignal of the caller: aborting it withdraws the request, and
+     * the server stops working on an answer nobody is waiting for.
+     */
+    function request(method, path, body, timeoutMilliseconds, cancel) {
         var headers = { Accept: 'application/json' };
         var auth = authHeader();
         if (auth) headers.Authorization = auth;
         var controller = new AbortController();
         var options = { method: method, credentials: 'same-origin', headers: headers, signal: controller.signal };
         var timeout = setTimeout(function () { controller.abort(); }, timeoutMilliseconds || 130000);
+        if (cancel) cancel.addEventListener('abort', function () { controller.abort(); }, { once: true });
         if (body !== undefined) {
             headers['Content-Type'] = 'application/json';
             options.body = JSON.stringify(body);
@@ -261,17 +321,32 @@
             document.body.appendChild(toastHost);
         }
         var bad = tone === 'error';
+        var close = h('button', { type: 'button', class: 'ac-toast-close', 'aria-label': 'Chiudi il messaggio' }, icon('x'));
         var item = h('div', {
             class: 'ac-toast' + (bad ? ' is-bad' : tone === 'success' ? ' is-ok' : ''),
             role: bad ? 'alert' : 'status',
             'aria-live': bad ? 'assertive' : 'polite',
             'aria-atomic': 'true'
-        }, icon(bad ? 'alert' : tone === 'success' ? 'check' : 'info'), h('span', { text: message }));
-        toastHost.appendChild(item);
-        setTimeout(function () {
+        }, icon(bad ? 'alert' : tone === 'success' ? 'check' : 'info'), h('span', { class: 'ac-grow', text: message }), close);
+        var timer = null;
+        function dismiss() {
+            clearTimeout(timer);
             item.classList.add('is-leaving');
             setTimeout(function () { item.remove(); }, 220);
-        }, bad ? 6000 : 3600);
+        }
+        function arm() {
+            clearTimeout(timer);
+            timer = setTimeout(dismiss, bad ? 8000 : 4000);
+        }
+        // A message being read (pointer over it, or focus inside it) does not vanish under the eyes.
+        function hold() { clearTimeout(timer); }
+        close.addEventListener('click', dismiss);
+        item.addEventListener('mouseenter', hold);
+        item.addEventListener('mouseleave', arm);
+        item.addEventListener('focusin', hold);
+        item.addEventListener('focusout', arm);
+        toastHost.appendChild(item);
+        arm();
     }
 
     var openModal = null;
@@ -298,7 +373,7 @@
             var modal = h('div', {
                 class: 'ac-modal', role: 'dialog', 'aria-modal': 'true',
                 'aria-labelledby': id + 'Title', 'aria-describedby': id + 'Body', tabIndex: -1
-            }, h('h3', { id: id + 'Title', text: options.title }), body, h('div', { class: 'ac-row' }, cancel, confirm));
+            }, h('h2', { id: id + 'Title', text: options.title }), body, h('div', { class: 'ac-row' }, cancel, confirm));
             var veil = h('div', { class: 'ac-layer ac-veil' }, modal);
             var app = document.querySelector('.ac-app');
             var settled = false;
@@ -399,6 +474,17 @@
         }
     }
 
+    /**
+     * Runs the work behind a button: busy meanwhile, a failure becomes a message. The promise
+     * always resolves, so a caller chains only what follows a success inside `work`.
+     */
+    function run(buttonNode, busyLabel, work) {
+        setBusy(buttonNode, true, busyLabel);
+        return Promise.resolve().then(work).catch(function (error) {
+            toast(truncate(error.message, 240), 'error');
+        }).finally(function () { setBusy(buttonNode, false); });
+    }
+
     function status(node, text, tone) {
         if (!node) return;
         node.className = 'ac-status' + (tone === 'ok' ? ' is-ok' : tone === 'bad' ? ' is-bad' : '');
@@ -435,7 +521,7 @@
     function sectionHead(jp, kicker, title, lead, actions) {
         return h('header', { class: 'ac-section-head' },
             h('div', null,
-                h('p', { class: 'ac-jp' }, kicker, h('i', { 'aria-hidden': 'true', text: jp })),
+                h('p', { class: 'ac-jp' }, kicker, h('i', { 'aria-hidden': 'true', lang: 'ja', text: jp })),
                 h('h1', { class: 'ac-h1', text: title }),
                 lead ? h('p', { class: 'ac-lead', text: lead }) : null),
             actions ? h('div', { class: 'ac-row' }, actions) : null);
@@ -476,6 +562,7 @@
         options = options || {};
         var input = h(options.multiline ? 'textarea' : 'input', {
             id: id,
+            name: id,
             class: options.multiline ? 'ac-textarea' : 'ac-input',
             type: options.multiline ? null : (options.type || 'text'),
             placeholder: options.placeholder,
@@ -491,30 +578,58 @@
         if (options.spellcheck === false) input.spellcheck = false;
         var control = input;
         if (options.secret) {
+            // An API key is not a login: keep password managers from offering to save or fill it.
             input.type = 'password';
-            input.autocomplete = 'new-password';
+            input.autocomplete = 'off';
+            input.setAttribute('data-1p-ignore', '');
+            input.setAttribute('data-lpignore', 'true');
+            input.setAttribute('data-bwignore', '');
+            input.setAttribute('data-form-type', 'other');
             var toggle = h('button', { type: 'button', class: 'ac-btn ac-btn--icon ac-btn--ghost', 'aria-label': 'Mostra ' + label.toLowerCase(), 'aria-pressed': 'false' }, icon('eye'));
             toggle.addEventListener('click', function () {
-                var reveal = input.type === 'password';
-                input.type = reveal ? 'text' : 'password';
-                toggle.setAttribute('aria-pressed', reveal ? 'true' : 'false');
-                toggle.setAttribute('aria-label', (reveal ? 'Nascondi ' : 'Mostra ') + label.toLowerCase());
-                replace(toggle, icon(reveal ? 'eyeOff' : 'eye'));
+                var shown = input.type === 'password';
+                input.type = shown ? 'text' : 'password';
+                toggle.setAttribute('aria-pressed', shown ? 'true' : 'false');
+                toggle.setAttribute('aria-label', (shown ? 'Nascondi ' : 'Mostra ') + label.toLowerCase());
+                replace(toggle, icon(shown ? 'eyeOff' : 'eye'));
             });
             control = h('div', { class: 'ac-input-group' }, input, toggle);
         }
         if (options.action) {
             control = h('div', { class: 'ac-input-group' }, control, options.action);
         }
+        var help = options.hint || options.html ? hint(options.hint, options.html) : null;
+        if (help) {
+            help.id = id + 'Hint';
+            input.setAttribute('aria-describedby', help.id);
+        }
         return h('div', { class: 'ac-field' },
             h('label', { class: 'ac-label', htmlFor: id, text: label }),
             control,
-            options.hint || options.html ? hint(options.hint, options.html) : null);
+            help,
+            h('p', { class: 'ac-field-error', id: id + 'Error', role: 'alert', hidden: true }));
+    }
+
+    /**
+     * Shows a problem next to the field it belongs to, or clears it with an empty message. The
+     * field's own help text stays announced together with the error.
+     */
+    function fieldError(input, message) {
+        if (!input) return;
+        var error = input.ownerDocument.getElementById(input.id + 'Error');
+        var help = input.ownerDocument.getElementById(input.id + 'Hint');
+        if (message) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid');
+        var described = [help && help.id, message && error && error.id].filter(Boolean).join(' ');
+        if (described) input.setAttribute('aria-describedby', described); else input.removeAttribute('aria-describedby');
+        if (error) {
+            error.textContent = message || '';
+            error.hidden = !message;
+        }
     }
 
     function select(id, label, choices, options) {
         options = options || {};
-        var node = h('select', { id: id, class: 'ac-select', data: options.key ? { key: options.key } : null },
+        var node = h('select', { id: id, name: id, class: 'ac-select', data: options.key ? { key: options.key } : null },
             (choices || []).map(function (choice) { return h('option', { value: choice.value, text: choice.label }); }));
         if (!label) return node;
         return h('div', { class: 'ac-field' },
@@ -579,15 +694,22 @@
             h('span', { text: total ? num(part) + '/' + num(total) : '—' }));
     }
 
+    /**
+     * The cover of a library item, or — with `options.src` — one that lives on another site: that
+     * one is shown only over HTTPS and without telling the site which page embeds it.
+     */
     function poster(item, options) {
         options = options || {};
         var id = val(item, 'id');
         var name = val(item, 'name') || 'Senza titolo';
         var node = h('div', { class: 'ac-poster' + (options.cls ? ' ' + options.cls : '') },
             h('span', { class: 'ac-poster-fallback', 'aria-hidden': 'true', text: truncate(name, 48) }));
-        var hasImage = val(item, 'hasPrimaryImage');
-        if (id && hasImage !== false) {
-            var image = h('img', { alt: '', loading: 'lazy', decoding: 'async', src: imageUrl(id, 'Primary', { fillHeight: options.height || 360, quality: 90 }) });
+        var remote = 'src' in options;
+        var source = remote
+            ? (/^https:\/\//i.test(options.src || '') ? options.src : null)
+            : (id && val(item, 'hasPrimaryImage') !== false ? imageUrl(id, 'Primary', { fillHeight: options.height || 360, quality: 90 }) : null);
+        if (source) {
+            var image = h('img', { alt: '', loading: 'lazy', decoding: 'async', src: source, referrerpolicy: remote ? 'no-referrer' : null });
             image.addEventListener('error', function () { image.remove(); });
             node.appendChild(image);
         }
@@ -596,7 +718,7 @@
 
     function empty(title, text, action) {
         return h('div', { class: 'ac-empty' },
-            h('img', { src: AC.api.asset('AnimeClickMascotSmall'), alt: '' }),
+            h('img', { src: AC.api.asset('AnimeClickMascotSmall'), alt: '', width: 96, height: 98, loading: 'lazy', decoding: 'async' }),
             h('strong', { text: title }),
             text ? h('p', { class: 'ac-hint', text: text }) : null,
             action || null);
@@ -606,15 +728,15 @@
         return h('div', { class: 'ac-skel', style: 'height:' + (height || 120) + 'px', 'aria-hidden': 'true' });
     }
 
-    AC.dom = { h: h, clear: clear, replace: replace, icon: icon };
+    AC.dom = { h: h, clear: clear, replace: replace, icon: icon, reveal: reveal, reducedMotion: reducedMotion };
     AC.util = {
         val: val, list: list, num: num, pct: pct, truncate: truncate, plural: plural,
-        relTime: relTime, normalize: normalize
+        relTime: relTime, normalize: normalize, bytes: bytes, chunk: chunk
     };
     AC.ui = {
-        toast: toast, confirm: confirmDialog, drawer: drawer, setBusy: setBusy, status: status, liveStatus: liveStatus,
+        toast: toast, confirm: confirmDialog, drawer: drawer, setBusy: setBusy, run: run, status: status, liveStatus: liveStatus,
         button: button, badge: badge, callout: callout, sectionHead: sectionHead, card: card, hint: hint,
-        switchRow: switchRow, switches: switches, field: field, select: select, check: check, details: details,
+        switchRow: switchRow, switches: switches, field: field, fieldError: fieldError, select: select, check: check, details: details,
         progress: progress, setProgress: setProgress, ring: ring, meterRow: meterRow, poster: poster,
         empty: empty, skeleton: skeleton
     };
