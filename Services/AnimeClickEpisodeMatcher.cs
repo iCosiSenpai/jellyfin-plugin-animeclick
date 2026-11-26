@@ -332,8 +332,8 @@ public static class AnimeClickEpisodeMatcher
             return AnimeClickEpisodeMatch.None("lowConfidence", best.Reason);
         }
 
+        // The candidates are keyed by episode, so the runner-up is always another row.
         if (ranked.Count > 1
-            && ranked[1].Episode != best.Episode
             && best.Score - ranked[1].Score < 10)
         {
             return AnimeClickEpisodeMatch.None(

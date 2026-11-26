@@ -148,10 +148,16 @@ public class AnimeClickRefreshMissingTitlesTask : IScheduledTask
                 _activities.Update(key, candidates.Count, processed, applied, processed - applied - errors, errors,
                     $"{processed}/{candidates.Count} episodi verificati · {applied} titoli aggiornati");
             }
-            _activities.Finish(key, errors > 0 ? "Partial" : "Completed",
+            // Con AnimeClick dietro la verifica anti-bot nessun episodio ha potuto leggere la sua
+            // scheda: "Completato" con zero errori lascerebbe credere che i titoli non esistano.
+            var unreachable = refreshedCatalogs.AnimeClickUnavailable;
+            _activities.Finish(key, errors > 0 || unreachable > 0 ? "Partial" : "Completed",
                 candidates.Count == 0 ? "Nessun titolo mancante o inglese da sistemare. I titoli italiani e incerti sono conservati."
                 : $"{applied} titoli aggiornati ({alternativeTitles} da altre fonti, {translatedTitles} tradotti) · "
-                    + $"{processed - applied - errors} senza titolo disponibile o saltati · {errors} errori.");
+                    + $"{processed - applied - errors} senza titolo disponibile o saltati · {errors} errori."
+                    + (unreachable > 0
+                        ? $" AnimeClick non raggiungibile (verifica anti-bot): {unreachable} episodi da ricontrollare quando torna disponibile."
+                        : string.Empty));
             progress.Report(100);
         }
         catch (OperationCanceledException)

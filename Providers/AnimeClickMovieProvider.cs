@@ -31,7 +31,6 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
     private readonly AnimeClickAniListResolver _aniListResolver;
     private readonly ILogger<AnimeClickMovieProvider> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly AnimeClickTmdbClient _tmdbClient;
     private readonly AnimeClickCommunityService? _community;
     private readonly AnimeClickAnimeTextFallback? _textFallback;
     private readonly AnimeClickIntegratedMetadata? _integrated;
@@ -44,7 +43,6 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         AnimeClickAniListResolver aniListResolver,
         ILogger<AnimeClickMovieProvider> logger,
         IHttpClientFactory httpClientFactory,
-        AnimeClickTmdbClient tmdbClient,
         AnimeClickCommunityService? community = null,
         AnimeClickAnimeTextFallback? textFallback = null,
         AnimeClickIntegratedMetadata? integrated = null)
@@ -56,7 +54,6 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         _aniListResolver = aniListResolver;
         _logger = logger;
         _httpClientFactory = httpClientFactory;
-        _tmdbClient = tmdbClient;
         _community = community;
         _textFallback = textFallback;
         _integrated = integrated;
@@ -115,7 +112,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch { _logger.LogWarning("AnimeClick search unavailable; trying configured fallback sources"); }
+            catch (Exception ex) { _logger.LogWarning("AnimeClick search unavailable ({Reason}); trying configured fallback sources", ex.Message); }
         }
 
         if (string.IsNullOrWhiteSpace(url))
@@ -126,9 +123,9 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             return result;
         }
 
-        var cacheKey = $"anime::{url}";
+        var cacheKey = AnimeClickAnimeCards.CacheKey(url);
         var cached = await _cache.GetAsync<AnimeClickAnime>(cacheKey, configuration.CacheHours, cancellationToken);
-        var anime = cached ?? await FetchAnimeAsync(url, configuration, cacheKey, cancellationToken);
+        var anime = cached ?? await FetchAnimeAsync(url, configuration, cancellationToken);
         if (anime is null)
         {
             await FillItalianOverviewAsync(result, info, configuration, cancellationToken).ConfigureAwait(false);
@@ -149,9 +146,12 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
             await FetchMultimediaAsync(anime, configuration, cancellationToken);
         }
 
-        if (configuration.EnableCast || configuration.EnableThemeSongs || configuration.EnableTrailers)
+        // preserveAge sempre: la voce ha già l'età giusta, che sia appena letta, valida o la
+        // copia scaduta usata mentre AnimeClick non risponde (che non deve sembrare fresca).
+        if ((configuration.EnableCast || configuration.EnableThemeSongs || configuration.EnableTrailers)
+            && !string.IsNullOrWhiteSpace(anime.Title))
         {
-            await _cache.SetAsync(cacheKey, anime, cancellationToken, preserveAge: cached is not null);
+            await _cache.SetAsync(cacheKey, anime, cancellationToken, preserveAge: true);
         }
 
         Map(result.Item, anime, configuration);
@@ -250,18 +250,21 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         => AnimeClickHttp.GetImageAsync(_httpClientFactory, url,
             Plugin.Instance?.Configuration ?? new PluginConfiguration(), cancellationToken);
 
-    private async Task<AnimeClickAnime?> FetchAnimeAsync(string url, PluginConfiguration configuration, string cacheKey, CancellationToken cancellationToken)
+    private async Task<AnimeClickAnime?> FetchAnimeAsync(string url, PluginConfiguration configuration, CancellationToken cancellationToken)
     {
         try
         {
-            var html = await _client.GetStringAsync(url, configuration, cancellationToken);
-            var anime = _parser.ParseAnimePage(url, html);
-            await _cache.SetAsync(cacheKey, anime, cancellationToken);
-            return anime;
+            return await AnimeClickAnimeCards.FetchAsync(_client, _cache, _parser, url, configuration, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (AnimeClickUnavailableException ex)
+        {
+            _logger.LogDebug("AnimeClick card {Url} unavailable and not cached: {Reason}", url, ex.Message);
+            return null;
         }
         catch (Exception ex)
         {
@@ -279,10 +282,13 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         {
             var charsHtml = await _client.GetStringAsync(animeUrl + "/personaggi", configuration, cancellationToken);
             var actors = _parser.ParseCharactersPage(charsHtml, baseUrl);
-            anime.People.AddRange(actors);
 
             var staffHtml = await _client.GetStringAsync(animeUrl + "/staff", configuration, cancellationToken);
             var staff = _parser.ParseStaffPage(staffHtml, baseUrl);
+
+            // Insieme, dopo che entrambe le pagine sono arrivate: con i soli doppiatori la scheda
+            // risultava "con persone" e lo staff non veniva più chiesto finché restava in cache.
+            anime.People.AddRange(actors);
             anime.People.AddRange(staff);
 
             // The sigle are role sections of this same page. Reading them here costs no extra
@@ -297,6 +303,10 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (AnimeClickUnavailableException ex)
+        {
+            _logger.LogDebug("AnimeClick cast/staff skipped for {Title}: {Reason}", anime.Title, ex.Message);
         }
         catch (Exception ex)
         {
@@ -329,6 +339,10 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         {
             throw;
         }
+        catch (AnimeClickUnavailableException ex)
+        {
+            _logger.LogDebug("AnimeClick multimedia skipped for {Title}: {Reason}", anime.Title, ex.Message);
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Errore fetch multimedia per {Title}", anime.Title);
@@ -336,16 +350,9 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
     }
 
     /// <summary>
-    /// Quando AnimeClick ha la scheda ma non la trama, prende la sinossi italiana da TMDB.
+    /// Completa ciò che la scheda AnimeClick ha lasciato vuoto con le fonti interne configurate
+    /// (TMDB, TheTVDB, AniList, traduzione): solo campi vuoti, e una trama solo se italiana.
     /// </summary>
-    /// <remarks>
-    /// Non tutte le schede AnimeClick hanno la trama: "Eiga Karakai Jouzu no Takagi-san"
-    /// (38803) ha il campo vuoto, e senza questo passaggio il film restava senza sinossi
-    /// mentre TMDB ce l'aveva in italiano. Si scrive solo se il campo e' ancora vuoto e solo
-    /// se il testo e' davvero italiano: TMDB per una lingua senza traduzione risponde con
-    /// <c>overview</c> vuota, ma un titolo puo' anche avere una scheda "italiana" lasciata
-    /// in inglese, e in quel caso e' meglio nessuna sinossi che una in un'altra lingua.
-    /// </remarks>
     private async Task FillItalianOverviewAsync(
         MetadataResult<Movie> result,
         MovieInfo info,
@@ -359,31 +366,7 @@ public class AnimeClickMovieProvider : IRemoteMetadataProvider<Movie, MovieInfo>
         if (_textFallback is not null)
         {
             await _textFallback.FillMissingAsync(target, info.Name, info.Path, ids, isMovie: true, configuration, cancellationToken).ConfigureAwait(false);
-            return;
         }
-        if (!configuration.EnablePlot || !string.IsNullOrWhiteSpace(target.Overview))
-        {
-            return;
-        }
-
-        var tmdbId = info.GetProviderId(MetadataProvider.Tmdb);
-        if (!int.TryParse(tmdbId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id))
-        {
-            return;
-        }
-
-        var overview = await _tmdbClient
-            .GetItalianOverviewAsync(id, isMovie: true, configuration, cancellationToken)
-            .ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(overview) || !AnimeClickMetadataLanguageDetector.IsItalian(overview))
-        {
-            return;
-        }
-
-        target.Overview = overview;
-        _logger.LogInformation(
-            "AnimeClick: sinossi italiana presa da TMDB per {Title} (AnimeClick non ce l'ha)",
-            target.Name);
     }
 
     private static void Map(Movie target, AnimeClickAnime source, PluginConfiguration configuration)

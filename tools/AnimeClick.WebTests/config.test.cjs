@@ -21,6 +21,7 @@ const defaults = {
     EnableCommunityMappings: false, CommunitySharingMode: 'Ask', CommunityGitHubToken: '', EnableAniListMetadata: false
 };
 
+const BLOCKED_MESSAGE = 'AnimeClick sta rifiutando le richieste automatiche con una verifica anti-bot di Cloudflare. Il plugin non la supera: finché resta attiva usa le schede già in cache e le altre fonti configurate, e riprova da solo.';
 const saikiSeason = { kind: 'Season', animeClickId: '26035', series: { Tmdb: '67676', Tvdb: '313435' }, seasonNumber: 3, episodeCount: 2 };
 
 const proposalsFixture = [
@@ -126,7 +127,11 @@ async function mount(options = {}) {
         config: { ...defaults, ...options.config }, writes: [], errors: [], reads: 0, identifications: [], requests: [],
         activities: options.activities || [], titleRuns: 0, synopsisRuns: 0, enabled: [], libraries: librariesFixture(),
         repairs: [], lookups: 0, unlocked: [], refreshed: [], seriesTitleRepairs: [], probes: [], cacheClears: [],
-        previews: [], reports: 0, cacheEntries: 128
+        previews: [], reports: 0, cacheEntries: 128, sourceChecks: 0,
+        animeClick: options.animeClickBlocked
+            ? { blocked: true, reachable: false, message: BLOCKED_MESSAGE, blockedSinceUtc: new Date(Date.now() - 2 * 3600000).toISOString(),
+                retryAtUtc: new Date(Date.now() + 15 * 60000).toISOString(), lastBlockedStatus: 403 }
+            : { blocked: false, reachable: true, message: 'AnimeClick risponde normalmente.', lastReachedUtc: '2026-11-26T10:00:00Z' }
     };
     page.on('pageerror', error => state.errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) state.errors.push(message.text()); });
@@ -186,12 +191,15 @@ async function mount(options = {}) {
             return route.fulfill({ json: { queued: true, message: 'Attività avviata' } });
         }
         if (target.endsWith('/CancelActivity')) {
-            state.activities = state.activities.map(job => ({ ...job, state: 'Cancelled', isActive: false, message: 'Attività interrotta.' }));
+            state.activities = state.activities.map(job => options.cancelling
+                ? { ...job, state: 'Cancelling', isActive: true, message: 'Interruzione in corso…' }
+                : { ...job, state: 'Cancelled', isActive: false, message: 'Attività interrotta.' });
             return route.fulfill({ json: state.activities[0] });
         }
         if (target === '/base/config') {
             if (request.method() === 'POST') {
                 if (options.failSave) return route.fulfill({ status: 500, body: 'error' });
+                if (options.saveDelay) await new Promise(resolve => setTimeout(resolve, options.saveDelay));
                 state.config = request.postDataJSON();
                 state.writes.push(state.config);
             } else {
@@ -213,6 +221,7 @@ async function mount(options = {}) {
         if (target.endsWith('/Items')) return route.fulfill({ json: { Items: [{ Id: 'safe-item-id', Name: 'Un titolo <img src=x onerror=alert(1)>', ProductionYear: 2026, Type: 'Series', ImageTags: {} }] } });
         if (target.endsWith('/TestLookup')) {
             state.lookups++;
+            if (options.animeClickBlocked) return route.fulfill({ status: 503, json: { error: BLOCKED_MESSAGE, blocked: true } });
             return route.fulfill({ json: [{ name: 'Seishun Buta Yarou', year: 2018, animeClickId: '25493/seishun-buta-yarou', imageUrl: null }] });
         }
         if (target.endsWith('/TestFanart')) {
@@ -220,6 +229,12 @@ async function mount(options = {}) {
             return route.fulfill({ json: { Success: true, ImageCount: 90 } });
         }
         if (target.endsWith('/TestTmdb')) return route.fulfill({ json: { success: true, sampleName: 'Frieren' } });
+        if (target.endsWith('/SourceStatus/Check')) {
+            state.sourceChecks++;
+            state.animeClick = options.checkResult || { blocked: false, reachable: true, message: 'AnimeClick risponde normalmente.', lastReachedUtc: '2026-11-26T10:00:00Z' };
+            return route.fulfill({ json: state.animeClick });
+        }
+        if (target.endsWith('/SourceStatus')) return route.fulfill({ json: state.animeClick });
         if (target.endsWith('/PreviewEpisodeFallback')) {
             state.probes.push(request.postDataJSON());
             return route.fulfill({ json: { success: true, overview: 'Okarun incontra un fantasma nel tunnel.', episodeTitle: 'Il fantasma del tunnel',
@@ -240,7 +255,7 @@ async function mount(options = {}) {
         if (target.endsWith('/DiagnosticReport')) {
             state.reports++;
             if (options.failReport) return route.fulfill({ status: 500, json: { error: 'Rapporto non disponibile' } });
-            return route.fulfill({ json: { pluginVersion: '1.7.0.0', serverVersion: '12.0.0',
+            return route.fulfill({ json: { pluginVersion: '1.8.0.0', serverVersion: '12.0.0',
                 configuration: { TmdbApiKey: 'impostata', AiApiKey: 'impostata', EnablePlot: true }, libraries: [{ collectionType: 'tvshows', state: 'active' }],
                 cache: { entries: 128, bytes: 3456789 } } });
         }
@@ -249,6 +264,7 @@ async function mount(options = {}) {
             if (options.previewDelay) await new Promise(resolve => setTimeout(resolve, options.previewDelay));
             state.previews.push({ animeClickId: cardId, itemId: url.searchParams.get('itemId') });
             if (options.failPreview) return route.fulfill({ status: 502, json: { error: 'Non riesco a leggere questa scheda su AnimeClick: controlla il link o riprova fra poco.' } });
+            if (options.animeClickBlocked) return route.fulfill({ status: 503, json: { error: BLOCKED_MESSAGE, blocked: true } });
             return route.fulfill({ json: { animeClickId: cardId, url: 'https://www.animeclick.it/anime/' + cardId, title: 'Seishun Buta Yarou wa Bunny Girl Senpai no Yume wo Minai',
                 originalTitle: '青春ブタ野郎はバニーガール先輩の夢を見ない', year: 2018, category: 'Serie TV', status: 'completato', episodeCount: 13,
                 imageUrl: null, overview: 'Sakuta incontra in biblioteca una ragazza vestita da coniglietta che nessun altro sembra vedere.', genres: ['Sentimentale', 'Soprannaturale'],
@@ -329,6 +345,15 @@ async function saveAndWait(page) {
 async function confirmDialog(page, label = 'Conferma') {
     await page.getByRole('dialog').getByRole('button', { name: label, exact: true }).click();
 }
+/** Waits until the page has asked for the activities `count` more times. */
+async function morePolls(page, state, count) {
+    const polls = () => state.requests.filter(r => r.target.endsWith('/Activities')).length;
+    const target = polls() + count;
+    for (let waited = 0; polls() < target; waited += 100) {
+        assert.ok(waited < 15000, 'the activities were not polled again');
+        await page.waitForTimeout(100);
+    }
+}
 async function shot(page, name) { await page.screenshot({ path: path.join(results, name + '.png'), fullPage: true }); }
 
 test('home opens on the showcase and dashboard, and the tabs work with the keyboard', async () => {
@@ -352,6 +377,33 @@ test('home opens on the showcase and dashboard, and the tabs work with the keybo
     } finally { await page.close(); }
 });
 
+test('the to-do list of Inizio stays as it is while the activities are polled, with its focus and busy button', async () => {
+    const { page, state } = await mount({ config: { EnableEpisodeTitles: false }, saveDelay: 2500,
+        activities: [{ key: 'synopses', state: 'Running', isActive: true, total: 10, processed: 1, progress: 10, message: 'In corso…' }] });
+    try {
+        const row = page.locator('#acHomeTodo [data-todo="episodeTitles"]');
+        await row.waitFor();
+        await page.locator('#acHomeHealthBody .ac-ring').first().waitFor();
+        await page.locator('#acHomeLibrariesBody .ac-lib').first().waitFor();
+        const preferences = row.getByRole('button', { name: 'Preferenze', exact: true });
+        await preferences.focus();
+        await row.evaluate(node => { node.dataset.probe = 'kept'; });
+        await morePolls(page, state, 2);
+        assert.equal(await row.getAttribute('data-probe'), 'kept', 'the row is the same node');
+        assert.equal(await preferences.evaluate(node => node === document.activeElement), true, 'the focus stays where it was');
+
+        const enable = page.locator('#acHomeEnableTitles');
+        await enable.click();
+        assert.equal(await enable.getAttribute('aria-busy'), 'true');
+        await morePolls(page, state, 1);
+        assert.equal(await enable.isDisabled(), true, 'still busy after a poll: no second press');
+        await row.waitFor({ state: 'detached' });
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.config.EnableEpisodeTitles, true);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
 test('a fresh installation runs the full setup, saves its choices and enables the chosen library', async () => {
     const { page, state } = await mount({ config: { ConfigurationVersion: 3, SetupCompletedVersion: 0, TmdbApiKey: '' } });
     try {
@@ -361,7 +413,11 @@ test('a fresh installation runs the full setup, saves its choices and enables th
         await shot(page, 'setup-welcome-desktop');
         await page.getByRole('button', { name: 'Iniziamo' }).click();
         assert.equal(await page.locator('#acSetupAniList').isChecked(), true, 'AniList is proposed switched on');
+        await page.locator('#acSetupTmdbTest').click();
+        await page.locator('#acSetupTmdbKeyError', { hasText: 'Inserisci prima la chiave.' }).waitFor();
+        assert.equal(await page.locator('#acSetupTmdbKey').evaluate(node => node === document.activeElement), true);
         await page.locator('#acSetupTmdbKey').fill('new-tmdb-key');
+        assert.equal(await page.locator('#acSetupTmdbKeyError').isHidden(), true, 'typing the key clears the problem');
         await page.locator('#acSetupNext').click();
         await page.locator('#acSetupPref_EnableCast').uncheck();
         await page.getByRole('button', { name: 'Salva e continua' }).click();
@@ -649,6 +705,21 @@ test('title repair sends one start, shows real progress, and can be stopped', as
     } finally { await page.close(); }
 });
 
+test('«Interrompi» stays off while the activity is still stopping', async () => {
+    const { page, state } = await mount({ cancelling: true, activities: [{ key: 'titles', state: 'Running', isActive: true, total: 10,
+        processed: 5, applied: 3, skipped: 2, progress: 50, message: 'Lettura in corso…' }] });
+    try {
+        const stop = page.locator('#acHomeCancel_titles');
+        await stop.waitFor();
+        await stop.click();
+        await page.locator('#acHomeBadge_titles').filter({ hasText: 'Interruzione' }).waitFor();
+        await morePolls(page, state, 1);
+        assert.equal(await stop.isDisabled(), true);
+        assert.equal(await stop.isVisible(), true);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
 test('titles absent on AnimeClick can be checked in configured alternatives without promising recovery', async () => {
     const { page, state } = await mount({ titleReport: { episodeTitlesEnabled: true, alternativeTitleLookupEnabled: true,
         seriesCount: 1, episodeCount: 12, missingTitleCount: 12, recoverableTitleCount: 0,
@@ -772,6 +843,24 @@ test('updating from 1.4 shows only the AniList step and respects a switched-off 
         assert.match(await page.locator('#acSourceState_anilist').innerText(), /Attiva/);
         await saveAndWait(page);
         assert.equal(state.config.EnableAniListMetadata, true);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('the last setup step saves once: the button pressed is busy and the other one waits', async () => {
+    const { page, state } = await mount({ config: { SetupCompletedVersion: 3 }, saveDelay: 800 });
+    try {
+        await page.locator('#acSetup').waitFor();
+        await page.getByRole('button', { name: 'Salva e continua' }).click();
+        await page.locator('#acSetupOpenLibrary').waitFor();
+        const writes = state.writes.length;
+        await page.locator('#acSetupOpenLibrary').click();
+        assert.equal(await page.locator('#acSetupOpenLibrary').getAttribute('aria-busy'), 'true');
+        assert.equal(await page.locator('#acSetupFinish').isDisabled(), true, 'the other way out cannot save a second time');
+        await page.locator('#acSetup').waitFor({ state: 'hidden' });
+        assert.equal(state.writes.length, writes + 1);
+        assert.equal(state.config.SetupCompletedVersion, 4);
+        assert.equal(await page.locator('#acView_library').isVisible(), true);
         assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });
@@ -1021,6 +1110,35 @@ test('correcting from the library searches AnimeClick at once and the way back r
     } finally { await page.close(); }
 });
 
+test('the detail panel and its dialogs close when the page is left, or when «Apri in Jellyfin» is followed', async () => {
+    const { page, state } = await mount();
+    try {
+        await select(page, 'Libreria');
+        await page.getByText(/Analisi aggiornata alle/).waitFor();
+        await page.locator('#acLibrarySearch').fill('dandadan');
+        await page.locator('#acLibraryGrid .ac-anime-card').click();
+        const drawer = page.getByRole('dialog', { name: 'Dandadan' });
+        await drawer.waitFor();
+        await drawer.locator('#acDrawerOpenItem').click();
+        await drawer.waitFor({ state: 'detached' });
+        assert.match(page.url(), /#\/details\?id=/);
+
+        const leave = () => page.evaluate(() => document.querySelector('#AnimeClickConfigPage').dispatchEvent(new Event('pagehide')));
+        await page.locator('#acLibraryGrid .ac-anime-card').click();
+        await drawer.waitFor();
+        await leave();
+        await drawer.waitFor({ state: 'detached' });
+
+        await page.locator('#acBtnRunTitles').click();
+        await page.getByRole('dialog', { name: 'Sistema tutti i titoli' }).waitFor();
+        await leave();
+        assert.equal(await page.locator('.ac-drawer-veil, .ac-veil').count(), 0, 'nothing stays over Jellyfin');
+        assert.equal(await page.locator('#acRoot').evaluate(node => node.inert), false);
+        assert.equal(state.titleRuns, 0);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
 test('the detail panel steps through the shown anime without closing', async () => {
     const { page, state } = await mount();
     try {
@@ -1128,6 +1246,53 @@ test('a card that cannot be read says so and leaves the correction possible', as
         await page.locator('#acCardPreview').getByText('Non riesco a mostrare questa scheda').waitFor();
         assert.match(await page.locator('#acCardPreview').innerText(), /controlla il link o riprova fra poco/);
         assert.equal(await page.locator('#acBtnPreviewCard').isEnabled(), true);
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('a blocked AnimeClick is shown on Inizio and in Fonti, and a manual check clears it', async () => {
+    const { page, state } = await mount({ animeClickBlocked: true });
+    try {
+        const pill = page.locator('#acHomeSources .ac-source-pill').first();
+        await pill.getByText('Bloccata da Cloudflare').waitFor();
+        assert.equal(await pill.locator('.ac-led').getAttribute('class'), 'ac-led is-warn');
+
+        await select(page, 'Fonti');
+        await page.locator('#acSourceState_animeclick').getByText('Verifica Cloudflare').waitFor();
+        const notice = page.locator('#acAnimeClickNotice');
+        await notice.getByText('AnimeClick sta bloccando le richieste').waitFor();
+        assert.match(await notice.innerText(), /Prossimo tentativo automatico alle \d{2}:\d{2}/);
+        assert.equal(await page.locator('#acSourceChain .ac-chain-step').first().locator('.ac-led').getAttribute('class'), 'ac-led is-warn');
+
+        await page.locator('#acTest_animeclick').click();
+        await page.locator('#acSourceState_animeclick').getByText('Connessa').waitFor();
+        assert.equal(state.sourceChecks, 1);
+        assert.equal(await notice.innerText(), '');
+        assert.equal(await page.locator('#acTestResult_animeclick').innerText(), 'AnimeClick risponde.');
+
+        await select(page, 'Inizio');
+        await page.locator('#acHomeSources .ac-source-pill').first().getByText('Attiva, senza chiavi').waitFor();
+        assert.deepEqual(state.errors, []);
+    } finally { await page.close(); }
+});
+
+test('a card preview while AnimeClick is blocked explains the block instead of blaming the link', async () => {
+    const { page, state } = await mount({ animeClickBlocked: true });
+    try {
+        await select(page, 'Strumenti');
+        await page.locator('#acAnimeClickId').fill('12345/scheda');
+        await page.locator('#acBtnPreviewCard').click();
+        await page.locator('#acCardPreview').getByText('AnimeClick sta bloccando le richieste').waitFor();
+        const text = await page.locator('#acCardPreview').innerText();
+        assert.match(text, /verifica anti-bot di Cloudflare/);
+        assert.doesNotMatch(text, /controlla il link/);
+        assert.equal(await page.locator('#acBtnPreviewCard').isEnabled(), true);
+
+        // The search says why it is empty, instead of suggesting to paste a link.
+        await page.locator('#acAnimeClickSearch').fill('Frieren');
+        await page.locator('#acAnimeClickSearch').press('Enter');
+        await page.locator('#acAnimeClickCandidates').getByText(/verifica anti-bot di Cloudflare/).waitFor();
+        assert.doesNotMatch(await page.locator('#acAnimeClickCandidates').innerText(), /incolla il link/);
         assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });
@@ -1296,12 +1461,23 @@ test('messages can be closed, and small controls are large enough for a finger',
             nodes.map(node => Math.round(node.getBoundingClientRect().height)));
         assert.ok(sizes.length > 4 && sizes.every(height => height >= 44), 'heights: ' + sizes.join(', '));
 
-        await select(page, 'Strumenti');
-        await page.locator('#acBtnFindItem').click();
-        const toast = page.locator('.ac-toast', { hasText: 'Scrivi almeno due lettere del titolo.' });
+        await page.locator('#acLibraryGrid .ac-anime-card').first().click();
+        await page.locator('#acBtnDrawerRefresh').click();
+        const toast = page.locator('.ac-toast', { hasText: 'Aggiornamento dei metadati avviato in Jellyfin' });
         await toast.waitFor();
         await toast.getByRole('button', { name: 'Chiudi il messaggio' }).click();
         await toast.waitFor({ state: 'detached' });
+        await page.keyboard.press('Escape');
+
+        await select(page, 'Strumenti');
+        await page.locator('#acBtnFindItem').click();
+        await page.locator('#acItemSearchError', { hasText: 'Scrivi almeno due lettere del titolo.' }).waitFor();
+        assert.equal(await page.locator('#acItemSearch').getAttribute('aria-invalid'), 'true');
+        assert.equal(await page.locator('.ac-toast').count(), 0, 'a problem of a field is shown next to it');
+        await page.locator('#acBtnIdentify').click();
+        await page.locator('#acItemSearchError', { hasText: 'Scegli prima il titolo da correggere.' }).waitFor();
+        await page.locator('#acItemSearch').fill('Fr');
+        assert.equal(await page.locator('#acItemSearchError').isHidden(), true);
         assert.deepEqual(state.errors, []);
     } finally { await page.close(); }
 });

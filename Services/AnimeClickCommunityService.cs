@@ -187,10 +187,20 @@ public sealed class AnimeClickCommunityService(IHttpClientFactory factory, Anime
         await _datasetGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            var dataset = await cache.GetAsync<AnimeClickCommunityDataset>(DatasetKey, 24, token).ConfigureAwait(false);
-            if (dataset is null && DateTimeOffset.UtcNow >= _nextDatasetAttempt)
+            // Ogni aggiornamento di serie, film e stagione passa di qui: rileggere il file e
+            // rivalidare fino a 5000 abbinamenti ogni volta era lavoro buttato. La copia già
+            // validata vale finché il file è lo stesso e non c'è un nuovo scaricamento da fare.
+            var now = DateTimeOffset.UtcNow;
+            var stamp = cache.GetEntryTimestampUtc(DatasetKey);
+            if (_validatedDataset is { } memo && stamp is { } written && memo.Stamp == written
+                && (now - new DateTimeOffset(written, TimeSpan.Zero) <= DatasetLifetime || now < _nextDatasetAttempt))
             {
-                _nextDatasetAttempt = DateTimeOffset.UtcNow.AddHours(1);
+                return memo.Dataset;
+            }
+
+            var dataset = await cache.GetAsync<AnimeClickCommunityDataset>(DatasetKey, (int)DatasetLifetime.TotalHours, token).ConfigureAwait(false);
+            if (dataset is null && now >= _nextDatasetAttempt)
+            {
                 try
                 {
                     using var client = factory.CreateClient(AnimeClickHttp.ClientName);
@@ -202,16 +212,29 @@ public sealed class AnimeClickCommunityService(IHttpClientFactory factory, Anime
                     await cache.SetAsync(DatasetKey, dataset, token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
-                catch (Exception) { dataset = null; }
+                catch (Exception)
+                {
+                    // La pausa di un'ora vale per un tentativo fallito, non per uno annullato da
+                    // chi lo aspettava: prima veniva fissata prima di provare, e una scansione
+                    // interrotta lasciava il dataset fermo per un'ora.
+                    _nextDatasetAttempt = DateTimeOffset.UtcNow.AddHours(1);
+                    dataset = null;
+                }
             }
 
             dataset ??= await cache.GetAsync<AnimeClickCommunityDataset>(DatasetKey, token).ConfigureAwait(false);
             if (dataset is null) return null;
-            try { return AnimeClickCommunityData.Revalidate(dataset); }
+            AnimeClickCommunityDataset validated;
+            try { validated = AnimeClickCommunityData.Revalidate(dataset); }
             catch (JsonException) { return null; }
+            _validatedDataset = cache.GetEntryTimestampUtc(DatasetKey) is { } current ? (current, validated) : null;
+            return validated;
         }
         finally { _datasetGate.Release(); }
     }
+
+    private static readonly TimeSpan DatasetLifetime = TimeSpan.FromHours(24);
+    private (DateTime Stamp, AnimeClickCommunityDataset Dataset)? _validatedDataset;
 
     /* ===== Sharing ===== */
 

@@ -128,14 +128,6 @@ public partial class AnimeClickHtmlParser
     /// Parses an AnimeClick episode detail page. Only the schema.org description is
     /// trusted: surrounding page text may contain user comments and must not become
     /// Jellyfin metadata.
-    /// </summary>
-    public string? ParseEpisodeOverviewPage(string html)
-    {
-        TryParseEpisodeOverviewPage(html, out var overview);
-        return overview;
-    }
-
-    /// <summary>
     /// Returns true only when the expected description node exists. An empty or
     /// placeholder description is therefore a recognized miss, while an interstitial
     /// or changed page shape remains retryable and must not enter negative cache.
@@ -159,6 +151,31 @@ public partial class AnimeClickHtmlParser
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// The premiere date of a card, when the card really has one.
+    /// </summary>
+    /// <remarks>
+    /// AnimeClick publishes only the year: <c>datePublished</c> is "2019-01-01" for a film released
+    /// in June 2019, on every card in the fixtures. Written as a date it took the place of the real
+    /// one from TMDB or AniList, which only fill an empty field, and parsed in local time it became
+    /// 31 December of the year before on a server east of UTC. A first of January is therefore read
+    /// as "year only" and left out; any other date is kept, as the UTC calendar day it names.
+    /// </remarks>
+    internal static DateTimeOffset? ParsePremiereDate(string? datePublished)
+    {
+        if (string.IsNullOrWhiteSpace(datePublished)
+            || !DateTimeOffset.TryParse(
+                datePublished.Trim(),
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var premiere))
+        {
+            return null;
+        }
+
+        return premiere is { Month: 1, Day: 1 } ? null : premiere;
     }
 
     /// <summary>
@@ -251,19 +268,6 @@ public partial class AnimeClickHtmlParser
             if (float.TryParse(NormalizeDecimal(ratingStr), NumberStyles.Float, CultureInfo.InvariantCulture, out var vote))
             {
                 anime.CommunityRating = vote;
-            }
-        }
-
-        // --- Rating Count ---
-        var ratingCountNode = doc.DocumentNode.SelectSingleNode("//span[@itemprop='ratingCount']");
-        if (ratingCountNode is not null)
-        {
-            // Strip thousands separators/labels: rating count is a plain integer count.
-            var ratingCountDigits = new string(ratingCountNode.InnerText.Where(char.IsAsciiDigit).ToArray());
-            if (ratingCountDigits.Length > 0
-                && int.TryParse(ratingCountDigits, NumberStyles.None, CultureInfo.InvariantCulture, out var ratingCount))
-            {
-                anime.RatingCount = ratingCount;
             }
         }
 
@@ -376,11 +380,7 @@ public partial class AnimeClickHtmlParser
         anime.Status = DtDdValue(doc, "Stato in patria");
 
         // --- Premiere Date ---
-        if (!string.IsNullOrWhiteSpace(datePublished) &&
-            DateTimeOffset.TryParse(datePublished, CultureInfo.InvariantCulture, DateTimeStyles.None, out var premiere))
-        {
-            anime.PremiereDate = premiere;
-        }
+        anime.PremiereDate = ParsePremiereDate(datePublished);
 
         // --- Provider IDs (Extraction from external links) ---
         var links = doc.DocumentNode.SelectNodes("//a[@href]");
@@ -703,11 +703,14 @@ public partial class AnimeClickHtmlParser
         var items = doc.DocumentNode.SelectNodes("//div[contains(@class, 'item-search-item')]");
         if (items is null)
         {
-            // Defensive: site structure may have changed
-            if (html.Length > 200 && html.Contains("item-search", StringComparison.OrdinalIgnoreCase))
+            // Nessun risultato è una risposta solo se la pagina è quella della ricerca, che porta
+            // il suo modulo. Una pagina intermedia o pubblicitaria servita con 200 sarebbe
+            // diventata "questo titolo non esiste" in cache per ore; ora è un errore e si riprova.
+            if (doc.DocumentNode.SelectSingleNode("//form[contains(@class, 'ac-search-page-form')]") is null)
             {
-                // caller will log at higher level if needed
+                throw new System.IO.InvalidDataException("AnimeClick did not return a recognizable search page.");
             }
+
             return results;
         }
 
@@ -789,11 +792,6 @@ public partial class AnimeClickHtmlParser
                 ProductionYear = year,
                 Format = format
             });
-        }
-
-        if (results.Count == 0 && html.Length > 300)
-        {
-            // Possible selector drift or empty-results page — higher layers can decide to log/warn.
         }
 
         return results;

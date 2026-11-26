@@ -65,76 +65,7 @@ public sealed class AnimeClickEpisodeLayoutResolver
                 return (null, runtimeMinutes);
             }
 
-            var rawEpisodes = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
-            {
-                AncestorIds = [series.Id],
-                IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Episode],
-                Recursive = true,
-                IsVirtualItem = false
-            });
-            if ((rawEpisodes is null || rawEpisodes.Count == 0)
-                && MediaBrowser.Controller.Entities.BaseItem.LibraryManager is not null)
-            {
-                rawEpisodes = series.GetEpisodes(
-                        null!,
-                        new MediaBrowser.Controller.Dto.DtoOptions(false),
-                        shouldIncludeMissingEpisodes: false)
-                    .ToList();
-            }
-
-            var episodes = (rawEpisodes ?? [])
-                .OfType<Episode>()
-                .DistinctBy(episode => episode.Id)
-                .Where(episode => episode.ParentIndexNumber is > 0 && episode.IndexNumber is >= 0)
-                .ToList();
-
-            var seasons = new Dictionary<int, AnimeClickEpisodeSeasonLayout>();
-            foreach (var group in episodes.GroupBy(episode => episode.ParentIndexNumber!.Value))
-            {
-                var numbers = new SortedSet<int>();
-                foreach (var episode in group)
-                {
-                    var start = episode.IndexNumber!.Value;
-                    var end = Math.Max(start, episode.IndexNumberEnd ?? start);
-                    if (end - start > 100)
-                    {
-                        continue;
-                    }
-
-                    for (var number = start; number <= end; number++)
-                    {
-                        numbers.Add(number);
-                    }
-                }
-
-                if (numbers.Count == 0)
-                {
-                    continue;
-                }
-
-                var max = numbers.Max;
-                var startsAtOne = numbers.Min is 0 or 1;
-                var firstRegular = numbers.Min == 0 ? 0 : 1;
-                var contiguous = startsAtOne
-                    && Enumerable.Range(firstRegular, max - firstRegular + 1).All(numbers.Contains);
-
-                // The year the season actually aired, straight from the files Jellyfin already
-                // dated. It is what lets the sequel traversal tell a 2011 continuation from a 2024
-                // one on a page that declares neither.
-                var airYears = group
-                    .Select(episode => episode.PremiereDate?.Year)
-                    .Where(year => year is > 1900)
-                    .Select(year => year!.Value)
-                    .ToList();
-                seasons[group.Key] = new AnimeClickEpisodeSeasonLayout(
-                    group.Key,
-                    max,
-                    numbers.Count,
-                    startsAtOne,
-                    contiguous,
-                    airYears.Count > 0 ? airYears.Min() : null);
-            }
-
+            var seasons = GetSeasons(series);
             var layout = seasons.Count == 0
                 ? null
                 : new AnimeClickEpisodeLibraryLayout(series.Id, seasons, new Dictionary<string, string>(series.ProviderIds));
@@ -148,28 +79,118 @@ public sealed class AnimeClickEpisodeLayoutResolver
     }
 
     /// <summary>
-    /// Returns the runtime in minutes Jellyfin already probed for an episode file, when it has
-    /// one. Unlike the layout this is read for every match, season-specific pages included,
-    /// because it is the one piece of evidence that does not depend on how the seasons are cut.
+    /// The seasons of a series as Jellyfin numbers them, read once for every episode refreshed in
+    /// the same short window.
     /// </summary>
-    public double? GetKnownRuntimeMinutes(string? episodePath)
+    /// <remarks>
+    /// Every episode asked for the whole series again: refreshing a series of N episodes read N×N
+    /// items from the library, a million for a long-running one, all on the server's database. The
+    /// layout of a series does not change between two of its episodes; it is kept for
+    /// <see cref="SeasonsLifetime"/>, short enough to see episodes a scan has just added.
+    /// </remarks>
+    private IReadOnlyDictionary<int, AnimeClickEpisodeSeasonLayout> GetSeasons(Series series)
     {
-        if (string.IsNullOrWhiteSpace(episodePath))
+        var now = Environment.TickCount64;
+        if (_seasonsBySeries.TryGetValue(series.Id, out var memo) && now - memo.At < SeasonsLifetime.TotalMilliseconds)
         {
-            return null;
+            return memo.Seasons;
         }
 
-        try
+        var seasons = ReadSeasons(series);
+        if (_seasonsBySeries.Count >= MaximumMemoizedSeries)
         {
-            var episode = _libraryManager.FindByPath(episodePath, isFolder: false) as Episode;
-            var ticks = episode?.RunTimeTicks;
-            return ticks is > 0 ? TimeSpan.FromTicks(ticks.Value).TotalMinutes : null;
+            foreach (var expired in _seasonsBySeries.Where(entry => now - entry.Value.At >= SeasonsLifetime.TotalMilliseconds).ToList())
+            {
+                _seasonsBySeries.TryRemove(expired);
+            }
+
+            if (_seasonsBySeries.Count >= MaximumMemoizedSeries)
+            {
+                _seasonsBySeries.Clear();
+            }
         }
-        catch (Exception ex)
+
+        _seasonsBySeries[series.Id] = (now, seasons);
+        return seasons;
+    }
+
+    internal static readonly TimeSpan SeasonsLifetime = TimeSpan.FromSeconds(30);
+    private const int MaximumMemoizedSeries = 256;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, (long At, IReadOnlyDictionary<int, AnimeClickEpisodeSeasonLayout> Seasons)> _seasonsBySeries = new();
+
+    private Dictionary<int, AnimeClickEpisodeSeasonLayout> ReadSeasons(Series series)
+    {
+        var rawEpisodes = _libraryManager.GetItemList(new MediaBrowser.Controller.Entities.InternalItemsQuery
         {
-            _logger.LogDebug(ex, "AnimeClick: unable to read the Jellyfin runtime for {Path}", episodePath);
-            return null;
+            AncestorIds = [series.Id],
+            IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Episode],
+            Recursive = true,
+            IsVirtualItem = false
+        });
+        if ((rawEpisodes is null || rawEpisodes.Count == 0)
+            && MediaBrowser.Controller.Entities.BaseItem.LibraryManager is not null)
+        {
+            rawEpisodes = series.GetEpisodes(
+                    null!,
+                    new MediaBrowser.Controller.Dto.DtoOptions(false),
+                    shouldIncludeMissingEpisodes: false)
+                .ToList();
         }
+
+        var episodes = (rawEpisodes ?? [])
+            .OfType<Episode>()
+            .DistinctBy(episode => episode.Id)
+            .Where(episode => episode.ParentIndexNumber is > 0 && episode.IndexNumber is >= 0)
+            .ToList();
+
+        var seasons = new Dictionary<int, AnimeClickEpisodeSeasonLayout>();
+        foreach (var group in episodes.GroupBy(episode => episode.ParentIndexNumber!.Value))
+        {
+            var numbers = new SortedSet<int>();
+            foreach (var episode in group)
+            {
+                var start = episode.IndexNumber!.Value;
+                var end = Math.Max(start, episode.IndexNumberEnd ?? start);
+                if (end - start > 100)
+                {
+                    continue;
+                }
+
+                for (var number = start; number <= end; number++)
+                {
+                    numbers.Add(number);
+                }
+            }
+
+            if (numbers.Count == 0)
+            {
+                continue;
+            }
+
+            var max = numbers.Max;
+            var startsAtOne = numbers.Min is 0 or 1;
+            var firstRegular = numbers.Min == 0 ? 0 : 1;
+            var contiguous = startsAtOne
+                && Enumerable.Range(firstRegular, max - firstRegular + 1).All(numbers.Contains);
+
+            // The year the season actually aired, straight from the files Jellyfin already
+            // dated. It is what lets the sequel traversal tell a 2011 continuation from a 2024
+            // one on a page that declares neither.
+            var airYears = group
+                .Select(episode => episode.PremiereDate?.Year)
+                .Where(year => year is > 1900)
+                .Select(year => year!.Value)
+                .ToList();
+            seasons[group.Key] = new AnimeClickEpisodeSeasonLayout(
+                group.Key,
+                max,
+                numbers.Count,
+                startsAtOne,
+                contiguous,
+                airYears.Count > 0 ? airYears.Min() : null);
+        }
+
+        return seasons;
     }
 }
 

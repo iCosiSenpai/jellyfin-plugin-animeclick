@@ -193,6 +193,15 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             {
                 throw;
             }
+            catch (AnimeClickUnavailableException ex)
+            {
+                // Una volta nel log quando le richieste si sospendono, non per ogni episodio.
+                _logger.LogDebug(
+                    "AnimeClick: episode lookup skipped for episode {Num} of {Id}: {Reason}",
+                    episodeNumber.Value,
+                    mainAnimeClickId,
+                    ex.Message);
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(
@@ -260,6 +269,14 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
             {
                 throw;
             }
+            catch (AnimeClickUnavailableException ex)
+            {
+                _logger.LogDebug(
+                    "AnimeClick: synopsis fallback skipped for episode {Num} of {Id}: {Reason}",
+                    episodeNumber.Value,
+                    mainAnimeClickId,
+                    ex.Message);
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(
@@ -319,7 +336,12 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch { _logger.LogWarning("AnimeClick title unavailable; configured alternative sources will be checked."); }
+            catch (AnimeClickUnavailableException ex)
+            {
+                refreshedCatalogs.AnimeClickUnavailable++;
+                _logger.LogDebug("AnimeClick title skipped ({Reason}); configured alternative sources will be checked.", ex.Message);
+            }
+            catch (Exception ex) { _logger.LogWarning("AnimeClick title unavailable ({Reason}); configured alternative sources will be checked.", ex.Message); }
         }
         if (_titleFallback is null || episode.ParentIndexNumber is null) return null;
         var request = new AnimeClickEpisodeTitleRequest(episode.Series?.ProviderIds ?? [], episode.ProviderIds,
@@ -450,6 +472,23 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
         // A deliberate recheck must see titles published since the last scan. Refresh once per
         // actual resolved card, then share the fresh catalog across this run's episodes.
         if (refreshedCatalogs?.Unavailable.Contains(cacheKey) == true) return null;
+
+        // Un elenco vuoto è una risposta anche lui: una scheda senza la tabella degli episodi. Già
+        // letto in questa sessione, o messo in cache da meno di NegativeCacheHours, non si chiede
+        // di nuovo per ogni episodio (prima: due richieste per episodio, 48 per 24 episodi).
+        async Task<bool> IsSettledAsync(AnimeClickEpisodeCatalog candidate)
+        {
+            if (candidate.Episodes.Count > 0) return true;
+            if (refreshedCatalogs?.Catalogs.ContainsKey(cacheKey) == true) return true;
+            return configuration.NegativeCacheHours > 0
+                && await _cache
+                    .GetAsync<AnimeClickEpisodeCatalog>(
+                        cacheKey,
+                        Math.Min(configuration.NegativeCacheHours, configuration.CacheHours),
+                        cancellationToken)
+                    .ConfigureAwait(false) is { Episodes.Count: 0 };
+        }
+
         var forceRefresh = refreshedCatalogs?.Refreshed.Add(cacheKey) == true;
         var catalog = forceRefresh
             ? null
@@ -458,7 +497,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                 .ConfigureAwait(false);
         _logger.LogDebug("AnimeClick episode catalog cache {State}: {Key}", catalog is null ? "miss" : "hit", cacheKey);
 
-        if (catalog is null || catalog.Episodes.Count == 0)
+        if (catalog is null || !await IsSettledAsync(catalog).ConfigureAwait(false))
         {
             var fillLock = CacheFillLocks.Get("catalog::" + cacheKey);
             await fillLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -470,19 +509,47 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                     : await _cache
                         .GetAsync<AnimeClickEpisodeCatalog>(cacheKey, configuration.CacheHours, cancellationToken)
                         .ConfigureAwait(false);
-                if (catalog is null || catalog.Episodes.Count == 0)
+                if (catalog is null || !await IsSettledAsync(catalog).ConfigureAwait(false))
                 {
-                    var loaded = await _episodeListLoader.LoadAsync(
-                            animeUrl + "/episodi",
-                            configuration.BaseUrl,
-                            declaredSeasons > 0 ? declaredSeasons : null,
-                            declaredEpisodes,
-                            configuration,
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                    AnimeClickEpisodeCatalog? stale = null;
+                    AnimeClickEpisodeListLoadResult loaded;
+                    try
+                    {
+                        loaded = await _episodeListLoader.LoadAsync(
+                                animeUrl + "/episodi",
+                                configuration.BaseUrl,
+                                declaredSeasons > 0 ? declaredSeasons : null,
+                                declaredEpisodes,
+                                configuration,
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (HttpRequestException ex) when (ex.StatusCode is not HttpStatusCode.NotFound)
+                    {
+                        // AnimeClick non risponde (verifica anti-bot, rete): l'elenco già letto,
+                        // anche se scaduto, dà i titoli italiani che altrimenti andrebbero persi.
+                        stale = await _cache
+                            .GetAsync<AnimeClickEpisodeCatalog>(cacheKey, cancellationToken)
+                            .ConfigureAwait(false);
+                        if (stale is null || stale.Episodes.Count == 0)
+                        {
+                            throw;
+                        }
+
+                        _logger.LogDebug(
+                            "AnimeClick: episode list for {Id} unavailable ({Reason}); using the expired cached catalog",
+                            animeClickId,
+                            ex.Message);
+                        // Già in cache con la sua età: non si riscrive, sembrerebbe fresca.
+                        loaded = new AnimeClickEpisodeListLoadResult(stale, PaginationComplete: true);
+                    }
+
                     catalog = loaded.Catalog;
 
-                    if (loaded.PaginationComplete)
+                    // Senza la scheda (rete, 5xx) mancano i conteggi dichiarati, e con loro il
+                    // limite sulle righe che evita i titoli sfasati: l'elenco si usa ma non si
+                    // mette in cache sotto una chiave che lo farebbe valere per 48 ore.
+                    if (stale is null && loaded.PaginationComplete && series is not null)
                     {
                         await _cache.SetAsync(cacheKey, catalog, cancellationToken).ConfigureAwait(false);
                         _logger.LogInformation(
@@ -491,7 +558,7 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
                             catalog.Episodes.Count,
                             animeClickId);
                     }
-                    else
+                    else if (stale is null && !loaded.PaginationComplete)
                     {
                         if (refreshedCatalogs is not null)
                         {
@@ -647,15 +714,18 @@ public class AnimeClickEpisodeProvider : IRemoteMetadataProvider<Episode, Episod
 
             try
             {
-                var html = await _client.GetStringAsync(animeUrl, configuration, cancellationToken)
+                return await AnimeClickAnimeCards
+                    .FetchAsync(_client, _cache, _parser, animeUrl, configuration, cancellationToken)
                     .ConfigureAwait(false);
-                var anime = _parser.ParseAnimePage(animeUrl, html);
-                await _cache.SetAsync(cacheKey, anime, cancellationToken).ConfigureAwait(false);
-                return anime;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (AnimeClickUnavailableException ex)
+            {
+                _logger.LogDebug("AnimeClick: detail page {Url} unavailable and not cached: {Reason}", animeUrl, ex.Message);
+                return null;
             }
             catch (Exception ex)
             {

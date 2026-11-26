@@ -40,21 +40,6 @@ public sealed class AnimeClickMetadataRefreshScheduler
         _logger = logger;
     }
 
-    public bool TryQueueByPath(
-        string? path,
-        MetadataField field,
-        string reason,
-        string? overview = null)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return false;
-        }
-
-        var item = FindItemByPath(path);
-        return item is not null && TryQueue(item, field, reason, overview);
-    }
-
     /// <summary>
     /// Captures the database value before asynchronous translation starts. The resulting callback
     /// is authorized only while that exact value remains current.
@@ -212,6 +197,7 @@ public sealed class AnimeClickMetadataRefreshScheduler
     {
         var now = DateTime.UtcNow.Ticks;
         var cutoff = now - DuplicateWindow.Ticks;
+        PruneExpiredClaims(cutoff);
         while (true)
         {
             if (_recentlyQueued.TryGetValue(claim, out var previous))
@@ -235,6 +221,29 @@ public sealed class AnimeClickMetadataRefreshScheduler
             }
         }
     }
+
+    /// <summary>
+    /// A claim is only needed for <see cref="DuplicateWindow"/>; kept after that it was one entry
+    /// per item and reason for the life of the process. Swept at most once per window.
+    /// </summary>
+    private void PruneExpiredClaims(long cutoff)
+    {
+        var lastPrune = Interlocked.Read(ref _lastPruneTicks);
+        if (lastPrune >= cutoff || Interlocked.CompareExchange(ref _lastPruneTicks, DateTime.UtcNow.Ticks, lastPrune) != lastPrune)
+        {
+            return;
+        }
+
+        foreach (var entry in _recentlyQueued)
+        {
+            if (entry.Value < cutoff)
+            {
+                _recentlyQueued.TryRemove(entry);
+            }
+        }
+    }
+
+    private long _lastPruneTicks;
 
     private readonly record struct RefreshClaim(Guid ItemId, MetadataField Field, string Reason);
 }

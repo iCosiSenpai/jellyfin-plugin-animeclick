@@ -72,9 +72,6 @@ public class AnimeClickEpisode
     /// <summary>Original (Japanese) title if available.</summary>
     public string? OriginalTitle { get; set; }
 
-    /// <summary>Air date string from AnimeClick.</summary>
-    public string? AirDate { get; set; }
-
     /// <summary>Duration in minutes.</summary>
     public int? DurationMinutes { get; set; }
 

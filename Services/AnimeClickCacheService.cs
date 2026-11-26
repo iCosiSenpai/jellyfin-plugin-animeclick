@@ -32,6 +32,11 @@ public class AnimeClickCacheService
     private readonly string _cacheDirectory;
     private readonly ILogger<AnimeClickCacheService> _logger;
 
+    // Only the metadata cache is swept. A store opened on its own directory holds state, not
+    // copies of something that can be read again (the community installation code, its outbox).
+    private readonly bool _sweepable;
+    private long _nextSweepTicks = DateTime.UtcNow.Add(FirstSweepDelay).Ticks;
+
     public AnimeClickCacheService(
         IApplicationPaths applicationPaths,
         ILogger<AnimeClickCacheService> logger,
@@ -39,7 +44,119 @@ public class AnimeClickCacheService
     {
         _cacheDirectory = storageDirectory ?? Path.Combine(applicationPaths.CachePath, "AnimeClickMetadata");
         _logger = logger;
+        _sweepable = storageDirectory is null;
         Directory.CreateDirectory(_cacheDirectory);
+    }
+
+    private static readonly TimeSpan FirstSweepDelay = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan SweepInterval = TimeSpan.FromHours(24);
+    private static readonly TimeSpan StaleRetention = TimeSpan.FromDays(180);
+    private static readonly TimeSpan AbandonedTemporaryAge = TimeSpan.FromHours(1);
+
+    // Families whose entries are not a copy of a page: an AI translation costs money to redo, the
+    // ledger has its own retention, the community dataset has its own fallback rules.
+    private static readonly string[] UnsweptFamilies = ["translation", "repairLedger", "community"];
+
+    /// <summary>
+    /// Deletes what nobody will read again: temporary files a crash left behind, and entries so old
+    /// that even as an expired copy for an outage they are no longer worth keeping.
+    /// </summary>
+    /// <remarks>
+    /// Expired entries stay on disk on purpose (<see cref="GetAsync{T}(string, int, CancellationToken)"/>),
+    /// and many keys are never asked for again — a translation for a changed model, the size of a
+    /// replaced image, a season that left the library — so without a sweep the directory only grew.
+    /// An entry is removed past the longest validity the settings give it, or six months, whichever
+    /// is longer.
+    /// </remarks>
+    internal int Sweep(DateTime nowUtc, TimeSpan retention)
+    {
+        var removed = 0;
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(_cacheDirectory, "*.tmp"))
+            {
+                if (nowUtc - File.GetLastWriteTimeUtc(path) > AbandonedTemporaryAge && DeleteIfOlder(path, nowUtc, AbandonedTemporaryAge))
+                {
+                    removed++;
+                }
+            }
+
+            foreach (var path in Directory.EnumerateFiles(_cacheDirectory, "*.json"))
+            {
+                var name = Path.GetFileNameWithoutExtension(path);
+                if (UnsweptFamilies.Any(family => name.StartsWith(family, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                if (nowUtc - File.GetLastWriteTimeUtc(path) > retention && DeleteIfOlder(path, nowUtc, retention))
+                {
+                    removed++;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogDebug(ex, "AnimeClick: cache sweep stopped early");
+        }
+
+        return removed;
+    }
+
+    /// <summary>Re-checks the age under the entry's own lock: a writer may have just replaced it.</summary>
+    private bool DeleteIfOlder(string path, DateTime nowUtc, TimeSpan age)
+    {
+        var asyncLock = GetLock(path.EndsWith(".tmp", StringComparison.Ordinal) ? path[..path.LastIndexOf(".json", StringComparison.Ordinal)] + ".json" : path);
+        if (!asyncLock.Wait(0))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (!File.Exists(path) || nowUtc - File.GetLastWriteTimeUtc(path) <= age)
+            {
+                return false;
+            }
+
+            File.Delete(path);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+        finally
+        {
+            asyncLock.Release();
+        }
+    }
+
+    private void MaybeSweep()
+    {
+        if (!_sweepable)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var next = Interlocked.Read(ref _nextSweepTicks);
+        if (now.Ticks < next || Interlocked.CompareExchange(ref _nextSweepTicks, now.Add(SweepInterval).Ticks, next) != next)
+        {
+            return;
+        }
+
+        var configuration = Plugin.Instance?.Configuration;
+        var longest = TimeSpan.FromHours(Math.Max(configuration?.CacheHours ?? 0, configuration?.NegativeCacheHours ?? 0));
+        var retention = longest > StaleRetention ? longest : StaleRetention;
+        _ = Task.Run(() =>
+        {
+            var removed = Sweep(DateTime.UtcNow, retention);
+            if (removed > 0)
+            {
+                _logger.LogInformation("AnimeClick: cache sweep removed {Count} entries nobody reads anymore", removed);
+            }
+        });
     }
 
     /// <summary>
@@ -59,10 +176,19 @@ public class AnimeClickCacheService
                 return default;
             }
 
-            var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(path);
-            if (maxAgeHours <= 0 || fileAge.TotalHours > maxAgeHours)
+            if (maxAgeHours <= 0)
             {
                 DeleteFileBestEffort(path);
+                return default;
+            }
+
+            // Una voce scaduta è un mancato riscontro, ma resta sul disco finché la lettura
+            // successiva non la sostituisce: se intanto il sito non risponde, la copia vecchia
+            // (GetAsync senza età) vale più di nessuna. Cancellarla qui la perdeva proprio
+            // quando sarebbe servita. Le voci che nessuno rilegge le toglie Sweep, una volta al giorno.
+            var fileAge = DateTime.UtcNow - File.GetLastWriteTimeUtc(path);
+            if (fileAge.TotalHours > maxAgeHours)
+            {
                 return default;
             }
 
@@ -119,6 +245,7 @@ public class AnimeClickCacheService
     /// </summary>
     public async Task SetAsync<T>(string key, T payload, CancellationToken cancellationToken, bool preserveAge = false)
     {
+        MaybeSweep();
         var path = GetPath(key);
         var tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var asyncLock = GetLock(path);
@@ -367,6 +494,23 @@ public class AnimeClickCacheService
 
     private string GetPath(string key)
         => Path.Combine(_cacheDirectory, SanitizeFileKey(key) + ".json");
+
+    /// <summary>
+    /// When an entry was last written, without reading it: lets a caller that keeps a parsed copy
+    /// in memory know whether the file changed under it.
+    /// </summary>
+    internal DateTime? GetEntryTimestampUtc(string key)
+    {
+        try
+        {
+            var path = GetPath(key);
+            return File.Exists(path) ? File.GetLastWriteTimeUtc(path) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 
     private static void DeleteFileBestEffort(string path)
     {

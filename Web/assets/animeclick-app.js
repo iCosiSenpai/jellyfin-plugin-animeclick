@@ -208,6 +208,7 @@
         go: go,
         current: function () { return current; },
         showSetup: showSetup,
-        pageHidden: function () { AC.library.stop(); AC.home.leave(); }
+        // Leaving the plugin page: drawers and dialogs hang on document.body, so they go too.
+        pageHidden: function () { AC.library.stop(); AC.home.leave(); ui.closeOverlays(); }
     };
 }());

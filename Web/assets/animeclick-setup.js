@@ -13,7 +13,7 @@
     'use strict';
 
     var AC = window.AnimeClickUI;
-    var h = AC.dom.h, icon = AC.dom.icon, clear = AC.dom.clear, replace = AC.dom.replace;
+    var h = AC.dom.h, icon = AC.dom.icon, replace = AC.dom.replace;
     var val = AC.util.val, plural = AC.util.plural, truncate = AC.util.truncate;
     var ui = AC.ui, api = AC.api;
 
@@ -96,9 +96,11 @@
         AC.app.go('home');
     }
 
-    function finish(target) {
-        var buttonNode = el('acSetupFinish');
+    /** Either button of the last step saves: the one pressed shows the work, the other waits. */
+    function finish(target, buttonNode) {
+        var other = ['acSetupFinish', 'acSetupOpenLibrary'].map(el).filter(function (node) { return node && node !== buttonNode; });
         ui.setBusy(buttonNode, true, 'Salvataggio…');
+        other.forEach(function (node) { node.disabled = true; });
         return AC.settings.savePatch({ SetupCompletedVersion: SETUP_VERSION }).then(function () {
             close();
             if (target && target !== 'home') AC.app.go(target);
@@ -106,6 +108,7 @@
         }).catch(function (error) {
             ui.toast('Non riesco a salvare: ' + truncate(error.message, 200), 'error');
             ui.setBusy(buttonNode, false);
+            other.forEach(function (node) { node.disabled = false; });
         });
     }
 
@@ -238,8 +241,17 @@
         main.appendChild(ui.hint('TheTVDB e la traduzione AI le trovi più avanti in Fonti.'));
         el('acSetupTmdbKey').value = draft.TmdbApiKey;
         el('acSetupFanartKey').value = draft.FanartPersonalApiKey;
-        el('acSetupTmdbKey').addEventListener('input', function () { draft.TmdbApiKey = this.value.trim(); });
-        el('acSetupFanartKey').addEventListener('input', function () { draft.FanartPersonalApiKey = this.value.trim(); });
+        el('acSetupTmdbKey').addEventListener('input', function () { draft.TmdbApiKey = this.value.trim(); ui.fieldError(this, ''); });
+        el('acSetupFanartKey').addEventListener('input', function () { draft.FanartPersonalApiKey = this.value.trim(); ui.fieldError(this, ''); });
+
+        /** A key that is not there yet is a problem of its field: said under it, with the focus on it. */
+        function requireKey(input, out) {
+            if (input.value.trim()) return true;
+            ui.status(out, '');
+            ui.fieldError(input, 'Inserisci prima la chiave.');
+            input.focus();
+            return false;
+        }
 
         function verify(source, buttonNode, out, payload) {
             ui.setBusy(buttonNode, true, 'Verifica…');
@@ -251,11 +263,11 @@
             }).finally(function () { ui.setBusy(buttonNode, false); });
         }
         tmdbTest.addEventListener('click', function () {
-            if (!draft.TmdbApiKey) { ui.status(tmdbResult, 'Inserisci prima la chiave.', 'bad'); return; }
+            if (!requireKey(el('acSetupTmdbKey'), tmdbResult)) return;
             verify('tmdb', tmdbTest, tmdbResult, { apiKey: draft.TmdbApiKey });
         });
         fanartTest.addEventListener('click', function () {
-            if (!draft.FanartPersonalApiKey) { ui.status(fanartResult, 'Inserisci prima la chiave.', 'bad'); return; }
+            if (!requireKey(el('acSetupFanartKey'), fanartResult)) return;
             var saved = AC.settings.saved() || {};
             verify('fanart', fanartTest, fanartResult, { personalApiKey: draft.FanartPersonalApiKey, projectApiKey: saved.FanartProjectApiKey || '' });
         });
@@ -483,21 +495,18 @@
             summary(!!config.EnableCommunityMappings, 'Comunità', (config.EnableCommunityMappings ? 'Ricevi gli abbinamenti approvati. ' : 'Abbinamenti della comunità spenti. ')
                 + (config.CommunitySharingMode === 'Always' ? 'Le tue correzioni vengono condivise.' : config.CommunitySharingMode === 'Never' ? 'Le tue correzioni restano tue.' : 'Ti chiederò se condividere ogni correzione.'))));
         main.appendChild(ui.hint('Puoi chiedere a Jellyfin di aggiornare subito una libreria da Dashboard → Librerie → «Scansiona tutte le librerie», oppure aspettare la scansione programmata.'));
-        var row = h('div', { class: 'ac-setup-actions' },
-            h('span', { style: 'margin-right:auto' }),
-            ui.button('Apri la libreria', { variant: 'ghost', icon: 'library', onClick: function () { finish('library'); } }));
+        var library = ui.button('Apri la libreria', { id: 'acSetupOpenLibrary', variant: 'ghost', icon: 'library' });
+        library.addEventListener('click', function () { finish('library', library); });
         var go = ui.button('Vai alla vetrina', { id: 'acSetupFinish', variant: 'primary', icon: 'sparkles' });
-        go.addEventListener('click', function () { finish('home'); });
-        row.appendChild(go);
+        go.addEventListener('click', function () { finish('home', go); });
+        var row = h('div', { class: 'ac-setup-actions' }, h('span', { style: 'margin-right:auto' }), library, go);
         main.appendChild(row);
         mascot(side, 'Buona visione! ✨');
     }
 
     AC.setup = {
-        version: SETUP_VERSION,
         attach: function (pageElement) { page = pageElement; },
         needed: needed,
-        open: open,
-        steps: function (kind, done) { return selectSteps(kind, done).map(function (step) { return step.id; }); }
+        open: open
     };
 }());

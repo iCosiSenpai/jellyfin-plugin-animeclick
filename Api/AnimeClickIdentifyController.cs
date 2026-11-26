@@ -27,6 +27,7 @@ namespace AnimeClick.Plugin.Api;
 /// </summary>
 [ApiController]
 [Authorize(Policy = Policies.RequiresElevation)]
+[AnimeClickUnavailableResult]
 [Route("Plugins/AnimeClick")]
 public class AnimeClickIdentifyController : ControllerBase
 {
@@ -85,7 +86,17 @@ public class AnimeClickIdentifyController : ControllerBase
         // No mutation until AnimeClick confirms a real detail page. HTTP 200 alone can be an ad.
         var configuration = Plugin.Instance?.Configuration ?? new PluginConfiguration();
         var url = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, animeClickId);
-        if (await ReadCardAsync(url, configuration, cancellationToken).ConfigureAwait(false) is null)
+        AnimeClickAnime? verified;
+        try
+        {
+            verified = await ReadCardAsync(url, configuration, cancellationToken).ConfigureAwait(false);
+        }
+        catch (AnimeClickUnavailableException)
+        {
+            return StatusCode(503, new { error = AnimeClickSourceStatus.BlockedMessage + " Nessuna modifica salvata.", blocked = true });
+        }
+
+        if (verified is null)
         {
             return StatusCode(502, new { error = "Impossibile verificare la scheda AnimeClick. Nessuna modifica salvata: controlla il link e riprova." });
         }
@@ -99,7 +110,9 @@ public class AnimeClickIdentifyController : ControllerBase
         var unlockedCount = 0;
         if (request.Unlock)
         {
-            unlockedCount = await UnlockItemAndDescendantsAsync(item, includeChildren: true, specificField: null, cancellationToken).ConfigureAwait(false);
+            // Only the item the administrator chose: a season or an episode locked by hand keeps its
+            // lock, or the full refresh queued below would overwrite that correction.
+            unlockedCount = await UnlockItemAndDescendantsAsync(item, includeChildren: false, specificField: null, cancellationToken).ConfigureAwait(false);
         }
         item.SetProviderId(ProviderKey, animeClickId);
         await _libraryManager.UpdateItemAsync(item, item.GetParent(), ItemUpdateType.MetadataEdit, cancellationToken).ConfigureAwait(false);
@@ -167,13 +180,21 @@ public class AnimeClickIdentifyController : ControllerBase
         if (_cache is not null)
         {
             anime = await _cache
-                .GetAsync<AnimeClickAnime>(CardCacheKey(url), configuration.CacheHours, cancellationToken)
+                .GetAsync<AnimeClickAnime>(AnimeClickAnimeCards.CacheKey(url), configuration.CacheHours, cancellationToken)
                 .ConfigureAwait(false);
         }
 
         if (anime is null || string.IsNullOrWhiteSpace(anime.Title))
         {
-            anime = await ReadCardAsync(url, configuration, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                anime = await ReadCardAsync(url, configuration, cancellationToken).ConfigureAwait(false);
+            }
+            catch (AnimeClickUnavailableException)
+            {
+                return StatusCode(503, new { error = AnimeClickSourceStatus.BlockedMessage, blocked = true });
+            }
+
             if (anime is null)
             {
                 return StatusCode(502, new { error = "Non riesco a leggere questa scheda su AnimeClick: controlla il link o riprova fra poco." });
@@ -201,34 +222,31 @@ public class AnimeClickIdentifyController : ControllerBase
         });
     }
 
-    private static string CardCacheKey(string url) => "anime::" + url;
-
     /// <summary>
     /// Asks AnimeClick for a card and keeps it in the cache the providers read. Null when the page
     /// cannot be fetched or is not a card: HTTP 200 alone can be an advertisement or a maintenance
-    /// page, and neither may be cached or bound to a title.
+    /// page, and neither may be cached or bound to a title. While AnimeClick answers with its
+    /// anti-bot verification the expired cached copy is used if there is one; otherwise
+    /// <see cref="AnimeClickUnavailableException"/> reaches the caller, which says so.
     /// </summary>
     private async Task<AnimeClickAnime?> ReadCardAsync(string url, PluginConfiguration configuration, CancellationToken cancellationToken)
     {
         AnimeClickAnime anime;
         try
         {
-            var html = await _client.GetStringAsync(url, configuration, cancellationToken).ConfigureAwait(false);
-            anime = _parser.ParseAnimePage(url, html);
+            anime = _cache is null
+                ? _parser.ParseAnimePage(url, await _client.GetStringAsync(url, configuration, cancellationToken).ConfigureAwait(false))
+                : await AnimeClickAnimeCards.FetchAsync(_client, _cache, _parser, url, configuration, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (AnimeClickUnavailableException) { throw; }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "AnimeClick did not return a readable card for the selected page");
             return null;
         }
 
-        if (_cache is not null && !string.IsNullOrWhiteSpace(anime.Title))
-        {
-            await _cache.SetAsync(CardCacheKey(url), anime, cancellationToken).ConfigureAwait(false);
-        }
-
-        return anime;
+        return string.IsNullOrWhiteSpace(anime.Title) ? null : anime;
     }
 
     /// <summary>
@@ -379,9 +397,10 @@ public class AnimeClickIdentifyController : ControllerBase
         var unlocked = 0;
         if (request.Unlock)
         {
+            // As for identification: the item itself, never the manual corrections below it.
             unlocked = await UnlockItemAndDescendantsAsync(
                 item,
-                includeChildren: true,
+                includeChildren: false,
                 specificField: null,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -409,54 +428,6 @@ public class AnimeClickIdentifyController : ControllerBase
             UnlockedCount = unlocked
         });
     }
-
-    /// <summary>
-    /// Lists remote images available from each enabled ImageFetcher for
-    /// the given item. Used by the configPage to let the user preview what
-    /// the next refresh will pick up.
-    /// </summary>
-    [HttpGet("AvailableRemoteImages")]
-    public async Task<ActionResult<RemoteImagesResponse>> AvailableRemoteImages(
-        [FromQuery] string itemId,
-        [FromQuery] string? type,
-        CancellationToken cancellationToken)
-    {
-        if (!Guid.TryParse(itemId, out var parsedItemId))
-        {
-            return BadRequest(new { error = "itemId is required" });
-        }
-
-        var item = _libraryManager.GetItemById(parsedItemId);
-        if (item is null)
-        {
-            return NotFound(new { error = $"Item '{itemId}' not found" });
-        }
-
-        var query = new RemoteImageQuery(providerName: (string)null!)
-        {
-            ImageType = type is null ? null : ParseImageType(type),
-            IncludeDisabledProviders = false
-        };
-
-        var images = await _providerManager.GetAvailableRemoteImages(item, query, cancellationToken).ConfigureAwait(false);
-
-        return Ok(new RemoteImagesResponse
-        {
-            ItemId = item.Id.ToString(),
-            Count = images.Count(),
-            Images = images.Select(i => new AnimeClickRemoteImageInfo
-            {
-                ProviderName = i.ProviderName,
-                Type = i.Type.ToString(),
-                Url = i.Url,
-                Width = i.Width ?? 0,
-                Height = i.Height ?? 0,
-                Language = i.Language ?? string.Empty,
-                CommunityRating = (float)(i.CommunityRating ?? 0)
-            }).ToList()
-        });
-    }
-
 
     private async Task ResetStaleDescendantsAndLedgerAsync(
         BaseItem item,
@@ -611,14 +582,6 @@ public class AnimeClickIdentifyController : ControllerBase
         }
     }
 
-    private static ImageType? ParseImageType(string s)
-    {
-        if (Enum.TryParse<ImageType>(s, ignoreCase: true, out var t))
-        {
-            return t;
-        }
-        return null;
-    }
 }
 
 public sealed class IdentifyAndRefreshRequest
@@ -698,7 +661,12 @@ public sealed class IdentifyStatusResponse
 public sealed class UnlockItemRequest
 {
     public string ItemId { get; set; } = string.Empty;
-    public bool IncludeChildren { get; set; } = true;
+
+    /// <summary>
+    /// Also the seasons and episodes below the item. Off unless asked: a lock below is a manual
+    /// correction of its own, and the refresh that follows an unlock would overwrite it.
+    /// </summary>
+    public bool IncludeChildren { get; set; }
     public string? Field { get; set; }
 }
 
@@ -723,22 +691,4 @@ public sealed class RefreshItemResponse
     public string ItemId { get; set; } = string.Empty;
     public bool RefreshTriggered { get; set; }
     public int UnlockedCount { get; set; }
-}
-
-public sealed class RemoteImagesResponse
-{
-    public string ItemId { get; set; } = string.Empty;
-    public int Count { get; set; }
-    public List<AnimeClickRemoteImageInfo> Images { get; set; } = [];
-}
-
-public sealed class AnimeClickRemoteImageInfo
-{
-    public string ProviderName { get; set; } = string.Empty;
-    public string Type { get; set; } = string.Empty;
-    public string Url { get; set; } = string.Empty;
-    public int Width { get; set; }
-    public int Height { get; set; }
-    public string Language { get; set; } = string.Empty;
-    public float CommunityRating { get; set; }
 }

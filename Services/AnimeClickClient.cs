@@ -41,12 +41,20 @@ public partial class AnimeClickClient
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<AnimeClickClient> _logger;
+    private readonly AnimeClickAvailability _availability;
 
-    public AnimeClickClient(IHttpClientFactory httpClientFactory, ILogger<AnimeClickClient> logger)
+    public AnimeClickClient(
+        IHttpClientFactory httpClientFactory,
+        ILogger<AnimeClickClient> logger,
+        AnimeClickAvailability? availability = null)
     {
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _availability = availability ?? AnimeClickAvailability.Shared;
     }
+
+    /// <summary>Se AnimeClick risponde alle richieste automatiche, per la pagina del plugin.</summary>
+    internal AnimeClickAvailability Availability => _availability;
 
     [GeneratedRegex(@"^\d+(?:/[\p{L}\p{Nd}_~-]+)?$", RegexOptions.CultureInvariant)]
     private static partial Regex AnimeClickIdRegex();
@@ -262,6 +270,38 @@ public partial class AnimeClickClient
             throw new ArgumentException("Request URL must be an absolute HTTP(S) URL.", nameof(url));
         }
 
+        // Sospese da una verifica anti-bot: niente rete, niente attesa nella coda, niente errore
+        // per ogni elemento. Dopo l'attesa passa una sola richiesta di prova.
+        if (!_availability.TryEnter(out var isProbe))
+        {
+            throw AnimeClickUnavailableException.Suspended(_availability.RetryAt);
+        }
+
+        // Il tentativo di prova concesso qui sopra va chiuso a ogni uscita: lasciato aperto,
+        // nessuna richiesta passerebbe più fino al riavvio di Jellyfin.
+        var availabilityRecorded = false;
+        try
+        {
+            return await SendAsync(url, requestUri, configuration, isProbe, () => availabilityRecorded = true, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            if (isProbe && !availabilityRecorded)
+            {
+                _availability.RecordInconclusive();
+            }
+        }
+    }
+
+    private async Task<string> SendAsync(
+        string url,
+        Uri requestUri,
+        PluginConfiguration configuration,
+        bool isProbe,
+        Action markAvailabilityRecorded,
+        CancellationToken cancellationToken)
+    {
         var configuredDelay = Math.Clamp(
             configuration.RequestDelayMilliseconds,
             MinimumRequestDelayMilliseconds,
@@ -284,11 +324,51 @@ public partial class AnimeClickClient
                     await WaitUntilUtcAsync(_nextRequestUtc, cancellationToken).ConfigureAwait(false);
                 }
 
+                // Le richieste partite insieme in una scansione aspettano qui il loro turno: se
+                // nel frattempo una di loro ha trovato la verifica, le altre non la ripetono.
+                if (!isProbe && _availability.IsSuspended)
+                {
+                    throw AnimeClickUnavailableException.Suspended(_availability.RetryAt);
+                }
+
                 requestStarted = true;
                 _logger.LogDebug("AnimeClick HTTP fetch: {Url} (attempt {Attempt})", url, attempt + 1);
                 using var response = await AnimeClickHttp
                     .GetAsync(httpClient, requestUri.AbsoluteUri, configuration, imagesOnly: false, cancellationToken)
                     .ConfigureAwait(false);
+
+                if (AnimeClickAvailability.MayBeChallenge(response))
+                {
+                    var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                    if (AnimeClickAvailability.IsAntiBotChallenge(response, body))
+                    {
+                        var suspendedNow = _availability.RecordBlocked(response.StatusCode);
+                        markAvailabilityRecorded();
+                        if (suspendedNow)
+                        {
+                            _logger.LogWarning(
+                                "AnimeClick risponde con la verifica anti-bot di Cloudflare (HTTP {Status}) invece delle pagine: il plugin non la supera. Richieste ad AnimeClick sospese fino alle {RetryAt:u}; nel frattempo si usano la cache e le altre fonti configurate",
+                                (int)response.StatusCode,
+                                _availability.RetryAt);
+                        }
+                        else
+                        {
+                            _logger.LogDebug(
+                                "AnimeClick verification still active for {Url}; next check at {RetryAt:u}",
+                                url,
+                                _availability.RetryAt);
+                        }
+
+                        throw AnimeClickUnavailableException.Blocked(response.StatusCode, _availability.RetryAt);
+                    }
+                }
+
+                if (!IsTransient(response.StatusCode))
+                {
+                    // Una risposta vera del sito, anche un 404: AnimeClick è raggiungibile.
+                    _availability.RecordReachable();
+                    markAvailabilityRecorded();
+                }
 
                 if (IsTransient(response.StatusCode))
                 {
@@ -325,6 +405,10 @@ public partial class AnimeClickClient
 
                 response.EnsureSuccessStatusCode();
                 return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (AnimeClickUnavailableException)
+            {
+                throw;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

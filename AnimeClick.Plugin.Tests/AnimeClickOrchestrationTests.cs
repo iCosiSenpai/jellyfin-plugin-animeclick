@@ -1174,7 +1174,7 @@ public class AnimeClickOrchestrationTests
     }
 
     [Fact]
-    public async Task IdentifyAndRefreshWithUnlockClearsItemAndDescendantLocksAndQueuesRefresh()
+    public async Task IdentifyAndRefreshWithUnlockClearsOnlyTheItemLockAndQueuesRefresh()
     {
         using var temporary = new TemporaryAnimeClickCache();
         var ledger = CreateLedger(temporary);
@@ -1195,9 +1195,11 @@ public class AnimeClickOrchestrationTests
             LockedFields = [MetadataField.Name]
         };
         lockedEpisode.SetProviderId("AnimeClick", "111/old:s1:e1");
+        var freeEpisode = new Episode { Id = Guid.NewGuid(), Name = "Episodio 2", SeriesId = series.Id };
+        freeEpisode.SetProviderId("AnimeClick", "111/old:s1:e2");
         series.SetProviderId("AnimeClick", "111/old");
 
-        var allItems = new List<BaseItem> { series, lockedEpisode };
+        var allItems = new List<BaseItem> { series, lockedEpisode, freeEpisode };
         var libraryManager = TestDoubles.Proxy<ILibraryManager>((method, args) =>
         {
             if (method.Name == nameof(ILibraryManager.GetItemById) && args is [Guid id, ..])
@@ -1207,7 +1209,7 @@ public class AnimeClickOrchestrationTests
 
             if (method.Name == nameof(ILibraryManager.GetItemList))
             {
-                return new List<BaseItem> { lockedEpisode };
+                return new List<BaseItem> { lockedEpisode, freeEpisode };
             }
 
             if (method.Name == nameof(ILibraryManager.UpdateItemAsync))
@@ -1269,7 +1271,8 @@ public class AnimeClickOrchestrationTests
         Assert.IsType<ConflictObjectResult>(conflictResult.Result);
         Assert.True(series.IsLocked);
 
-        // With Unlock = true, IdentifyAndRefresh unlocks series + child episode, clears stale child ID, and queues refresh
+        // With Unlock = true, IdentifyAndRefresh unlocks the series only (a child locked by hand keeps
+        // its correction), clears the stale child ID, and queues the refresh
         var okResult = await controller.IdentifyAndRefresh(
             new IdentifyAndRefreshRequest
             {
@@ -1281,11 +1284,14 @@ public class AnimeClickOrchestrationTests
         var ok = Assert.IsType<OkObjectResult>(okResult.Result);
         var response = Assert.IsType<IdentifyAndRefreshResponse>(ok.Value);
         Assert.True(response.Success);
-        Assert.Equal(2, response.UnlockedCount);
+        Assert.Equal(1, response.UnlockedCount);
         Assert.False(series.IsLocked);
         Assert.Empty(series.LockedFields);
-        Assert.False(lockedEpisode.IsLocked);
-        Assert.Null(lockedEpisode.GetProviderId("AnimeClick"));
+        Assert.True(lockedEpisode.IsLocked);
+        Assert.Equal([MetadataField.Name], lockedEpisode.LockedFields);
+        // The locked episode is not touched at all; the free one loses the ID of the old card.
+        Assert.Equal("111/old:s1:e1", lockedEpisode.GetProviderId("AnimeClick"));
+        Assert.Null(freeEpisode.GetProviderId("AnimeClick"));
         Assert.Single(queued, series.Id);
     }
 

@@ -93,22 +93,11 @@ public class AnimeClickAnimeImageProvider : IRemoteImageProvider, IHasOrder
             return results;
         }
 
-        var cacheKey = $"anime::{url}";
-
         AnimeClickAnime? anime;
         try
         {
-            var cached = await _cache.GetAsync<AnimeClickAnime>(cacheKey, configuration.CacheHours, cancellationToken);
-            if (cached is not null)
-            {
-                anime = cached;
-            }
-            else
-            {
-                var html = await _client.GetStringAsync(url, configuration, cancellationToken);
-                anime = _parser.ParseAnimePage(url, html);
-                await _cache.SetAsync(cacheKey, anime, cancellationToken);
-            }
+            anime = await AnimeClickAnimeCards.GetAsync(_client, _cache, _parser, url, configuration, cancellationToken)
+                .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

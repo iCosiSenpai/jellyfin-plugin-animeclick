@@ -92,6 +92,11 @@ public class AnimeClickTvdbClient
             return cached;
         }
 
+        if (LoginRejectedUntil.TryGetValue(apiKeyHash, out var rejectedUntil) && rejectedUntil > DateTimeOffset.UtcNow)
+        {
+            return null;
+        }
+
         var gate = _loginGates.Get("login::" + apiKeyHash);
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -125,7 +130,14 @@ public class AnimeClickTvdbClient
             if (!response.IsSuccessStatusCode)
             {
                 // An unusable API key is a configuration problem the user must see: at Debug
-                // it looked exactly like "AnimeClick has no synopsis for this episode".
+                // it looked exactly like "AnimeClick has no synopsis for this episode". Said once
+                // per pause, though: a rejected key was posted again, and logged again, for every
+                // item of the library.
+                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                {
+                    LoginRejectedUntil[apiKeyHash] = DateTimeOffset.UtcNow + RejectedLoginPause;
+                }
+
                 _logger.LogWarning(
                     "TvdbClient: login returned {Status}; check the TVDB API key in the plugin settings",
                     response.StatusCode);
@@ -255,17 +267,6 @@ public class AnimeClickTvdbClient
             gate.Release();
         }
     }
-
-    /// <summary>
-    /// Compatibility wrapper for the direct Italian source.
-    /// </summary>
-    public Task<string?> GetEpisodeItalianOverviewAsync(
-        int tvdbId,
-        int season,
-        int episode,
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken)
-        => GetEpisodeOverviewAsync(tvdbId, season, episode, "ita", configuration, cancellationToken);
 
     /// <summary>
     /// Fetches an episode overview in an explicit TVDB language. The language is
@@ -405,6 +406,7 @@ public class AnimeClickTvdbClient
                 await _cache.SetAsync(key + "::empty", "empty", token).ConfigureAwait(false);
                 return null;
             }
+            if (response.StatusCode == HttpStatusCode.Unauthorized) { InvalidateToken(configuration); return null; }
             if (!response.IsSuccessStatusCode) return null;
             var title = ParseTextTranslation(await response.Content.ReadAsStringAsync(token).ConfigureAwait(false), lang, field);
             if (!string.IsNullOrWhiteSpace(title)) await _cache.SetAsync(key, title, token).ConfigureAwait(false);
@@ -467,6 +469,7 @@ public class AnimeClickTvdbClient
                     await _cache.SetAsync(key + "::empty", "empty", token).ConfigureAwait(false);
                     return null;
                 }
+                if (response.StatusCode == HttpStatusCode.Unauthorized) { InvalidateToken(configuration); return null; }
                 if (!response.IsSuccessStatusCode) return null;
                 json = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
                 using var document = JsonDocument.Parse(json);
@@ -495,6 +498,7 @@ public class AnimeClickTvdbClient
             await Throttle.WaitAsync(token).ConfigureAwait(false);
             using var response = await client.GetAsync($"{BaseUrl}/{kind}/{id}/extended", token).ConfigureAwait(false);
             if (RequestThrottle.IsRateLimited(response.StatusCode)) { Throttle.NoticeRateLimit(response); return []; }
+            if (response.StatusCode == HttpStatusCode.Unauthorized) { InvalidateToken(configuration); return []; }
             if (!response.IsSuccessStatusCode) return [];
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token).ConfigureAwait(false));
             var data = document.RootElement.GetProperty("data");
@@ -595,6 +599,9 @@ public class AnimeClickTvdbClient
                 result.ErrorMessage = "Login succeeded but no token was returned in the response.";
                 return result;
             }
+
+            // The key works now: a pause left by an earlier refusal must not outlive the check.
+            LoginRejectedUntil.TryRemove(ApiKeyHash(apiKey), out _);
 
             // 2) Search a known series to confirm the token works end-to-end
             var searchUrl = BuildSearchUrl(TestQuery);
@@ -811,6 +818,14 @@ public class AnimeClickTvdbClient
     /// TVDB has expired or revoked kept being replayed for the rest of its 24h cache window
     /// and every synopsis failed with nothing above Debug in the log to explain why.
     /// </summary>
+    /// <summary>
+    /// A key TVDB refused is not tried again for this long. Keyed by the key's hash, so a corrected
+    /// key is tried at once.
+    /// </summary>
+    private static readonly TimeSpan RejectedLoginPause = TimeSpan.FromMinutes(15);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> LoginRejectedUntil = new(StringComparer.Ordinal);
+
     private void InvalidateToken(PluginConfiguration configuration)
     {
         if (string.IsNullOrWhiteSpace(configuration.TvdbApiKey))
@@ -1077,7 +1092,7 @@ public class AnimeClickTvdbClient
     {
         // TheTVDB search results expose either "first_air_time" (ISO date) or "year" (string/number).
         if (item.TryGetProperty("first_air_time", out var fat) && fat.ValueKind == JsonValueKind.String
-            && DateTime.TryParse(fat.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var d))
+            && DateTime.TryParse(fat.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var d))
         {
             return d.Year;
         }

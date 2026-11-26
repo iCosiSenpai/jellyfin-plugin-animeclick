@@ -15,6 +15,9 @@ public sealed class AnimeClickTitleRepairSession
     internal Action<string>? ReportPhase { get; set; }
     internal string? LastSource { get; set; }
     internal bool LastUsedAi { get; set; }
+
+    /// <summary>Episodi per cui AnimeClick non ha risposto (verifica anti-bot): l'attività lo dice.</summary>
+    internal int AnimeClickUnavailable { get; set; }
 }
 
 public interface IAnimeClickTitleResolver
@@ -26,10 +29,22 @@ public interface IAnimeClickTitleResolver
 public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager, IAnimeClickTitleResolver resolver)
 {
     public async Task<bool> RepairAsync(Episode episode, AnimeClickTitleRepairSession refreshedCatalogs, CancellationToken cancellationToken)
+        => (await RepairCoreAsync(episode, refreshedCatalogs, unlockName: false, cancellationToken).ConfigureAwait(false)).Applied;
+
+    /// <summary>
+    /// With <paramref name="unlockName"/> a locked name is repaired too, and its lock is removed in
+    /// the same save that writes the title: an episode no source has a title for keeps its lock.
+    /// </summary>
+    private async Task<(bool Applied, bool Unlocked)> RepairCoreAsync(
+        Episode episode,
+        AnimeClickTitleRepairSession refreshedCatalogs,
+        bool unlockName,
+        CancellationToken cancellationToken)
     {
-        if (AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode) || !AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode)
+        if ((!unlockName && AnimeClickRefreshMissingTitlesTask.IsNameLocked(episode))
+            || !AnimeClickRefreshMissingTitlesTask.NeedsTitle(episode)
             || !ProviderEnabled(episode))
-            return false;
+            return (false, false);
         var expected = episode.Name;
         var seriesId = episode.Series?.GetProviderId("AnimeClick");
         var seasonId = episode.Season?.GetProviderId("AnimeClick");
@@ -46,15 +61,15 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
         title = AnimeClickMetadataText.Title(title);
         if (title is null || AnimeClickMetadataLanguageDetector.IsEnglishEpisodeTitle(title)
             || string.Equals(title, expected, StringComparison.Ordinal))
-            return false;
+            return (false, false);
         var configuration = Plugin.Instance?.Configuration;
         if (configuration is not null &&
             (refreshedCatalogs.LastSource == "TheTVDB" && (!configuration.EnableTvdbSynopsis || string.IsNullOrWhiteSpace(configuration.TvdbApiKey))
-            || refreshedCatalogs.LastSource == "TMDB" && string.IsNullOrWhiteSpace(configuration.TmdbApiKey))) return false;
+            || refreshedCatalogs.LastSource == "TMDB" && string.IsNullOrWhiteSpace(configuration.TmdbApiKey))) return (false, false);
 
         // Re-read after network work: an administrator's correction or new identity wins.
         if (libraryManager.GetItemById(episode.Id) is not Episode current
-            || AnimeClickRefreshMissingTitlesTask.IsNameLocked(current)
+            || (!unlockName && AnimeClickRefreshMissingTitlesTask.IsNameLocked(current))
             || !AnimeClickRefreshMissingTitlesTask.NeedsTitle(current)
             || !string.Equals(current.Name, expected, StringComparison.Ordinal)
             || !string.Equals(current.Series?.GetProviderId("AnimeClick"), seriesId, StringComparison.Ordinal)
@@ -68,8 +83,11 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
             || refreshedCatalogs.LastUsedAi && Plugin.Instance?.Configuration.EnableAiTranslation == false
             || !ProviderEnabled(current)
             || Plugin.Instance?.Configuration.EnableEpisodeTitles == false)
-            return false;
+            return (false, false);
 
+        var wasLocked = current.IsLocked;
+        var lockedFields = current.LockedFields;
+        var unlocked = unlockName && AnimeClickLocks.Release(current, MetadataField.Name);
         current.Name = title;
         try
         {
@@ -78,17 +96,24 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
         catch
         {
             if (string.Equals(current.Name, title, StringComparison.Ordinal)) current.Name = expected;
+            if (unlocked)
+            {
+                current.IsLocked = wasLocked;
+                current.LockedFields = lockedFields;
+            }
+
             throw;
         }
-        return true;
+        return (true, unlocked);
     }
 
     /// <summary>
     /// Repairs the titles of one series inside the request the page is waiting on.
     /// <para>
-    /// With <paramref name="unlock"/>, an episode loses its lock only when it needs a title and at
-    /// the moment the repair tries it: a lock protects a manual edit, and the series, its seasons,
-    /// the episodes whose title is already fine and those this call does not reach keep theirs.
+    /// With <paramref name="unlock"/>, an episode loses its lock only when a source has its title, in
+    /// the same save that writes it: a lock protects a manual edit, and the series, its seasons, the
+    /// episodes whose title is already fine, those no source has a title for and those this call
+    /// does not reach keep theirs.
     /// </para>
     /// <para>
     /// A long series whose titles need other sources or a translation can take minutes, so the work
@@ -149,16 +174,17 @@ public sealed class AnimeClickTitleRepairService(ILibraryManager libraryManager,
                 break;
             }
 
-            if (await AnimeClickLocks.TryUnlockAsync(libraryManager, episode, MetadataField.Name, cancellationToken).ConfigureAwait(false))
-            {
-                unlocked++;
-            }
-
             try
             {
-                if (await RepairAsync(episode, session, hardStop.Token).ConfigureAwait(false))
+                var outcome = await RepairCoreAsync(episode, session, unlock, hardStop.Token).ConfigureAwait(false);
+                if (outcome.Applied)
                 {
                     applied++;
+                }
+
+                if (outcome.Unlocked)
+                {
+                    unlocked++;
                 }
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)

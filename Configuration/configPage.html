@@ -2,8 +2,7 @@
 <html lang="it">
 <head><meta charset="utf-8"><title>AnimeClick</title></head>
 <body>
-<div id="AnimeClickConfigPage" data-role="page" class="page type-interior pluginConfigurationPage ac-page"
-     data-require="emby-input,emby-button,emby-select,emby-checkbox">
+<div id="AnimeClickConfigPage" data-role="page" class="page type-interior pluginConfigurationPage ac-page">
     <div data-role="content"><div class="content-primary">
         <div id="acRoot" class="ac-app" lang="it">
             <div class="ac-loadstate" role="status">Caricamento di AnimeClick…</div>
@@ -11,7 +10,7 @@
     </div></div>
     <script>
     (function () {
-        var V = '1.7.0.0';
+        var V = '1.8.0.0';
         var SCRIPTS = ['AnimeClickCoreJs', 'AnimeClickSettingsJs', 'AnimeClickLibraryJs', 'AnimeClickHomeJs', 'AnimeClickSetupJs', 'AnimeClickAppJs'];
         var pg = document.getElementById('AnimeClickConfigPage');
         function asset(name) { return 'configurationpage?name=' + name + '&v=' + V; }

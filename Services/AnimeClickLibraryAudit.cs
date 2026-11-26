@@ -127,13 +127,12 @@ public static class AnimeClickLibraryAudit
     }
 
     /// <summary>
-    /// Historical overload retained for callers that are classifying an already-known missing
-    /// title. New library paths should also supply the current title and its placeholder state.
+    /// Classifies an episode whose title is known to need repair. Shorthand used by the tests.
     /// </summary>
     public static AnimeClickAuditReason ClassifyEpisode(
         string? episodeAnimeClickId,
         AnimeClickEpisodeCatalog? catalog)
-        => ClassifyEpisode(episodeAnimeClickId, currentTitle: null, titleNeedsRepair: true, catalog);
+        => ClassifyEpisode(episodeAnimeClickId, titleNeedsRepair: true, catalog);
 
     /// <summary>
     /// Compares a placeholder with its cached AnimeClick row. A meaningful current
@@ -141,21 +140,20 @@ public static class AnimeClickLibraryAudit
     /// </summary>
     public static AnimeClickAuditReason ClassifyEpisode(
         string? episodeAnimeClickId,
-        string? currentTitle,
         bool titleNeedsRepair,
         AnimeClickEpisodeCatalog? catalog)
     {
-        // Library repairs preserve meaningful titles, including administrator corrections.
+        // Library repairs preserve meaningful titles, including administrator corrections: past this
+        // line the title is a placeholder or English, and the verdict depends only on the catalog.
         if (!titleNeedsRepair) return AnimeClickAuditReason.Ok;
-        var catalogVerdict = ClassifyCatalog(catalog);
-        if (catalogVerdict is not null)
+        if (ClassifyCatalog(catalog) is { } catalogVerdict)
         {
-            return titleNeedsRepair ? catalogVerdict.Value : AnimeClickAuditReason.Ok;
+            return catalogVerdict;
         }
 
         if (string.IsNullOrWhiteSpace(episodeAnimeClickId))
         {
-            return titleNeedsRepair ? AnimeClickAuditReason.NotMatched : AnimeClickAuditReason.Ok;
+            return AnimeClickAuditReason.NotMatched;
         }
 
         var rows = catalog!.Episodes
@@ -166,20 +164,12 @@ public static class AnimeClickLibraryAudit
             .ToList();
         if (rows.Count != 1)
         {
-            return titleNeedsRepair ? AnimeClickAuditReason.RowVanished : AnimeClickAuditReason.Ok;
+            return AnimeClickAuditReason.RowVanished;
         }
 
-        var rowTitle = rows[0].Title;
-        if (AnimeClickMetadataText.Title(rowTitle) is null)
-        {
-            return titleNeedsRepair
-                ? AnimeClickAuditReason.TitleNotPublished
-                : AnimeClickAuditReason.Ok;
-        }
-
-        return titleNeedsRepair || !AnimeClickEpisodeProviderId.TitlesEquivalent(currentTitle, rowTitle)
-            ? AnimeClickAuditReason.PendingRefresh
-            : AnimeClickAuditReason.Ok;
+        return AnimeClickMetadataText.Title(rows[0].Title) is null
+            ? AnimeClickAuditReason.TitleNotPublished
+            : AnimeClickAuditReason.PendingRefresh;
     }
 
     /// <summary>

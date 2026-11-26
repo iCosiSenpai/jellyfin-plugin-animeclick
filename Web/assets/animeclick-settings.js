@@ -262,13 +262,21 @@
         });
     }
 
-    /** Used by the guided setup: same merge and conflict rules, on an explicit set of keys. */
+    var patches = Promise.resolve();
+
+    /**
+     * Used by the guided setup and the quick actions: same merge and conflict rules, on an explicit set
+     * of keys. Patches run one after the other, each on top of what the previous one saved.
+     */
     function savePatch(patch) {
-        if (!loaded) return Promise.reject(new Error('Attendi il caricamento delle impostazioni.'));
-        if (dirty) {
-            return Promise.reject(new Error('Hai modifiche non salvate nelle impostazioni: salvale o annullale prima.'));
-        }
-        return commit(Object.assign({}, saved, patch));
+        var turn = patches.then(function () {
+            if (!loaded) throw new Error('Attendi il caricamento delle impostazioni.');
+            // save() runs only on a dirty form, which stays dirty until it is written: refused here.
+            if (dirty) throw new Error('Hai modifiche non salvate nelle impostazioni: salvale o annullale prima.');
+            return commit(Object.assign({}, saved, patch));
+        });
+        patches = turn.catch(function () { /* the caller reports it; the next patch still runs */ });
+        return turn;
     }
 
     /* ===== derived summaries ===== */
@@ -299,6 +307,47 @@
 
     var verified = {};
 
+    /*
+     * Whether AnimeClick answers the plugin. Since November 2026 the site can answer every page with
+     * Cloudflare's anti-bot verification: the server then suspends its requests and says so here.
+     */
+    var animeClickStatus = null;
+    var retryTimeFormat = new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit' });
+
+    function animeClickBlocked() { return !!(animeClickStatus && val(animeClickStatus, 'blocked')); }
+
+    function loadAnimeClickStatus() {
+        return api.request('GET', 'Plugins/AnimeClick/SourceStatus').then(function (status) {
+            setAnimeClickStatus(status);
+            return status;
+        }).catch(function () { return animeClickStatus; });
+    }
+
+    function setAnimeClickStatus(status) {
+        animeClickStatus = status || null;
+        refreshDerived();
+        AC.bus.emit('source-status', animeClickStatus);
+    }
+
+    /** One sentence for the card and the result line: what happens, and when the plugin tries again. */
+    function describeAnimeClickStatus(status) {
+        if (!status) return '';
+        if (!val(status, 'blocked')) return val(status, 'message') || 'AnimeClick risponde normalmente.';
+        var retryAt = val(status, 'retryAtUtc');
+        var retry = retryAt && !isNaN(new Date(retryAt)) ? ' Prossimo tentativo automatico alle ' + retryTimeFormat.format(new Date(retryAt)) + '.' : '';
+        return (val(status, 'message') || 'AnimeClick sta rifiutando le richieste automatiche.') + retry;
+    }
+
+    function renderAnimeClickNotice() {
+        var host = el('acAnimeClickNotice');
+        if (!host) return;
+        if (!animeClickBlocked()) { clear(host); return; }
+        var since = AC.util.relTime(val(animeClickStatus, 'blockedSinceUtc'));
+        replace(host, ui.callout('AnimeClick sta bloccando le richieste' + (since ? ' (rilevato ' + since + ')' : ''),
+            describeAnimeClickStatus(animeClickStatus) + ' Il plugin non aggira la verifica: per farlo tornare a leggere le schede, AnimeClick dovrebbe consentire il suo User-Agent.',
+            'warn', 'alert'));
+    }
+
     function refreshDerived() {
         if (!page || !el('acTmdbApiKey')) return;
         var state = formSourceState();
@@ -311,6 +360,14 @@
                     : state[source] ? ui.badge('Da verificare', 'warn') : ui.badge('Non configurata');
             replace(badgeHost, node);
         });
+        var animeClickState = el('acSourceState_animeclick');
+        if (animeClickState) {
+            replace(animeClickState, animeClickBlocked() ? ui.badge('Verifica Cloudflare', 'warn', 'alert')
+                : animeClickStatus && val(animeClickStatus, 'reachable') ? ui.badge('Connessa', 'ok', 'check')
+                    : verified.animeclick === 'bad' ? ui.badge('Errore', 'bad', 'alert')
+                        : ui.badge('Da verificare', 'warn'));
+        }
+        renderAnimeClickNotice();
         var aniListState = el('acSourceState_anilist');
         if (aniListState) {
             replace(aniListState, el('acEnableAniListMetadata').checked ? ui.badge('Attiva', 'ok', 'check') : ui.badge('Spenta'));
@@ -332,7 +389,7 @@
             return [
                 index ? icon('chevronRight', 'ac-chain-arrow') : null,
                 h('span', { class: 'ac-chain-step' + (step[3] ? ' is-first' : step[2] ? ' is-on' : '') },
-                    h('span', { class: 'ac-led' + (step[2] ? ' is-ok' : '') }), step[0], h('small', { class: 'ac-muted', text: step[1] }))
+                    h('span', { class: 'ac-led' + (step[3] && animeClickBlocked() ? ' is-warn' : step[2] ? ' is-ok' : '') }), step[0], h('small', { class: 'ac-muted', text: step[1] }))
             ];
         }));
     }
@@ -386,6 +443,7 @@
     }
 
     function providerPayload(source) {
+        if (source === 'animeclick') return {};
         if (source === 'fanart') return { personalApiKey: el('acFanartPersonalApiKey').value.trim(), projectApiKey: el('acFanartProjectApiKey').value.trim() };
         if (source === 'tmdb') return { apiKey: el('acTmdbApiKey').value.trim() };
         if (source === 'tvdb') return { apiKey: el('acTvdbApiKey').value.trim() };
@@ -401,10 +459,19 @@
         return payload;
     }
 
-    var TEST_ROUTES = { tmdb: 'TestTmdb', ai: 'TestAi', tvdb: 'TestTvdb', fanart: 'TestFanart' };
-    var SOURCE_NAMES = { tmdb: 'TMDB', ai: 'Traduzione AI', tvdb: 'TheTVDB', fanart: 'Fanart' };
+    var TEST_ROUTES = { animeclick: 'SourceStatus/Check', tmdb: 'TestTmdb', ai: 'TestAi', tvdb: 'TestTvdb', fanart: 'TestFanart' };
+    var SOURCE_NAMES = { animeclick: 'AnimeClick', tmdb: 'TMDB', ai: 'Traduzione AI', tvdb: 'TheTVDB', fanart: 'Fanart' };
+
+    /** The AnimeClick check answers with the availability state, not with a success flag. */
+    function testSucceeded(source, result) {
+        return source === 'animeclick' ? !!val(result, 'reachable') : !!val(result, 'success');
+    }
 
     function describeTest(source, result, success) {
+        if (source === 'animeclick') {
+            if (success) return 'AnimeClick risponde.';
+            return val(result, 'blocked') ? 'AnimeClick risponde ancora con la verifica di Cloudflare.' : truncate(val(result, 'message') || 'AnimeClick non ha risposto.', 300);
+        }
         var code = val(result, 'statusCode');
         if (!success) return truncate(val(result, 'errorMessage') || ('Verifica non riuscita' + (code ? ' (HTTP ' + code + ')' : '') + '.'), 300);
         if (source === 'fanart') return 'Fanart risponde: ' + (val(result, 'imageCount') || 0) + ' immagini per il titolo di prova.';
@@ -419,11 +486,14 @@
         ui.setBusy(buttonNode, true, 'Verifica…');
         ui.status(out, 'Connessione in corso…');
         return api.request('POST', 'Plugins/AnimeClick/' + TEST_ROUTES[source], providerPayload(source)).then(function (result) {
-            var success = !!val(result, 'success');
+            var success = testSucceeded(source, result);
+            if (source === 'animeclick') setAnimeClickStatus(result);
             var message = describeTest(source, result, success);
-            verified[source] = success ? 'ok' : 'bad';
-            ui.status(out, message, success ? 'ok' : 'bad');
-            if (!quiet) ui.toast(SOURCE_NAMES[source] + ': ' + message, success ? 'success' : 'error');
+            // A blocked AnimeClick is a state of the site, told in warn by the card: not an error of the check.
+            var blocked = source === 'animeclick' && !!val(result, 'blocked');
+            verified[source] = success ? 'ok' : blocked ? null : 'bad';
+            ui.status(out, message, success ? 'ok' : blocked ? undefined : 'bad');
+            if (!quiet) ui.toast(SOURCE_NAMES[source] + ': ' + message, success ? 'success' : blocked ? 'info' : 'error');
             return success;
         }).catch(function (error) {
             verified[source] = 'bad';
@@ -476,7 +546,7 @@
             ui.switchRow('acEnableProductionLocations', 'Nazionalità', 'Come luogo di produzione.', { key: 'EnableProductionLocations' })
         ]));
 
-        var images = ui.card({ icon: 'image', title: 'Immagini', text: 'Ordine: Fanart, TMDB alla risoluzione originale, poi la locandina AnimeClick. Le immagini già salvate non vengono toccate.' });
+        var images = ui.card({ icon: 'image', title: 'Immagini', text: 'Ordine: Fanart, TMDB alla risoluzione originale, copertina e banner di AniList, poi la locandina AnimeClick. Le immagini già salvate non vengono toccate.' });
         images.body.appendChild(ui.switches([
             ui.switchRow('acEnableIntegratedImages', 'Immagini TMDB ad alta risoluzione', 'Locandine, sfondi, loghi, stagioni, fotogrammi e ritratti. Serve la chiave TMDB.', { key: 'EnableIntegratedImages' }),
             ui.switchRow('acEnableFanartImages', 'Preferisci le immagini Fanart', 'Serve una chiave Fanart nella sezione Fonti.', { key: 'EnableFanartImages' }),
@@ -515,8 +585,8 @@
         var verifyAll = ui.button('Verifica tutte', { id: 'acBtnVerifyAll', icon: 'check', variant: 'ghost' });
         verifyAll.addEventListener('click', function () {
             var state = formSourceState();
-            var pending = ['tmdb', 'fanart', 'tvdb', 'ai'].filter(function (source) { return state[source]; });
-            if (!pending.length) { ui.toast('Nessuna fonte configurata da verificare.', 'error'); return; }
+            // AnimeClick needs no key: it is always one of the sources to check.
+            var pending = ['animeclick'].concat(['tmdb', 'fanart', 'tvdb', 'ai'].filter(function (source) { return state[source]; }));
             ui.setBusy(verifyAll, true, 'Verifica…');
             pending.reduce(function (chain, source) {
                 return chain.then(function () { return runTest(source, el('acTest_' + source), true); });
@@ -532,6 +602,10 @@
         var chainCard = ui.card({ icon: 'layers', title: 'L’ordine delle fonti per i testi', text: 'Per ogni campo vince la prima fonte che ha un testo valido.' });
         chainCard.body.appendChild(h('div', { id: 'acSourceChain', class: 'ac-chain' }));
         view.appendChild(chainCard.card);
+
+        var animeclick = sourceCard({ id: 'animeclick', name: 'AnimeClick', icon: 'cat', role: 'La fonte principale, senza chiavi: titoli, trame, episodi, cast e relazioni in italiano.' });
+        animeclick.body.appendChild(h('div', { id: 'acAnimeClickNotice' }));
+        animeclick.body.appendChild(h('div', { class: 'ac-row' }, testButton('animeclick', 'Verifica AnimeClick'), ui.liveStatus('acTestResult_animeclick')));
 
         var tmdb = sourceCard({ id: 'tmdb', name: 'TMDB', logo: 'AnimeClickLogoTmdb', role: 'Identificazione delle opere, dati mancanti e immagini alla risoluzione originale.' });
         tmdb.body.appendChild(ui.field('acTmdbApiKey', 'Chiave API TMDB', {
@@ -596,7 +670,7 @@
             previewOut
         ]));
 
-        view.appendChild(h('div', { class: 'ac-sources' }, tmdb.card, fanart.card, tvdb.card, anilist.card, ai.card));
+        view.appendChild(h('div', { class: 'ac-sources' }, animeclick.card, tmdb.card, fanart.card, tvdb.card, anilist.card, ai.card));
 
         el('acAiProvider').addEventListener('change', function () {
             // A model name from one vendor means nothing to another, and the endpoint follows the service.
@@ -625,9 +699,10 @@
             }).finally(function () { ui.setBusy(modelsButton, false); });
         });
 
+        el('acPreviewSource').addEventListener('input', function () { ui.fieldError(this, ''); });
         previewButton.addEventListener('click', function () {
-            var source = el('acPreviewSource').value.trim();
-            if (!source) { ui.toast('Incolla una breve sinossi in inglese.', 'error'); return; }
+            var source = requireValue(el('acPreviewSource'), 'Incolla una breve sinossi in inglese.');
+            if (!source) return;
             var payload = providerPayload('ai');
             payload.sourceText = source;
             ui.setBusy(previewButton, true, 'Traduzione…');
@@ -651,12 +726,16 @@
         return fieldNode.querySelector('input, textarea, select');
     }
 
-    /** The trimmed value of a field that must not be empty; when it is, says so next to it and returns ''. */
-    function requireValue(input, message) {
+    /**
+     * The trimmed value of a field that must not be empty (or shorter than `minimum` characters); when
+     * it is, says so next to it, moves the focus there and returns ''.
+     */
+    function requireValue(input, message, minimum) {
         var value = input.value.trim();
-        ui.fieldError(input, value ? '' : message);
-        if (!value) input.focus();
-        return value;
+        var ok = value.length >= (minimum || 1);
+        ui.fieldError(input, ok ? '' : message);
+        if (!ok) input.focus();
+        return ok ? value : '';
     }
 
     function onEnter(input, action) {
@@ -672,10 +751,10 @@
         if (host) replace(host, ui.badge('Sbloccata', 'ok', 'unlock'));
     }
 
-    /** Removes the Jellyfin locks of a title and of its seasons and episodes. */
+    /** Removes the Jellyfin locks of the title itself: its seasons and episodes keep theirs. */
     function unlockItem(itemId, buttonNode) {
         ui.setBusy(buttonNode, true, 'Sblocco…');
-        return api.request('POST', 'Plugins/AnimeClick/UnlockItem', { itemId: itemId, includeChildren: true }).then(function () {
+        return api.request('POST', 'Plugins/AnimeClick/UnlockItem', { itemId: itemId }).then(function () {
             markUnlocked();
             ui.toast('Scheda sbloccata in Jellyfin', 'success');
             AC.bus.emit('library-changed');
@@ -745,6 +824,7 @@
         identify.item = item;
         var initialId = val(item, 'seasonId') || val(item, 'id') || '';
         el('acItemId').value = initialId;
+        ui.fieldError(el('acItemSearch'), '');
         var year = val(item, 'productionYear') || val(item, 'year');
         var returnKey = val(item, 'returnToKey');
         replace(el('acSelectedItem'),
@@ -763,6 +843,7 @@
         clearMatch();
         var seasonNumber = val(item, 'seasonNumber');
         el('acAnimeClickSearch').value = (val(item, 'name') || '') + (seasonNumber != null && seasonNumber > 1 ? ' ' + seasonNumber : '');
+        ui.fieldError(el('acAnimeClickSearch'), '');
         checkItemStatus(initialId);
         if (val(item, 'type') !== 'Movie') loadSeasons(item);
     }
@@ -815,8 +896,8 @@
     }
 
     function searchLibrary(buttonNode) {
-        var query = el('acItemSearch').value.trim();
-        if (query.length < 2) { ui.toast('Scrivi almeno due lettere del titolo.', 'error'); return; }
+        var query = requireValue(el('acItemSearch'), 'Scrivi almeno due lettere del titolo.', 2);
+        if (!query) return;
         var host = el('acItemCandidates');
         ui.setBusy(buttonNode, true, 'Ricerca…');
         clear(host);
@@ -843,8 +924,8 @@
     }
 
     function searchAnimeClick(buttonNode) {
-        var query = el('acAnimeClickSearch').value.trim();
-        if (query.length < 2) { ui.toast('Scrivi almeno due lettere del titolo da cercare su AnimeClick.', 'error'); return; }
+        var query = requireValue(el('acAnimeClickSearch'), 'Scrivi almeno due lettere del titolo da cercare su AnimeClick.', 2);
+        if (!query) return;
         var host = el('acAnimeClickCandidates');
         ui.setBusy(buttonNode, true, 'Ricerca…');
         clear(host);
@@ -870,7 +951,8 @@
                 return pick;
             })));
         }).catch(function (error) {
-            host.appendChild(h('p', { class: 'ac-status is-bad', text: truncate(error.message, 240) }));
+            if (error.blocked) loadAnimeClickStatus();
+            host.appendChild(h('p', { class: 'ac-status is-bad', text: truncate(error.message, 300) }));
         }).finally(function () { ui.setBusy(buttonNode, false); });
     }
 
@@ -891,7 +973,8 @@
             + '&itemId=' + encodeURIComponent(el('acItemId').value.trim()), undefined, undefined, mine.signal).then(function (preview) {
             if (previewRequest === mine) renderCardPreview(preview);
         }).catch(function (error) {
-            if (previewRequest === mine) replace(host, ui.callout('Non riesco a mostrare questa scheda', truncate(error.message, 240), 'warn'));
+            if (error.blocked) loadAnimeClickStatus();
+            if (previewRequest === mine) replace(host, ui.callout(error.blocked ? 'AnimeClick sta bloccando le richieste' : 'Non riesco a mostrare questa scheda', truncate(error.message, 300), 'warn'));
         }).finally(function () {
             if (previewRequest !== mine) return;
             previewRequest = null;
@@ -999,7 +1082,8 @@
     function runIdentify(unlock, triggerButton) {
         var itemId = el('acItemId').value.trim();
         if (!itemId) {
-            ui.toast('Scegli prima il titolo da correggere.', 'error');
+            // The choice lives in a hidden field: the problem is shown under the search that makes it.
+            ui.fieldError(el('acItemSearch'), 'Scegli prima il titolo da correggere.');
             el('acItemSearch').focus();
             return;
         }
@@ -1015,6 +1099,7 @@
             renderIdentified(response, itemId, animeClickId);
         }).catch(function (error) {
             var message = truncate(error.message, 300);
+            if (error.blocked) loadAnimeClickStatus();
             replace(out, ui.callout('Identificazione non riuscita', message, 'bad'));
             if (error.status === 409 && /bloccata/i.test(message)) renderLockedChoice(itemId);
             ui.toast('Identificazione non riuscita', 'error');
@@ -1061,6 +1146,9 @@
             // A preview describes the card that was in the field: once the field changes it is stale.
             discardPreview();
             ui.fieldError(fieldControl(idField), '');
+        });
+        [itemSearch, lookupSearch].forEach(function (fieldNode) {
+            fieldControl(fieldNode).addEventListener('input', function () { ui.fieldError(this, ''); });
         });
         return fix.card;
     }
@@ -1573,22 +1661,23 @@
         buildSources: buildSources,
         buildTools: buildTools,
         buildCommunity: buildCommunity,
-        describeMapping: describeMapping,
         buildSaveBar: buildSaveBar,
         wire: wire,
-        load: function (config) { loaded = true; loadForm(config); loadAiProviders(); },
-        unload: function () { loaded = false; saved = null; dirty = false; verified = {}; cacheStats.at = 0; },
-        save: save,
+        load: function (config) { loaded = true; loadForm(config); loadAiProviders(); loadAnimeClickStatus(); },
+        unload: function () { loaded = false; saved = null; dirty = false; verified = {}; animeClickStatus = null; cacheStats.at = 0; },
         savePatch: savePatch,
         saved: function () { return saved; },
         isDirty: function () { return dirty; },
         sourceState: sourceState,
+        animeClickStatus: function () { return animeClickStatus; },
+        animeClickBlocked: animeClickBlocked,
         pointAt: pointAt,
         startIdentify: startIdentify,
         startProbe: startProbe,
         runTest: function (source, payload) {
             return api.request('POST', 'Plugins/AnimeClick/' + TEST_ROUTES[source], payload).then(function (result) {
-                return { success: !!val(result, 'success'), message: describeTest(source, result, !!val(result, 'success')) };
+                if (source === 'animeclick') setAnimeClickStatus(result);
+                return { success: testSucceeded(source, result), message: describeTest(source, result, testSucceeded(source, result)) };
             });
         }
     };

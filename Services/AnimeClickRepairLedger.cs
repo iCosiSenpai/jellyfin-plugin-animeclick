@@ -340,6 +340,7 @@ public sealed class AnimeClickRepairLedger : IDisposable
         await _flushGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            Volatile.Write(ref _flushPending, 0);
             var now = DateTimeOffset.UtcNow;
             var snapshot = _entries
                 .Where(pair => !IsExpired(pair.Value, now))
@@ -370,7 +371,7 @@ public sealed class AnimeClickRepairLedger : IDisposable
 
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        if (Interlocked.Exchange(ref _disposing, 1) != 0)
         {
             return;
         }
@@ -378,7 +379,27 @@ public sealed class AnimeClickRepairLedger : IDisposable
         // Only the timer is released: a flush started a moment ago may still be running, and
         // disposing its gate underneath it would throw on a background thread during shutdown.
         _flushTimer.Dispose();
+
+        // What was recorded in the last few seconds was waiting for the timer just stopped: write
+        // it now, for a bounded time, or a restart forgets the attempts made right before it.
+        if (Volatile.Read(ref _flushPending) != 0)
+        {
+            try
+            {
+                FlushAsync(CancellationToken.None).Wait(ShutdownFlushTimeout);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "AnimeClick repair ledger: final write at shutdown failed");
+            }
+        }
+
+        Volatile.Write(ref _disposed, 1);
     }
+
+    private static readonly TimeSpan ShutdownFlushTimeout = TimeSpan.FromSeconds(3);
+    private int _disposing;
+    private int _flushPending;
 
     private static bool IsExpired(AnimeClickRepairAttempt attempt, DateTimeOffset now)
         => Age(attempt, now) > Retention;
@@ -416,6 +437,7 @@ public sealed class AnimeClickRepairLedger : IDisposable
 
     private void ScheduleFlush()
     {
+        Volatile.Write(ref _flushPending, 1);
         try
         {
             _flushTimer.Change(FlushDelay, Timeout.InfiniteTimeSpan);

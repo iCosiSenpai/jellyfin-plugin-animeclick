@@ -46,6 +46,7 @@ public class AnimeClickMajorReleaseTests
     [InlineData("Mushoku Tensei", "Mushoku Tensei III")]
     [InlineData("The Ancient Story of a Lonely Traveller", "The Ancient Story of a Lonely Traveller 2")]
     [InlineData("The Ancient Story of a Lonely Traveller 2", "The Ancient Story of a Lonely Traveller")]
+    [InlineData("Kingdom 3rd Season", "Kingdom 2")]
     public void AutomaticIdentificationDoesNotConfuseRelatedNames(string query, string result)
         => Assert.Null(AnimeClickAutomaticIdentification.Select([Candidate(result, "1/x")], query, null));
 
@@ -54,6 +55,13 @@ public class AnimeClickMajorReleaseTests
     [InlineData("Caffè", "Caffe")]
     [InlineData("Mushoku Tensei Season 3", "Mushoku Tensei III")]
     [InlineData("Paprika.2006.4K.HDR.DV.2160p.BDRip", "Paprika")]
+    // Il numero della parte coincide: resta da confrontare il titolo senza.
+    [InlineData("Kingdom Season 2", "Kingdom 2")]
+    [InlineData("Kingdom 3rd Season", "Kingdom 3")]
+    [InlineData("Mushoku Tensei Season 4", "Mushoku Tensei IV")]
+    // La stessa vocale lunga scritta in tre modi: ō, ou, o.
+    [InlineData("Seishun Buta Yarou wa Yumemiru Shoujo no Yume wo Minai", "Seishun Buta Yarō wa Yumemiru Shōjo no Yume wo Minai")]
+    [InlineData("Shoujo Shuumatsu Ryokou", "Shōjo Shūmatsu Ryokō")]
     public void AutomaticIdentificationAcceptsSupportedTitleForms(string query, string result)
         => Assert.NotNull(AnimeClickAutomaticIdentification.Select([Candidate(result, "1/x")], query, null));
 

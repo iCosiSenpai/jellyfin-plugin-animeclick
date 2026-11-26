@@ -4,7 +4,7 @@
 
     var AC = window.AnimeClickUI;
     var h = AC.dom.h, icon = AC.dom.icon, clear = AC.dom.clear, replace = AC.dom.replace;
-    var val = AC.util.val, list = AC.util.list, num = AC.util.num, pct = AC.util.pct;
+    var val = AC.util.val, list = AC.util.list, num = AC.util.num;
     var truncate = AC.util.truncate, plural = AC.util.plural, normalize = AC.util.normalize;
     var ui = AC.ui, api = AC.api;
 
@@ -161,7 +161,7 @@
     function jobPanel(name, prefix) {
         var cancel = ui.button('Interrompi', { id: prefix + 'Cancel_' + name, small: true, variant: 'ghost', icon: 'stop', ariaLabel: 'Interrompi ' + JOB_NAMES[name].toLowerCase() });
         cancel.hidden = true;
-        cancel.addEventListener('click', function () { cancelJob(name, cancel); });
+        cancel.addEventListener('click', function () { cancelJob(name, prefix, cancel); });
         var bar = ui.progress(0);
         bar.id = prefix + 'Progress_' + name;
         bar.setAttribute('aria-label', 'Avanzamento ' + JOB_NAMES[name].toLowerCase());
@@ -205,11 +205,13 @@
         cancel.disabled = state === 'Cancelling';
     }
 
-    function cancelJob(name, buttonNode) {
+    /** Once the request is accepted the button follows the activity: it stays off while it stops. */
+    function cancelJob(name, prefix, buttonNode) {
         buttonNode.disabled = true;
         api.request('POST', 'Plugins/AnimeClick/CancelActivity', { key: name }).then(poll).catch(function (error) {
             ui.toast('Interruzione non riuscita: ' + error.message, 'error');
-        }).finally(function () { buttonNode.disabled = false; });
+            updateJobPanel(name, prefix);
+        });
     }
 
     /* ===== repair actions ===== */
@@ -817,7 +819,13 @@
                 h('div', { class: 'ac-row' }, cardBadge(e),
                     url ? h('a', { class: 'ac-btn ac-btn--sm ac-btn--ghost', href: url, target: '_blank', rel: 'noopener noreferrer' }, icon('external'), 'AnimeClick') : null,
                     refresh,
-                    h('a', { class: 'ac-btn ac-btn--sm ac-btn--ghost', href: api.itemUrl(e.id) }, icon('tv'), 'Apri in Jellyfin'))));
+                    h('a', { class: 'ac-btn ac-btn--sm ac-btn--ghost', id: 'acDrawerOpenItem', href: api.itemUrl(e.id), on: { click: leaveDetail } }, icon('tv'), 'Apri in Jellyfin'))));
+    }
+
+    /** Following the link leaves the plugin page: the drawer does not stay open over Jellyfin. */
+    function leaveDetail(event) {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        if (detail && detail.isOpen()) detail.close();
     }
 
     /* ----- titles ----- */

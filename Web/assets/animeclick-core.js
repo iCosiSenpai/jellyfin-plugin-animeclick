@@ -3,7 +3,7 @@
     'use strict';
 
     var AC = window.AnimeClickUI = window.AnimeClickUI || {};
-    AC.version = '1.7.0.0';
+    AC.version = '1.8.0.0';
     AC.pluginId = '1bd83d2a-f1a1-4ee5-a09b-22f4ed1f0a11';
 
     /* ===== DOM ===== */
@@ -219,7 +219,6 @@
     var listeners = Object.create(null);
     AC.bus = {
         on: function (name, handler) { (listeners[name] = listeners[name] || []).push(handler); },
-        off: function (name, handler) { listeners[name] = (listeners[name] || []).filter(function (h) { return h !== handler; }); },
         emit: function (name, payload) { (listeners[name] || []).slice().forEach(function (handler) { handler(payload); }); },
         clear: function () { listeners = Object.create(null); }
     };
@@ -271,6 +270,8 @@
                     if (!message && typeof payload === 'string') message = payload;
                     var error = new Error(message || ('Il server ha risposto con l’errore ' + response.status + '.'));
                     error.status = response.status;
+                    // AnimeClick behind its anti-bot verification: the plugin's own 503, told apart from any other.
+                    error.blocked = !!(payload && typeof payload === 'object' && val(payload, 'blocked'));
                     throw error;
                 });
             }
@@ -303,7 +304,6 @@
 
     AC.api = {
         request: request,
-        url: apiUrl,
         image: imageUrl,
         itemUrl: itemUrl,
         getConfig: function () { return wrap(function () { return ApiClient.getPluginConfiguration(AC.pluginId); }); },
@@ -350,6 +350,13 @@
     }
 
     var openModal = null;
+    // How to dismiss each dialog and drawer still on screen: they live on document.body, so they
+    // would outlive a navigation away from the plugin page.
+    var overlays = [];
+
+    function closeOverlays() {
+        overlays.slice().reverse().forEach(function (dismiss) { dismiss(); });
+    }
 
     /** Resolves true on confirm. Focus is trapped inside and returns to the trigger afterwards. */
     function confirmDialog(options) {
@@ -381,12 +388,15 @@
             function finish(value) {
                 if (settled) return;
                 settled = true;
+                overlays = overlays.filter(function (dismiss) { return dismiss !== cancelDialog; });
                 veil.remove();
                 if (app && !document.querySelector('.ac-drawer-veil')) app.inert = false;
                 openModal = null;
                 if (trigger && typeof trigger.focus === 'function' && document.body.contains(trigger)) trigger.focus();
                 resolve(value);
             }
+
+            function cancelDialog() { finish(false); }
 
             veil.addEventListener('keydown', function (event) {
                 if (event.key === 'Escape') { event.preventDefault(); finish(false); return; }
@@ -399,6 +409,7 @@
             confirm.addEventListener('click', function () { finish(true); });
             document.body.appendChild(veil);
             if (app && !document.querySelector('.ac-drawer-veil')) app.inert = true;
+            overlays.push(cancelDialog);
             openModal = cancel;
             cancel.focus();
         });
@@ -420,6 +431,7 @@
         function dismiss() {
             if (closed) return;
             closed = true;
+            overlays = overlays.filter(function (other) { return other !== dismiss; });
             veil.remove();
             document.removeEventListener('keydown', onKey, true);
             if (app) app.inert = false;
@@ -449,6 +461,7 @@
         document.addEventListener('keydown', onKey, true);
         document.body.appendChild(veil);
         if (app) app.inert = true;
+        overlays.push(dismiss);
         panel.focus();
         return { head: head, body: body, close: dismiss, panel: panel, isOpen: function () { return !closed; } };
     }
@@ -734,7 +747,7 @@
         relTime: relTime, normalize: normalize, bytes: bytes, chunk: chunk
     };
     AC.ui = {
-        toast: toast, confirm: confirmDialog, drawer: drawer, setBusy: setBusy, run: run, status: status, liveStatus: liveStatus,
+        toast: toast, confirm: confirmDialog, drawer: drawer, closeOverlays: closeOverlays, setBusy: setBusy, run: run, status: status, liveStatus: liveStatus,
         button: button, badge: badge, callout: callout, sectionHead: sectionHead, card: card, hint: hint,
         switchRow: switchRow, switches: switches, field: field, fieldError: fieldError, select: select, check: check, details: details,
         progress: progress, setProgress: setProgress, ring: ring, meterRow: meterRow, poster: poster,

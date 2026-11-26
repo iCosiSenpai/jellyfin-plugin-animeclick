@@ -185,9 +185,6 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Numero massimo di risultati per ricerca.</summary>
     public int MaxSearchResults { get; set; } = 10;
 
-    /// <summary>Filtra solo anime (esclude manga, novel, drama).</summary>
-    public bool FilterToAnimeOnly { get; set; } = true;
-
     // ── Cache & Performance ──
     /// <summary>URL di base di AnimeClick.</summary>
     public string BaseUrl { get; set; } = "https://www.animeclick.it";
@@ -204,7 +201,7 @@ public class PluginConfiguration : BasePluginConfiguration
     // ── Avanzate ──
     /// <summary>User-Agent per le richieste HTTP. Il valore di default viene sovrascritto a runtime
     /// con la versione dell'assembly per mantenere coerenza (vedi AnimeClickClient / Plugin).</summary>
-    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.7.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
+    public string UserAgent { get; set; } = "AnimeClick-Jellyfin-Plugin/1.8.0.0 (+https://github.com/iCosiSenpai/jellyfin-plugin-animeclick)";
 
     /// <summary>
     /// Schema of the persisted settings. One-time upgrades are gated on this rather than on whether

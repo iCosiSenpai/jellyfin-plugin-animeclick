@@ -33,36 +33,6 @@ public class AnimeClickItalianOverviewTests
         Assert.Contains("language=it-IT", url, System.StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void LeggeLaTramaDallaRispostaTmdb()
-    {
-        const string json = """
-        {"id":938567,"title":"Teasing Master Takagi-san: The Movie",
-         "overview":"L'ultima estate di Takagi e Nishikata alle scuole medie sta per cominciare."}
-        """;
-
-        Assert.Equal(
-            "L'ultima estate di Takagi e Nishikata alle scuole medie sta per cominciare.",
-            AnimeClickTmdbClient.ParseOverview(json));
-    }
-
-    [Fact]
-    public void TramaAssenteONonTradotta_NonRestituisceNulla()
-    {
-        // TMDb risponde 200 con overview vuota quando la traduzione italiana non esiste:
-        // e' un caso normale, non un errore, e non deve produrre una sinossi vuota.
-        Assert.Null(AnimeClickTmdbClient.ParseOverview("""{"id":1,"overview":""}"""));
-        Assert.Null(AnimeClickTmdbClient.ParseOverview("""{"id":1}"""));
-        Assert.Null(AnimeClickTmdbClient.ParseOverview("""{"id":1,"overview":"   "}"""));
-    }
-
-    [Fact]
-    public void RispostaMalformata_NonFaEsplodereNulla()
-    {
-        Assert.Null(AnimeClickTmdbClient.ParseOverview("non e' json"));
-        Assert.Null(AnimeClickTmdbClient.ParseOverview(""));
-    }
-
     [Theory]
     // Serve a decidere se la sinossi che si ha in mano e' gia' italiana o va tradotta.
     // I testi sono lunghi come le sinossi vere: il rilevatore e' fatto per restare incerto

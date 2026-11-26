@@ -28,6 +28,9 @@ public sealed class AnimeClickDiagnosticReport
     public AnimeClickCacheStatistics Cache { get; set; } = new();
     public int RepairLedgerEntries { get; set; }
 
+    /// <summary>Se AnimeClick risponde alle richieste automatiche: solo stato e orari.</summary>
+    public AnimeClickAvailabilitySnapshot? AnimeClick { get; set; }
+
     internal const string Set = "impostata";
     internal const string NotSet = "non impostata";
 
@@ -46,7 +49,8 @@ public sealed class AnimeClickDiagnosticReport
         (int Series, int Movies) identified,
         IEnumerable<AnimeClickActivity> activities,
         AnimeClickCacheStatistics cache,
-        int repairLedgerEntries)
+        int repairLedgerEntries,
+        AnimeClickAvailabilitySnapshot? animeClick = null)
         => new()
         {
             GeneratedAt = DateTimeOffset.UtcNow,
@@ -77,7 +81,8 @@ public sealed class AnimeClickDiagnosticReport
                 Errors = activity.Errors
             })],
             Cache = cache,
-            RepairLedgerEntries = repairLedgerEntries
+            RepairLedgerEntries = repairLedgerEntries,
+            AnimeClick = animeClick
         };
 
     /// <summary>

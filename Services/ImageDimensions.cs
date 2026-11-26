@@ -22,7 +22,8 @@ public static class ImageDimensions
 
         try
         {
-            using var reader = new BinaryReader(stream);
+            // The stream belongs to the caller: reading its header must not close it.
+            using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
 
             // Read enough bytes to recognise the signature.
             var sig = reader.ReadBytes(8);
@@ -41,16 +42,17 @@ public static class ImageDimensions
                 return width > 0 && height > 0;
             }
 
-            // JPEG: starts with FF D8. We already consumed 8 bytes, so rewind to byte 2
-            // and scan markers from there. Works even on non-seekable if we use a MemoryStream prefix.
+            // JPEG: starts with FF D8, and its markers start right after, at byte 2. The signature
+            // read has gone past them, so the stream must be rewound: on a stream that cannot seek
+            // the scan would start at byte 8, inside the first marker, and read garbage.
             if (sig[0] == 0xFF && sig[1] == 0xD8)
             {
-                if (stream.CanSeek)
+                if (!stream.CanSeek)
                 {
-                    stream.Position = 2;
+                    return false;
                 }
-                // If not seekable we are already at the right offset after reading sig (sig covered 0-7, position ~8).
-                // For safety on prefix MemoryStream we reset to known good point.
+
+                stream.Position = 2;
                 return TryReadJpeg(reader, out width, out height);
             }
 

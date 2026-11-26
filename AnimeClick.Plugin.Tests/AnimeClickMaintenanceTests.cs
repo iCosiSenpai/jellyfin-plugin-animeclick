@@ -415,6 +415,17 @@ public class AnimeClickMaintenanceTests
         Assert.Equal("Il titolo che ho scritto io", correctedByHand.Name);
         Assert.Equal([MetadataField.Name], correctedByHand.LockedFields);
 
+        // An episode no source has a title for keeps its lock, even with the unlock.
+        var withoutTitle = CreateEpisode(1, "Episodio 1", MetadataField.Name);
+        var noTitleLibrary = TestDoubles.Proxy<ILibraryManager>((method, args) =>
+            method.Name == nameof(ILibraryManager.GetItemById) && args is [Guid wanted, ..] && wanted == withoutTitle.Id
+                ? withoutTitle
+                : method.Name == nameof(ILibraryManager.UpdateItemAsync) ? Task.CompletedTask : TestDoubles.DefaultReturn(method));
+        var untitled = await new AnimeClickTitleRepairService(noTitleLibrary, new NumberedTitleResolver(onlyFrom: 99))
+            .RepairSeriesAsync([withoutTitle], unlock: true, TimeSpan.FromMinutes(1), CancellationToken.None);
+        Assert.Equal(new AnimeClickSeriesTitleRepair(Checked: 1, Applied: 0, Unlocked: 0, Remaining: 0), untitled);
+        Assert.Equal([MetadataField.Name], withoutTitle.LockedFields);
+
         // An exhausted budget still makes progress, one episode per call, and says what is left.
         // The episodes it did not reach keep their lock.
         var many = Enumerable.Range(10, 4).Select(number => CreateEpisode(number, "Episodio " + number, MetadataField.Name)).ToList();
@@ -555,5 +566,50 @@ public class AnimeClickMaintenanceTests
                 Content = new StringContent(html, Encoding.UTF8, "text/html")
             });
         }
+    }
+}
+
+public class AnimeClickLockAndOutcomeTests
+{
+    [Fact]
+    public void UnCampoSbloccatoLasciaBloccatiGliAltri()
+    {
+        var series = new MediaBrowser.Controller.Entities.TV.Series { IsLocked = true };
+
+        Assert.True(AnimeClickLocks.Release(series, MediaBrowser.Model.Entities.MetadataField.Name));
+
+        Assert.False(series.IsLocked);
+        Assert.DoesNotContain(MediaBrowser.Model.Entities.MetadataField.Name, series.LockedFields);
+        Assert.Contains(MediaBrowser.Model.Entities.MetadataField.Overview, series.LockedFields);
+        Assert.Contains(MediaBrowser.Model.Entities.MetadataField.Genres, series.LockedFields);
+    }
+
+    [Fact]
+    public void SbloccareTuttoTogliTuttiIBlocchi()
+    {
+        var series = new MediaBrowser.Controller.Entities.TV.Series
+        {
+            IsLocked = true,
+            LockedFields = [MediaBrowser.Model.Entities.MetadataField.Overview]
+        };
+
+        Assert.True(AnimeClickLocks.Release(series, field: null));
+        Assert.False(series.IsLocked);
+        Assert.Empty(series.LockedFields);
+        Assert.False(AnimeClickLocks.Release(series, field: null));
+    }
+
+    [Fact]
+    public void SenzaAnimeClickNonESenzaFonte()
+    {
+        var noSource = AnimeClickOverviewResolution.None(AnimeClickRepairOutcome.NoSource, "no-external-source");
+
+        var unreachable = AnimeClickOverviewResolver.NotNoSourceWhileUnreachable(noSource, animeClickUnreachable: true);
+        Assert.Equal(AnimeClickRepairOutcome.Error, unreachable.Outcome);
+        Assert.Null(AnimeClickRepairLedger.SuppressionWindow(unreachable.Outcome.ToString()));
+
+        Assert.Same(noSource, AnimeClickOverviewResolver.NotNoSourceWhileUnreachable(noSource, animeClickUnreachable: false));
+        Assert.Equal(AnimeClickRepairOutcome.Error,
+            AnimeClickOverviewResolver.MapFallbackOutcome(AnimeClickOverviewResolver.AnimeClickUnreachableOutcome));
     }
 }

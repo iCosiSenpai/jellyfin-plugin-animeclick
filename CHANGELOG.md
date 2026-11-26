@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.0.0
+
+AnimeClick blocca le richieste automatiche con una verifica anti-bot di Cloudflare (HTTP 403): il plugin la riconosce, sospende le richieste e riprova da solo, usa le schede, gli elenchi episodi e le ricerche già letti anche se scaduti, non segna più le trame come «senza fonte» durante il blocco e mostra lo stato di AnimeClick in Inizio e Fonti con una verifica manuale. Ricerca più precisa per sequel («Season 2», «3rd Season», «IV»), vocali lunghe giapponesi e titoli come «22/7»; niente più data di uscita fittizia al 1° gennaio. Meno richieste ad AnimeClick e meno letture della libreria; cache che si ripulisce da sola. Lo sblocco tocca solo l'elemento scelto: stagioni ed episodi bloccati a mano restano protetti. Correzioni per lo sblocco dei titoli, il cast parziale, TheTVDB, AniList, le traduzioni AI troncate e il dataset della comunità; rimossi endpoint, impostazioni, JavaScript e CSS inutilizzati.
+
+- [Note complete](docs/releases/1.8.0.0.md)
+- [Audit e verifiche](docs/AUDIT-1.8.md)
+
 ## 1.7.0.0
 
 Anteprima della scheda AnimeClick prima di salvare un abbinamento, con l'avviso se è già usata nella libreria; stato della cache e rapporto diagnostico senza dati personali in Strumenti; sblocco mirato, che toglie il lucchetto solo agli elementi da riparare e lascia protette le correzioni fatte a mano; riparazione dei titoli di una serie lunga a tranche, senza più attese oltre il tempo massimo; trame di una serie accodate a gruppi. Audit completo di backend e frontend: errori di validazione accanto al campo, vetrina che si può fermare, messaggi chiudibili, bersagli più grandi sul touch, focus visibile in alto contrasto, sezione e filtri ricordati al ricaricamento.

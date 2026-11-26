@@ -12,10 +12,7 @@
     --ac-red-soft: rgba(236, 31, 39, 0.16);
     --ac-red-line: rgba(255, 75, 85, 0.45);
     --ac-sakura: #ff8fb8;
-    --ac-violet: #8b6cff;
     --ac-gold: #ffc35a;
-    --ac-mint: #3fe0ae;
-    --ac-sky: #6db8ff;
 
     --ac-bg: #0c0a12;
     --ac-bg-2: #110e19;
@@ -37,7 +34,6 @@
     --ac-info: #6db8ff;
     --ac-info-bg: rgba(109, 184, 255, 0.12);
 
-    --ac-radius-s: 10px;
     --ac-radius: 16px;
     --ac-radius-l: 24px;
     --ac-shadow: 0 18px 50px -24px rgba(0, 0, 0, 0.85);
@@ -857,10 +853,6 @@
     transform: translateX(20px);
 }
 
-.ac-switch:disabled {
-    opacity: 0.5;
-}
-
 /* ---------------------------------------------------------------- callouts & states */
 
 .ac-callout {
@@ -908,7 +900,8 @@
 
 /* Connection notices sit between cards: an empty one must not leave a gap in the grid. */
 #acActivityConnection:empty,
-#acHomeJobError:empty {
+#acHomeJobError:empty,
+#acAnimeClickNotice:empty {
     display: none;
 }
 .ac-status.is-bad { color: #ff8d98; }
@@ -1535,7 +1528,6 @@
 
 .ac-legend i.is-ok { background: var(--ac-ok); }
 .ac-legend i.is-warn { background: var(--ac-warn); }
-.ac-legend i.is-bad { background: var(--ac-bad); }
 .ac-legend i.is-info { background: var(--ac-info); }
 
 .ac-list {
@@ -1640,6 +1632,7 @@
 }
 
 .ac-source-pill small.is-ok { color: var(--ac-ok); }
+.ac-source-pill small.is-warn { color: var(--ac-warn); }
 
 .ac-led {
     width: 10px;
@@ -1650,6 +1643,7 @@
 }
 
 .ac-led.is-ok { background: var(--ac-ok); box-shadow: 0 0 10px rgba(63, 224, 174, 0.7); }
+.ac-led.is-warn { background: var(--ac-warn); box-shadow: 0 0 10px rgba(255, 195, 90, 0.7); }
 
 /* ---------------------------------------------------------------- activities */
 
@@ -1749,7 +1743,6 @@ button.ac-number:hover {
 
 .ac-number.is-warn b { color: var(--ac-warn); }
 .ac-number.is-ok b { color: var(--ac-ok); }
-.ac-number.is-bad b { color: #ff8d98; }
 .ac-number.is-info b { color: var(--ac-info); }
 
 .ac-toolbar {

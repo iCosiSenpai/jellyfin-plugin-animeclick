@@ -155,13 +155,9 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
             {
                 try
                 {
-                    var key = "anime::" + url;
-                    var anime = await _cache.GetAsync<AnimeClickAnime>(key, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
-                    if (anime is null)
-                    {
-                        anime = _parser.ParseAnimePage(url, await _client.GetStringAsync(url, configuration, cancellationToken).ConfigureAwait(false));
-                        await _cache.SetAsync(key, anime, cancellationToken).ConfigureAwait(false);
-                    }
+                    var anime = await AnimeClickAnimeCards
+                        .GetAsync(_client, _cache, _parser, url, configuration, cancellationToken)
+                        .ConfigureAwait(false);
                     if (configuration.PreferItalianTitle) result.Item.Name = AnimeClickMetadataText.Title(anime.Title)!;
                     if (configuration.EnablePlot) result.Item.Overview = AnimeClickMetadataText.ItalianOverview(anime.Overview);
                     if (configuration.EnableIntegratedMetadata || configuration.OverwriteNonItalianFields)
@@ -172,7 +168,7 @@ public class AnimeClickSeasonProvider : IRemoteMetadataProvider<Season, SeasonIn
                     }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-                catch { _logger.LogWarning("AnimeClick season card unavailable; trying configured internal sources"); }
+                catch (Exception ex) { _logger.LogWarning("AnimeClick season card unavailable ({Reason}); trying configured internal sources", ex.Message); }
             }
             _logger.LogInformation(
                 "AnimeClick: Season {Season} provider ID set → {Id}",

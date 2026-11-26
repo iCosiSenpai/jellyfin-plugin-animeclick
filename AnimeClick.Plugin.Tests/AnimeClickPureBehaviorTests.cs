@@ -57,6 +57,16 @@ public class AnimeClickPureBehaviorTests
         Assert.False(AnimeClickAiTranslator.IsResponseTruncated(
             AnimeClickAiDialect.OpenAi,
             "{\"stop_reason\":\"max_tokens\"}"));
+        // Anche gli altri formati dicono quando hanno tagliato la risposta.
+        Assert.True(AnimeClickAiTranslator.IsResponseTruncated(
+            AnimeClickAiDialect.OpenAi,
+            "{\"choices\":[{\"message\":{\"content\":\"testo\"},\"finish_reason\":\"length\"}]}"));
+        Assert.False(AnimeClickAiTranslator.IsResponseTruncated(
+            AnimeClickAiDialect.OpenAi,
+            "{\"choices\":[{\"message\":{\"content\":\"testo\"},\"finish_reason\":\"stop\"}]}"));
+        Assert.True(AnimeClickAiTranslator.IsResponseTruncated(
+            AnimeClickAiDialect.Ollama,
+            "{\"message\":{\"content\":\"testo\"},\"done\":true,\"done_reason\":\"length\"}"));
     }
 
     [Fact]
@@ -98,7 +108,6 @@ public class AnimeClickPureBehaviorTests
             AnimeClickAuditReason.RowVanished,
             AnimeClickLibraryAudit.ClassifyEpisode(
                 "900/foreign",
-                currentTitle: null,
                 titleNeedsRepair: true,
                 catalog));
     }
@@ -210,14 +219,12 @@ public class AnimeClickPureBehaviorTests
             AnimeClickAuditReason.PendingRefresh,
             AnimeClickLibraryAudit.ClassifyEpisode(
                 "426549/vecchio-slug",
-                "Episode 5",
                 titleNeedsRepair: true,
                 catalog));
         Assert.Equal(
             AnimeClickAuditReason.Ok,
             AnimeClickLibraryAudit.ClassifyEpisode(
                 "426549",
-                "PERCHE, SIAMO QUI",
                 titleNeedsRepair: false,
                 catalog));
     }

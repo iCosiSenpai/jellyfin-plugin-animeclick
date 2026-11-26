@@ -19,6 +19,7 @@
     var heroTimer = null;
     var heroHeld = false;      // the pointer or the focus is on the showcase
     var heroStopped = false;   // the administrator pressed pause: stays so until play
+    var enablingTitles = false; // «Attiva ora» in Da fare is saving: a redrawn list keeps it busy
 
     function el(id) {
         return page ? page.querySelector('#' + id) : null;
@@ -285,8 +286,9 @@
                     ]) : null))));
     }
 
-    function todoItem(iconName, tone, title, text, action) {
-        return h('li', { class: 'ac-list-item' },
+    /** `key` names the row whatever its numbers say, so focus can find it again after a redraw. */
+    function todoItem(key, iconName, tone, title, text, action) {
+        return h('li', { class: 'ac-list-item', data: { todo: key } },
             h('span', { class: 'ac-list-icon is-' + tone }, icon(iconName)),
             h('div', null, h('strong', { text: title }), text ? h('span', { class: 'ac-hint', text: text }) : null),
             action || null);
@@ -303,32 +305,37 @@
             var active = libs.filter(function (lib) { return val(lib, 'state') === 'active'; });
             var partial = libs.filter(function (lib) { return val(lib, 'state') === 'partial'; });
             if (!libs.length) {
-                items.push(todoItem('folder', 'bad', 'Nessuna libreria video', 'Crea in Jellyfin una libreria di serie o film per i tuoi anime.'));
+                items.push(todoItem('libraries', 'folder', 'bad', 'Nessuna libreria video', 'Crea in Jellyfin una libreria di serie o film per i tuoi anime.'));
             } else if (!active.length && !partial.length) {
-                items.push(todoItem('folder', 'bad', 'AnimeClick non è attivo in nessuna libreria', 'Attivalo nelle librerie anime qui sotto.',
+                items.push(todoItem('libraries', 'folder', 'bad', 'AnimeClick non è attivo in nessuna libreria', 'Attivalo nelle librerie anime qui sotto.',
                     ui.button('Vedi le librerie', { small: true, onClick: showLibraries })));
             } else if (partial.length) {
-                items.push(todoItem('folder', 'warn', 'Attivazione da completare', plural(partial.length, 'libreria usa', 'librerie usano') + ' AnimeClick, ma non come primo provider.',
+                items.push(todoItem('libraries', 'folder', 'warn', 'Attivazione da completare', plural(partial.length, 'libreria usa', 'librerie usano') + ' AnimeClick, ma non come primo provider.',
                     ui.button('Vedi le librerie', { small: true, onClick: showLibraries })));
             }
         }
         if (!config.TmdbApiKey) {
-            items.push(todoItem('key', 'warn', 'Aggiungi la chiave TMDB', 'Consigliata: identifica meglio le opere e porta immagini ad alta risoluzione.',
+            items.push(todoItem('tmdb', 'key', 'warn', 'Aggiungi la chiave TMDB', 'Consigliata: identifica meglio le opere e porta immagini ad alta risoluzione.',
                 ui.button('Apri Fonti', { small: true, onClick: function () { AC.app.go('sources'); } })));
         }
+        var enableTitlesHomeBtn = null;
         if (config.EnableEpisodeTitles === false) {
-            var enableTitlesHomeBtn = ui.button('Attiva ora', { small: true, variant: 'primary', icon: 'check' });
+            enableTitlesHomeBtn = ui.button('Attiva ora', { id: 'acHomeEnableTitles', small: true, variant: 'primary', icon: 'check' });
             enableTitlesHomeBtn.addEventListener('click', function () {
+                if (enablingTitles) return;
+                enablingTitles = true;
                 ui.setBusy(enableTitlesHomeBtn, true, 'Attivazione…');
                 AC.settings.savePatch({ EnableEpisodeTitles: true }).then(function () {
+                    enablingTitles = false;
                     ui.toast('Titoli degli episodi attivati', 'success');
                     return AC.library.loadReports(true);
-                }).catch(function (error) {
+                }, function (error) {
+                    enablingTitles = false;
                     ui.toast(truncate(error.message, 240), 'error');
-                    ui.setBusy(enableTitlesHomeBtn, false);
+                    ui.setBusy(el('acHomeEnableTitles'), false);
                 });
             });
-            items.push(todoItem('title', 'warn', 'I titoli degli episodi sono spenti', 'Nessun titolo episodio viene scritto finché resta così.',
+            items.push(todoItem('episodeTitles', 'title', 'warn', 'I titoli degli episodi sono spenti', 'Nessun titolo episodio viene scritto finché resta così.',
                 h('div', { class: 'ac-row' }, enableTitlesHomeBtn, ui.button('Preferenze', { small: true, variant: 'ghost', onClick: function () { AC.app.go('preferences'); } }))));
         }
         if (data.loadedAt) {
@@ -336,14 +343,14 @@
             if (toCheck && !AC.library.isActive('titles')) {
                 var startTitlesHomeBtn = ui.button('Avvia', { small: true, variant: 'primary', icon: 'sparkles' });
                 startTitlesHomeBtn.addEventListener('click', function () { AC.library.runTitles(startTitlesHomeBtn); });
-                items.push(todoItem('title', 'red', plural(toCheck, 'titolo da sistemare', 'titoli da sistemare'), 'Un clic e il server li ricontrolla tutti.',
+                items.push(todoItem('titles', 'title', 'red', plural(toCheck, 'titolo da sistemare', 'titoli da sistemare'), 'Un clic e il server li ricontrolla tutti.',
                     h('div', { class: 'ac-row' }, startTitlesHomeBtn, ui.button('Libreria', { small: true, variant: 'ghost', onClick: function () { AC.app.go('library'); AC.library.setFilter('titles'); } }))));
             }
             var repairable = val(data.quality, 'repairableCount');
             if (repairable && !AC.library.isActive('synopses')) {
                 var startSynopsesHomeBtn = ui.button('Avvia', { small: true, variant: 'primary', icon: 'sparkles' });
                 startSynopsesHomeBtn.addEventListener('click', function () { AC.library.runSynopses(startSynopsesHomeBtn); });
-                items.push(todoItem('book', 'red', plural(repairable, 'trama da completare', 'trame da completare'), 'Inglesi o vuote, con una fonte disponibile.',
+                items.push(todoItem('synopses', 'book', 'red', plural(repairable, 'trama da completare', 'trame da completare'), 'Inglesi o vuote, con una fonte disponibile.',
                     h('div', { class: 'ac-row' }, startSynopsesHomeBtn, ui.button('Libreria', { small: true, variant: 'ghost', onClick: function () { AC.app.go('library'); AC.library.setFilter('synopses'); } }))));
             }
             var unidentifiedList = AC.library.entries().filter(function (e) { return e.status === 'unidentified'; });
@@ -357,27 +364,60 @@
                         } }),
                         ui.button('Libreria', { small: true, variant: 'ghost', onClick: function () { AC.app.go('library'); AC.library.setFilter('unidentified'); } }))
                     : ui.button('Libreria', { small: true, onClick: function () { AC.app.go('library'); AC.library.setFilter('unidentified'); } });
-                items.push(todoItem('link', 'bad', plural(unidentified, 'anime da identificare', 'anime da identificare'), 'Jellyfin non ha trovato la scheda AnimeClick.', identifyAction));
+                var unidentifiedRow = todoItem('unidentified', 'link', 'bad', plural(unidentified, 'anime da identificare', 'anime da identificare'), 'Jellyfin non ha trovato la scheda AnimeClick.', identifyAction);
+                // «Identifica ora» acts on this one anime: another one in its place is a different row.
+                if (unidentified === 1) unidentifiedRow.dataset.ref = firstUnidentified.id;
+                items.push(unidentifiedRow);
             }
         }
         if (!items.length) {
-            items.push(todoItem('check', 'ok', libs && data.loadedAt ? 'Tutto in ordine' : 'Controllo in corso…',
+            items.push(todoItem('none', 'check', 'ok', libs && data.loadedAt ? 'Tutto in ordine' : 'Controllo in corso…',
                 libs && data.loadedAt ? 'Niente da fare per ora: buona visione!' : 'Sto leggendo librerie e analisi locali.'));
         }
+        // Every poll of the activities lands here: a list that says the same thing stays as it is, with
+        // its focus, its busy buttons and the trigger of an open dialog.
+        var signature = items.map(function (row) { return row.dataset.todo + '|' + (row.dataset.ref || '') + '|' + row.textContent; }).join('\n');
+        if (host._acTodo === signature && host.childElementCount) return;
+        host._acTodo = signature;
+        if (enablingTitles && enableTitlesHomeBtn) ui.setBusy(enableTitlesHomeBtn, true, 'Attivazione…');
+        var focus = todoFocus(host);
         replace(host, items);
+        if (focus) restoreTodoFocus(host, focus);
+    }
+
+    function todoFocus(host) {
+        var active = document.activeElement;
+        var row = active && active !== host && host.contains(active) ? active.closest('[data-todo]') : null;
+        return row ? { todo: row.dataset.todo, label: active.textContent } : null;
+    }
+
+    function restoreTodoFocus(host, focus) {
+        var row = host.querySelector('[data-todo="' + focus.todo + '"]');
+        var controls = row ? Array.prototype.slice.call(row.querySelectorAll('button:not(:disabled), a[href]')) : [];
+        var target = controls.find(function (node) { return node.textContent === focus.label; }) || controls[0];
+        if (!target) {
+            // The row is gone with its action done: the heading of the card keeps the place.
+            var card = host.closest('.ac-card');
+            target = card && card.querySelector('.ac-h2');
+            if (target) target.tabIndex = -1;
+        }
+        if (target) target.focus({ preventScroll: true });
     }
 
     function renderSources() {
         var host = el('acHomeSources');
         if (!host) return;
         var state = AC.settings.sourceState();
+        // `on` is a tone ('ok', 'warn') or a plain configured / not configured.
         var pill = function (name, on, text) {
+            var tone = on === true ? 'ok' : on || '';
             return h('button', { type: 'button', class: 'ac-source-pill', on: { click: function () { AC.app.go('sources'); } } },
-                h('span', { class: 'ac-led' + (on ? ' is-ok' : '') }),
-                h('div', null, h('strong', { text: name }), h('small', { class: on ? 'is-ok' : '', text: text || (on ? 'Configurata' : 'Non configurata') })));
+                h('span', { class: 'ac-led' + (tone ? ' is-' + tone : '') }),
+                h('div', null, h('strong', { text: name }), h('small', { class: tone ? 'is-' + tone : '', text: text || (on ? 'Configurata' : 'Non configurata') })));
         };
+        var animeClickBlocked = AC.settings.animeClickBlocked();
         replace(host,
-            pill('AnimeClick', true, 'Sempre attiva'),
+            pill('AnimeClick', animeClickBlocked ? 'warn' : 'ok', animeClickBlocked ? 'Bloccata da Cloudflare' : 'Attiva, senza chiavi'),
             pill('TMDB', state.tmdb),
             pill('AniList', state.aniList, state.aniList ? 'Attiva, senza chiave' : 'Spenta'),
             pill('Fanart', state.fanart),
@@ -496,12 +536,12 @@
      * it alone, and one with news raises the edition and rewrites title and lines together.
      */
     var NEWS = {
-        edition: 1,
-        title: 'AnimeClick 1.7: cosa c’è di nuovo',
+        edition: 2,
+        title: 'AnimeClick 1.8: cosa c’è di nuovo',
         lines: [
-            'Anteprima della scheda AnimeClick prima di salvare un abbinamento, con l’avviso se è già usata.',
-            'Stato della cache e rapporto diagnostico senza dati personali, in Strumenti.',
-            'Lo sblocco toglie il lucchetto solo dove serve: le correzioni fatte a mano restano protette.'
+            'AnimeClick ora può rifiutare le richieste automatiche con una verifica di Cloudflare: il plugin lo riconosce, sospende le richieste e riprova da solo. Lo stato è in Fonti.',
+            'Durante il blocco restano valide le schede già lette, anche se scadute, e le altre fonti completano ciò che manca: titoli e trame italiane non vengono sostituiti.',
+            'Ricerca più precisa per sequel («Season 2», «3rd Season», «IV») e grafie giapponesi (Shōjo, Shoujo), con meno richieste al sito.'
         ]
     };
 
@@ -592,6 +632,7 @@
         AC.bus.on('jobs', function () { renderJobs(); renderTodo(); });
         AC.bus.on('libraries', function () { renderLibraries(); renderTodo(); });
         AC.bus.on('config', function () { community.at = 0; renderSources(); renderTodo(); });
+        AC.bus.on('source-status', function () { renderSources(); });
         AC.bus.on('library-changed', function () { showcaseAt = 0; });
         AC.bus.on('community-changed', function () { community.at = 0; });
         renderHealth();

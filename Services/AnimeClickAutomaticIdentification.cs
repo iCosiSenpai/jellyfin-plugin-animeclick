@@ -10,7 +10,7 @@ internal static partial class AnimeClickAutomaticIdentification
     internal static RemoteSearchResult? Select(
         IEnumerable<RemoteSearchResult> candidates, string name, int? year)
     {
-        var query = Normalize(AnimeClickSeriesSearchProvider.CleanSearchQuery(name));
+        var query = StripPart(Normalize(AnimeClickSeriesSearchProvider.CleanSearchQuery(name)));
         if (query.Length == 0) return null;
 
         var requestedPart = PartNumber(name);
@@ -47,7 +47,11 @@ internal static partial class AnimeClickAutomaticIdentification
         if (year.HasValue && candidate.ProductionYear.HasValue
             && Math.Abs((long)year.Value - candidate.ProductionYear.Value) > 1) return 0;
 
-        var confidence = Math.Max(TitleConfidence(query, title), TitleConfidence(query, slug));
+        // The part numbers already agree (or the candidate is the first part): what is left to
+        // compare is the title without them. "Kingdom Season 2" against "Kingdom 2" was 40 out of
+        // 80, rejected, although both say the same thing; "Mushoku Tensei Season 4" against
+        // "… IV" was 53.
+        var confidence = Math.Max(TitleConfidence(query, StripPart(title)), TitleConfidence(query, StripPart(slug)));
         if (confidence < 65) return 0;
         return confidence + (year.HasValue && year == candidate.ProductionYear ? 25 : 0);
     }
@@ -65,8 +69,30 @@ internal static partial class AnimeClickAutomaticIdentification
         return (int)(80.0 * overlap / Math.Max(wanted.Count, found.Count));
     }
 
-    private static string Normalize(string value)
-        => Regex.Replace(AnimeClickSearchScorer.RemoveDiacritics(value).ToLowerInvariant(), @"[^\p{L}\p{Nd}]+", " ").Trim();
+    private static string Normalize(string value) => AnimeClickSearchScorer.NormalizeTitle(value);
+
+    /// <summary>
+    /// A normalized title without its part marker: "season 2", "2nd season", "part 2", or a
+    /// trailing 2–99 or II–X after at least one other word, as <see cref="PartNumber"/> reads them.
+    /// </summary>
+    internal static string StripPart(string normalized)
+    {
+        if (normalized.Length == 0) return normalized;
+        var stripped = OrdinalRegex().Replace(PartRegex().Replace(normalized, " "), " ");
+        var words = stripped.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (words.Count >= 2)
+        {
+            var last = words[^1];
+            if ((int.TryParse(last, out var number) && number is >= 2 and <= 99)
+                || last is "ii" or "iii" or "iv" or "v" or "vi" or "vii" or "viii" or "ix" or "x")
+            {
+                words.RemoveAt(words.Count - 1);
+            }
+        }
+
+        // Nothing but a marker ("Season 2" as a whole title) is left as it was.
+        return words.Count == 0 ? normalized : string.Join(' ', words);
+    }
 
     internal static int? PartNumber(string value)
     {

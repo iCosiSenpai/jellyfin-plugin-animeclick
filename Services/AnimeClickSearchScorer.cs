@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace AnimeClick.Plugin.Services;
 
-public static class AnimeClickSearchScorer
+public static partial class AnimeClickSearchScorer
 {
     /// <summary>
     /// Strips diacritics from a string (e.g. <c>Caffè</c> → <c>Caffe</c>,
@@ -212,6 +212,35 @@ public static class AnimeClickSearchScorer
         return score;
     }
 
-    private static string NormalizeForScore(string value)
-        => Regex.Replace(RemoveDiacritics(value).ToLowerInvariant(), @"[^\p{L}\p{Nd}]+", " ").Trim();
+    private static string NormalizeForScore(string value) => NormalizeTitle(value);
+
+    /// <summary>
+    /// The form two titles are compared in: no accents, lower case, punctuation as spaces, and
+    /// Japanese long vowels folded.
+    /// </summary>
+    /// <remarks>
+    /// The same vowel is written three ways: "Shōjo" on AnimeClick, "Shoujo" or "Shojo" in a
+    /// library. Without the accent "Shōjo" was already "shojo", but "shoujo" stayed apart, and one
+    /// token of difference was enough to push "Seishun Buta Yarou wa Yumemiru Shoujo no Yume wo
+    /// Minai" below the automatic threshold. Folding ou/oo → o and uu → u on both sides costs no
+    /// match and only collapses spellings of the same sound.
+    /// </remarks>
+    internal static string NormalizeTitle(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        var folded = NonWordRegex()
+            .Replace(RemoveDiacritics(value).ToLowerInvariant(), " ")
+            .Trim();
+        return folded
+            .Replace("ou", "o", StringComparison.Ordinal)
+            .Replace("oo", "o", StringComparison.Ordinal)
+            .Replace("uu", "u", StringComparison.Ordinal);
+    }
+
+    [GeneratedRegex(@"[^\p{L}\p{Nd}]+", RegexOptions.CultureInvariant)]
+    private static partial Regex NonWordRegex();
 }

@@ -33,20 +33,6 @@ public sealed class AnimeClickEpisodeListLoader
         _logger = logger;
     }
 
-    public Task<AnimeClickEpisodeListLoadResult> LoadAsync(
-        string episodesUrl,
-        string baseUrl,
-        int? seasonsCount,
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken)
-        => LoadAsync(
-            episodesUrl,
-            baseUrl,
-            seasonsCount,
-            declaredEpisodeCount: null,
-            configuration,
-            cancellationToken);
-
     public async Task<AnimeClickEpisodeListLoadResult> LoadAsync(
         string episodesUrl,
         string baseUrl,

@@ -38,6 +38,7 @@ public sealed class AnimeClickReportController(
             workspace.CountIdentified(),
             [activities.Get(AnimeClickActivityService.Titles), activities.Get(AnimeClickActivityService.Synopses)],
             cache.GetStatistics(),
-            repairLedger.Count));
+            repairLedger.Count,
+            AnimeClickAvailability.Shared.Snapshot()));
     }
 }

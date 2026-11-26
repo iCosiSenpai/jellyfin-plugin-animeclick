@@ -653,6 +653,36 @@ public class AnimeClickAiTranslator
     }
 
     /// <summary>
+    /// Whether the service cut the reply at its token ceiling: stop_reason=max_tokens for
+    /// Anthropic, finish_reason=length for the OpenAI shape, done_reason=length for Ollama. Such
+    /// text can look grammatical while ending mid-synopsis, so it must never enter cache: with a
+    /// server whose default ceiling is low, and a cache that never expires, a truncated synopsis
+    /// would otherwise stay for good.
+    /// </summary>
+    internal static bool IsResponseTruncated(AnimeClickAiDialect dialect, string json)
+    {
+        if (string.IsNullOrEmpty(json))
+        {
+            return false;
+        }
+
+        var (marker, truncatedReason) = dialect switch
+        {
+            AnimeClickAiDialect.Anthropic => ("\"stop_reason\":", "max_tokens"),
+            AnimeClickAiDialect.Ollama => ("\"done_reason\":", "length"),
+            _ => ("\"finish_reason\":", "length")
+        };
+        var markerAt = json.IndexOf(marker, StringComparison.Ordinal);
+        if (markerAt < 0)
+        {
+            return false;
+        }
+
+        var reason = ReadJsonString(json, markerAt + marker.Length);
+        return string.Equals(reason, truncatedReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Extracts the reply from a response, given the JSON key that holds it: "content" for the
     /// OpenAI and Ollama shapes, "text" for Anthropic's. Deliberately substring-based rather than
     /// deserialized, to avoid pulling in a System.Text.Json version that may conflict with the
@@ -665,28 +695,6 @@ public class AnimeClickAiTranslator
     /// one outcome this project refuses.
     /// </para>
     /// </summary>
-    /// <summary>
-    /// Anthropic reports a response cut at the requested ceiling with stop_reason=max_tokens.
-    /// Such text can look grammatical while ending mid-synopsis, so it must never enter cache.
-    /// </summary>
-    internal static bool IsResponseTruncated(AnimeClickAiDialect dialect, string json)
-    {
-        if (dialect != AnimeClickAiDialect.Anthropic || string.IsNullOrEmpty(json))
-        {
-            return false;
-        }
-
-        const string marker = "\"stop_reason\":";
-        var markerAt = json.IndexOf(marker, StringComparison.Ordinal);
-        if (markerAt < 0)
-        {
-            return false;
-        }
-
-        var reason = ReadJsonString(json, markerAt + marker.Length);
-        return string.Equals(reason, "max_tokens", StringComparison.OrdinalIgnoreCase);
-    }
-
     internal static string? ParseTranslatedContent(
         string json,
         string marker = "\"content\":",

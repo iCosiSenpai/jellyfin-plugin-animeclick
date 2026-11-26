@@ -85,10 +85,18 @@ public sealed class AnimeClickCircuitBreaker
     /// Se la chiamata si può fare. Passata l'attesa lascia passare <b>un solo</b> tentativo,
     /// per capire se il servizio è tornato senza riversargli addosso l'intera libreria.
     /// </summary>
-    public bool TryEnter()
+    public bool TryEnter() => TryEnter(out _);
+
+    /// <summary>Come <see cref="TryEnter()"/>, e dice se la chiamata concessa è il tentativo di prova.</summary>
+    /// <remarks>
+    /// Solo chi tiene la prova deve restituirla con <see cref="RecordIndeterminate"/>: una
+    /// chiamata normale che lo facesse libererebbe la prova di un'altra, ancora in corso.
+    /// </remarks>
+    public bool TryEnter(out bool isProbe)
     {
         lock (_gate)
         {
+            isProbe = false;
             if (_retryAt is null)
             {
                 return true;
@@ -100,7 +108,23 @@ public sealed class AnimeClickCircuitBreaker
             }
 
             _probeInFlight = true;
+            isProbe = true;
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Anticipa il prossimo tentativo di prova a adesso, per una verifica chiesta a mano.
+    /// L'attesa raddoppiata resta: se la prova fallisce si richiude come se fosse scaduta.
+    /// </summary>
+    public void ProbeNow()
+    {
+        lock (_gate)
+        {
+            if (_retryAt is not null && !_probeInFlight)
+            {
+                _retryAt = _timeProvider.GetUtcNow();
+            }
         }
     }
 

@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,37 +45,6 @@ public sealed class AnimeClickMetadataFallbackService
         _logger = logger;
     }
 
-    public Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
-        string animeClickId,
-        int season,
-        int episode,
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken)
-        => ResolveEpisodeOverviewAsync(
-            animeClickId,
-            season,
-            episode,
-            animeClickEpisodeId: null,
-            configuration,
-            cancellationToken,
-            allowSynchronousTranslation: false);
-
-    public Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
-        string animeClickId,
-        int season,
-        int episode,
-        string? animeClickEpisodeId,
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken)
-        => ResolveEpisodeOverviewAsync(
-            animeClickId,
-            season,
-            episode,
-            animeClickEpisodeId,
-            configuration,
-            cancellationToken,
-            allowSynchronousTranslation: false);
-
     /// <summary>
     /// Normal provider path with the Jellyfin item location that must be refreshed once an
     /// asynchronous translation has been published to the cache.
@@ -100,22 +70,6 @@ public sealed class AnimeClickMetadataFallbackService
             refreshPath,
             seriesIds,
             episodeIds);
-
-    public Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
-        string animeClickId,
-        int season,
-        int episode,
-        PluginConfiguration configuration,
-        CancellationToken cancellationToken,
-        bool allowSynchronousTranslation)
-        => ResolveEpisodeOverviewAsync(
-            animeClickId,
-            season,
-            episode,
-            animeClickEpisodeId: null,
-            configuration,
-            cancellationToken,
-            allowSynchronousTranslation);
 
     public async Task<AnimeClickFallbackResult?> ResolveEpisodeOverviewAsync(
         string animeClickId,
@@ -186,11 +140,21 @@ public sealed class AnimeClickMetadataFallbackService
         long englishMs = 0;
         long translationMs = 0;
 
+        // AnimeClick non ha risposto (verifica anti-bot, rete): se nessun'altra fonte ha la trama,
+        // l'esito è un errore da riprovare, non "nessuna fonte" per sette giorni.
+        var animeClickUnreachable = false;
+
         AnimeClickFallbackResolution Finish(
             AnimeClickFallbackResult? result,
             string outcome,
             AnimeClickTranslationQueueState? queueState = null)
         {
+            if (result is null && animeClickUnreachable
+                && AnimeClickOverviewResolver.MapFallbackOutcome(outcome) == AnimeClickRepairOutcome.NoSource)
+            {
+                outcome = AnimeClickOverviewResolver.AnimeClickUnreachableOutcome;
+            }
+
             total.Stop();
             _logger.LogInformation(
                 "AnimeClick episode fallback: id={Id} episodeId={EpisodeId} S{Season}E{Episode} outcome={Outcome} queue={QueueState} elapsedMs={ElapsedMs} animeClickEpisodeMs={AnimeClickEpisodeMs} animeMs={AnimeMs} tvdbMs={TvdbMs} tmdbMs={TmdbMs} englishMs={EnglishMs} translationMs={TranslationMs}",
@@ -239,6 +203,7 @@ public sealed class AnimeClickMetadataFallbackService
                 {
                     stage.Stop();
                     animeClickEpisodeMs = stage.ElapsedMilliseconds;
+                    animeClickUnreachable |= IsUnreachable(ex);
                     _logger.LogDebug(
                         ex,
                         "AnimeClick episode detail unavailable for {EpisodeId}; trying configured fallback sources",
@@ -260,11 +225,17 @@ public sealed class AnimeClickMetadataFallbackService
 
             stage.Restart();
             AnimeClickAnime? anime = null;
-            if (hasAnimeClickId)
+            // La scheda serve solo a trovare l'opera su TheTVDB/TMDB quando l'episodio non ne porta
+            // già gli ID: con gli ID noti era una richiesta per episodio letta e mai usata.
+            if (hasAnimeClickId && !hasKnownSources)
             {
                 try { anime = await GetAnimeAsync(normalizedId, configuration, cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-                catch { _logger.LogWarning("AnimeClick card unavailable; trying known external episode identities"); }
+                catch (Exception ex)
+                {
+                    animeClickUnreachable |= IsUnreachable(ex);
+                    _logger.LogWarning("AnimeClick card unavailable ({Reason}); trying known external episode identities", ex.Message);
+                }
             }
             stage.Stop();
             animeMs = stage.ElapsedMilliseconds;
@@ -321,7 +292,6 @@ public sealed class AnimeClickMetadataFallbackService
                             anime.Title,
                             anime.ProductionYear,
                             configuration,
-                            $"tmdbTvId:v3::{normalizedId}",
                             cancellationToken)
                         .ConfigureAwait(false);
                 if (tmdbId.HasValue)
@@ -348,6 +318,15 @@ public sealed class AnimeClickMetadataFallbackService
                     stage.Stop();
                     tmdbMs = stage.ElapsedMilliseconds;
                 }
+            }
+
+            // L'episodio ha una pagina su AnimeClick che oggi non si è potuta leggere: la sua trama
+            // italiana originale arriverà quando il sito torna raggiungibile. Tradurre adesso quella
+            // inglese costerebbe una traduzione e scriverebbe un testo che poi non verrebbe più
+            // sostituito, perché già italiano.
+            if (animeClickUnreachable && !string.IsNullOrWhiteSpace(animeClickEpisodeId))
+            {
+                return Finish(null, AnimeClickOverviewResolver.AnimeClickUnreachableOutcome);
             }
 
             // 3) English source. Prefer TMDB, then TVDB when enabled.
@@ -549,8 +528,25 @@ public sealed class AnimeClickMetadataFallbackService
             return null;
         }
 
-        var html = await _client.GetStringAsync(episodeUrl, configuration, cancellationToken)
-            .ConfigureAwait(false);
+        string html;
+        try
+        {
+            html = await _client.GetStringAsync(episodeUrl, configuration, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is not HttpStatusCode.NotFound)
+        {
+            // AnimeClick non risponde: la trama letta prima, anche se scaduta, è ancora quella
+            // italiana originale. Senza, la catena passerebbe all'inglese e alla traduzione.
+            var stale = await _cache.GetAsync<string>(cacheKey, cancellationToken).ConfigureAwait(false);
+            if (AnimeClickMetadataText.HasValue(stale))
+            {
+                return stale;
+            }
+
+            throw;
+        }
+
         if (!_parser.TryParseEpisodeOverviewPage(html, out var overview))
         {
             _logger.LogDebug(
@@ -571,6 +567,9 @@ public sealed class AnimeClickMetadataFallbackService
         return overview;
     }
 
+    private static bool IsUnreachable(Exception ex)
+        => ex is HttpRequestException { StatusCode: not HttpStatusCode.NotFound };
+
     private async Task<AnimeClickAnime?> GetAnimeAsync(
         string animeClickId,
         PluginConfiguration configuration,
@@ -581,20 +580,9 @@ public sealed class AnimeClickMetadataFallbackService
             return null;
         }
 
-        var cacheKey = $"anime::{animeUrl}";
-        var cached = await _cache
-            .GetAsync<AnimeClickAnime>(cacheKey, configuration.CacheHours, cancellationToken)
+        return await AnimeClickAnimeCards
+            .GetAsync(_client, _cache, _parser, animeUrl, configuration, cancellationToken)
             .ConfigureAwait(false);
-        if (cached is not null)
-        {
-            return cached;
-        }
-
-        var html = await _client.GetStringAsync(animeUrl, configuration, cancellationToken)
-            .ConfigureAwait(false);
-        var anime = _parser.ParseAnimePage(animeUrl, html);
-        await _cache.SetAsync(cacheKey, anime, cancellationToken).ConfigureAwait(false);
-        return anime;
     }
 }
 

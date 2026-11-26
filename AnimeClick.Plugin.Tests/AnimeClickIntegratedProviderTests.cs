@@ -212,8 +212,8 @@ public sealed class AnimeClickIntegratedProviderTests
             var parser = new AnimeClickHtmlParser();
             var search = new AnimeClickSeriesSearchProvider(client, _cache.Cache, parser, NullLogger<AnimeClickSeriesSearchProvider>.Instance);
             var aniList = new AnimeClickAniListResolver(factory, _cache.Cache, NullLogger<AnimeClickAniListResolver>.Instance);
-            Series = new(client, _cache.Cache, parser, search, aniList, NullLogger<AnimeClickSeriesProvider>.Instance, Tmdb, factory, textFallback: text, integrated: Integrated);
-            Movie = new(client, _cache.Cache, parser, search, aniList, NullLogger<AnimeClickMovieProvider>.Instance, factory, Tmdb, textFallback: text, integrated: Integrated);
+            Series = new(client, _cache.Cache, parser, search, aniList, NullLogger<AnimeClickSeriesProvider>.Instance, factory, textFallback: text, integrated: Integrated);
+            Movie = new(client, _cache.Cache, parser, search, aniList, NullLogger<AnimeClickMovieProvider>.Instance, factory, textFallback: text, integrated: Integrated);
             Season = new(new AnimeClickSeasonResolver(client, _cache.Cache, parser, NullLogger<AnimeClickSeasonResolver>.Instance), NullLogger<AnimeClickSeasonProvider>.Instance, factory, Integrated);
         }
         public void Dispose() { _queue.Dispose(); _handler.Dispose(); _cache.Dispose(); }

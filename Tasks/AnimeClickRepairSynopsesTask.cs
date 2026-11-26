@@ -190,8 +190,13 @@ public class AnimeClickRepairSynopsesTask : IScheduledTask
         if (_activities.Get(AnimeClickActivityService.Synopses).State == "Cancelling") throw new OperationCanceledException();
         _activities.Update(AnimeClickActivityService.Synopses, initialActionable, Math.Min(initialActionable, processed),
             applied, skipped + waiting + withoutSource, errors, "Verifica finale…");
+        // Gli elementi che non hanno potuto leggere AnimeClick sono fra gli errori, non fra quelli
+        // "senza fonte": si riprovano. Il motivo va detto, o sembrerebbe un guasto del plugin.
+        var blockedNote = AnimeClickAvailability.Shared.IsSuspended
+            ? " AnimeClick non raggiungibile (verifica anti-bot): le sinossi che dipendono dalle sue schede si riprovano quando torna disponibile."
+            : string.Empty;
         _activities.Finish(AnimeClickActivityService.Synopses, report.RepairableCount > 0 || errors > 0 ? "Partial" : "Completed",
-            $"{applied} sinossi aggiornate · {waiting} in traduzione · {withoutSource} senza fonte · {errors} errori · {report.RepairableCount} ancora da verificare.");
+            $"{applied} sinossi aggiornate · {waiting} in traduzione · {withoutSource} senza fonte · {errors} errori · {report.RepairableCount} ancora da verificare." + blockedNote);
         progress.Report(100);
     }
 

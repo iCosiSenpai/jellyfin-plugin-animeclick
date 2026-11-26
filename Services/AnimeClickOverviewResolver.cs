@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using AnimeClick.Plugin.Configuration;
@@ -108,6 +109,7 @@ public sealed class AnimeClickOverviewResolver : IAnimeClickOverviewResolver
             "disabled" => AnimeClickRepairOutcome.Disabled,
             "translation-not-configured" => AnimeClickRepairOutcome.Disabled,
             "error" => AnimeClickRepairOutcome.Error,
+            AnimeClickUnreachableOutcome => AnimeClickRepairOutcome.Error,
             _ => AnimeClickRepairOutcome.NoSource
         };
 
@@ -125,31 +127,50 @@ public sealed class AnimeClickOverviewResolver : IAnimeClickOverviewResolver
         }
 
         AnimeClickAnime? anime = null;
+        var animeClickUnreachable = false;
         if (AnimeClickClient.TryBuildAnimeUrl(configuration.BaseUrl, animeClickId, out var animeUrl))
         {
             try
             {
-                var cacheKey = $"anime::{animeUrl}";
-                anime = await _cache.GetAsync<AnimeClickAnime>(cacheKey, configuration.CacheHours, cancellationToken).ConfigureAwait(false);
-                if (anime is null)
-                {
-                    var html = await _client.GetStringAsync(animeUrl, configuration, cancellationToken).ConfigureAwait(false);
-                    anime = _parser.ParseAnimePage(animeUrl, html);
-                    await _cache.SetAsync(cacheKey, anime, cancellationToken).ConfigureAwait(false);
-                }
+                anime = await AnimeClickAnimeCards
+                    .GetAsync(_client, _cache, _parser, animeUrl, configuration, cancellationToken)
+                    .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch { _logger.LogWarning("AnimeClick card unavailable during Overview repair; trying configured sources"); }
+            catch (HttpRequestException ex) when (ex.StatusCode is not HttpStatusCode.NotFound)
+            {
+                animeClickUnreachable = true;
+                _logger.LogDebug("AnimeClick card unreachable during Overview repair ({Reason}); trying configured sources", ex.Message);
+            }
+            catch (Exception ex) { _logger.LogWarning("AnimeClick card unavailable during Overview repair ({Reason}); trying configured sources", ex.Message); }
         }
-        if (_textFallback is not null)
-            return await _textFallback.ResolveOverviewAsync(anime?.Overview, item.ProviderIds, item is Movie,
-                item.Path, configuration, cancellationToken).ConfigureAwait(false);
-        return AnimeClickMetadataText.ItalianOverview(anime?.Overview) is not { } overview
-            ? AnimeClickOverviewResolution.None(
-                AnimeClickRepairOutcome.NoSource,
-                "animeclick-card-has-no-plot")
-            : AnimeClickOverviewResolution.Found(overview, "native-animeclick");
+
+        var resolution = _textFallback is not null
+            ? await _textFallback.ResolveOverviewAsync(anime?.Overview, item.ProviderIds, item is Movie,
+                item.Path, configuration, cancellationToken).ConfigureAwait(false)
+            : AnimeClickMetadataText.ItalianOverview(anime?.Overview) is not { } overview
+                ? AnimeClickOverviewResolution.None(
+                    AnimeClickRepairOutcome.NoSource,
+                    "animeclick-card-has-no-plot")
+                : AnimeClickOverviewResolution.Found(overview, "native-animeclick");
+        return NotNoSourceWhileUnreachable(resolution, animeClickUnreachable);
     }
+
+    /// <summary>
+    /// "Nessuna fonte" tiene l'elemento fuori dalle riparazioni per sette giorni. Se AnimeClick non
+    /// ha risposto non lo si sa: è un errore, che si riprova alla prossima occasione.
+    /// </summary>
+    internal static AnimeClickOverviewResolution NotNoSourceWhileUnreachable(
+        AnimeClickOverviewResolution resolution,
+        bool animeClickUnreachable)
+        => animeClickUnreachable
+           && string.IsNullOrWhiteSpace(resolution.Overview)
+           && resolution.Outcome == AnimeClickRepairOutcome.NoSource
+            ? AnimeClickOverviewResolution.None(AnimeClickRepairOutcome.Error, AnimeClickUnreachableOutcome)
+            : resolution;
+
+    /// <summary>L'esito della catena quando AnimeClick non ha risposto e nessun'altra fonte ha la trama.</summary>
+    internal const string AnimeClickUnreachableOutcome = "animeclick-unavailable";
 
     private async Task<AnimeClickOverviewResolution> ResolveEpisodeAsync(
         Episode episode,

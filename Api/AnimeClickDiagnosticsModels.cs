@@ -16,62 +16,6 @@ public sealed class LookupDiagnosticResponse
     public string? AnimeClickId { get; set; }
 }
 
-public sealed class EpisodesDiagnosticResponse
-{
-    public string AnimeClickId { get; set; } = string.Empty;
-    public int EpisodeCount { get; set; }
-    public int? DeclaredEpisodeCount { get; set; }
-    public int DeclaredSeasonsCount { get; set; }
-    public string LayoutFingerprint { get; set; } = string.Empty;
-    public bool PaginationComplete { get; set; }
-    public List<EpisodeDiagnosticItem> Episodes { get; set; } = [];
-    public string? MatchStrategy { get; set; }
-    public double? MatchConfidence { get; set; }
-    public string? MatchReason { get; set; }
-    public EpisodeDiagnosticItem? MatchedEpisode { get; set; }
-}
-
-public sealed class EpisodeDiagnosticItem
-{
-    public int? SeasonNumber { get; set; }
-    public int? RawSeasonNumber { get; set; }
-    public bool SeasonNumberIsSynthetic { get; set; }
-    public string RawNumberLabel { get; set; } = string.Empty;
-    public int Number { get; set; }
-    public int? NumberEnd { get; set; }
-    public int AbsoluteNumber { get; set; }
-    public int GlobalOrdinal { get; set; }
-    public int SeasonOrdinalNumber { get; set; }
-    public int SpecialOrdinalNumber { get; set; }
-    public bool IsSpecial { get; set; }
-    public bool HasNonStandardNumber { get; set; }
-    public bool NumberIsAmbiguous { get; set; }
-    public string? Title { get; set; }
-    public string? ProviderId { get; set; }
-    public string? DetailUrl { get; set; }
-
-    public static EpisodeDiagnosticItem From(AnimeClickEpisode episode)
-        => new()
-        {
-            SeasonNumber = episode.SeasonNumber,
-            RawSeasonNumber = episode.RawSeasonNumber,
-            SeasonNumberIsSynthetic = episode.SeasonNumberIsSynthetic,
-            RawNumberLabel = episode.RawNumberLabel,
-            Number = episode.Number,
-            NumberEnd = episode.NumberEnd,
-            AbsoluteNumber = episode.AbsoluteNumber,
-            GlobalOrdinal = episode.GlobalOrdinal,
-            SeasonOrdinalNumber = episode.SeasonOrdinalNumber,
-            SpecialOrdinalNumber = episode.SpecialOrdinalNumber,
-            IsSpecial = episode.IsSpecial,
-            HasNonStandardNumber = episode.HasNonStandardNumber,
-            NumberIsAmbiguous = episode.NumberIsAmbiguous,
-            Title = episode.Title,
-            ProviderId = episode.ProviderId,
-            DetailUrl = episode.DetailUrl
-        };
-}
-
 public sealed class ClearCacheRequest
 {
     public string? Key { get; set; }

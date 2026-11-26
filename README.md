@@ -74,11 +74,14 @@ Se preferisci installare manualmente una versione specifica:
 
 ## Primo avvio
 
-La prima volta che apri la pagina del plugin troverai una **configurazione guidata** in tre passaggi rapidi:
+La prima volta che apri la pagina del plugin troverai una **configurazione guidata** di un paio di minuti, in sei passaggi:
 
-1. **Collega le fonti:** inserisci la chiave gratuita **TMDB** (consigliata per riconoscere subito le opere e scaricare le immagini originali) e, se vuoi, la chiave personale **Fanart.tv** o un servizio di **Traduzione AI**. Puoi verificarne il funzionamento all'istante con un clic.
-2. **Scegli le tue preferenze:** le opzioni consigliate per avere la libreria in italiano sono già selezionate. Puoi disattivare liberamente ciò che non ti interessa.
-3. **Attiva nelle librerie anime:** spunta le librerie che contengono i tuoi anime e premi **Attiva nelle librerie scelte**. AnimeClick diventerà il primo fornitore di metadati per serie, stagioni, episodi e film in quelle librerie, lasciando intatte le altre cartelle del tuo server.
+1. **Benvenuto:** cosa porta il plugin e cosa resta facoltativo.
+2. **Fonti:** inserisci la chiave gratuita **TMDB** (consigliata per riconoscere subito le opere e scaricare le immagini originali) e, se vuoi, la chiave personale **Fanart.tv**; puoi verificarle all'istante con un clic. Qui scegli anche se usare **AniList**, che non chiede chiavi. **TheTVDB** e la **Traduzione AI** si configurano dopo, nella scheda **Fonti**.
+3. **Preferenze:** le opzioni consigliate per avere la libreria in italiano sono già selezionate. Puoi disattivare liberamente ciò che non ti interessa; **Salva e continua** salva fonti e preferenze.
+4. **Librerie:** spunta le librerie che contengono i tuoi anime e premi **Attiva nelle librerie scelte**. AnimeClick diventerà il primo fornitore di metadati per serie, stagioni, episodi e film in quelle librerie, lasciando intatte le altre cartelle del tuo server.
+5. **Comunità:** scegli se ricevere gli abbinamenti approvati dalla comunità e se condividere le tue correzioni (chiedendo ogni volta, sempre o mai).
+6. **Fatto:** il riepilogo di ciò che è attivo, con i collegamenti alla vetrina e alla libreria.
 
 > [!TIP]
 > **Nessuna sorpresa dopo gli aggiornamenti:** l'installazione non modifica né avvia scansioni automatiche sulla tua libreria senza il tuo permesso. Inoltre, quando una nuova versione introduce una funzione che richiede una tua scelta, il setup guidato ti mostrerà **solo il singolo passo nuovo**, senza farti rifare la configurazione da capo.
@@ -87,7 +90,7 @@ La prima volta che apri la pagina del plugin troverai una **configurazione guida
 
 ## Il pannello di controllo
 
-Una volta completato il primo avvio, la pagina del plugin ti mette a disposizione quattro aree pensate per gestire la collezione in modo visivo e immediato:
+Una volta completato il primo avvio, la pagina del plugin si divide in sei schede — **Inizio**, **Libreria**, **Preferenze**, **Fonti**, **Strumenti** e **Comunità** — pensate per gestire la collezione in modo visivo e immediato. Ecco cosa trovi nelle principali (la Comunità ha una [sezione tutta sua](#comunità)):
 
 ### 1. Inizio (Vetrina e Cruscotto)
 Mostra in primo piano la **vetrina degli ultimi anime aggiornati** con locandina, trama e generi, affiancata dal **cruscotto della collezione**: vedi subito la percentuale della tua libreria già in italiano, lo stato delle fonti collegate, le librerie attive e le eventuali attività in corso.
@@ -116,12 +119,14 @@ Il plugin unisce il meglio di più servizi **campo per campo**, dando sempre la 
 
 | Fonte | Cosa porta nella tua libreria | Richiede una chiave? |
 |---|---|---|
-| **AnimeClick.it** | Titoli italiani, trame, generi, tag, sigle, relazioni e titoli degli episodi | **No** *(sempre attiva)* |
+| **AnimeClick.it** | Titoli italiani, trame, generi, tag, sigle, relazioni e titoli degli episodi | **No** *(sempre attiva, finché il sito non blocca le richieste: vedi sotto)* |
 | **AniList** | Cast giapponese con personaggi, studio d'animazione, date, voti, trailer, copertine, banner e collegamento automatico delle stagioni sequel | **No** *(si attiva in Fonti / Setup)* |
 | **TMDB** | Riconoscimento preciso delle opere, completamento di trame/titoli e locandine o sfondi a risoluzione originale | Sì ([Chiave gratuita TMDB](https://developer.themoviedb.org/docs/getting-started)) |
 | **Fanart.tv** | Sfondi fino al 4K, loghi trasparenti (ClearLogo), banner e artwork dedicati per le stagioni | Sì ([Chiave personale gratuita Fanart](https://fanart.tv/get-an-api-key/)) |
 | **TheTVDB** | Fonte aggiuntiva per titoli e trame degli episodi in italiano o in inglese | Sì ([Chiave API TheTVDB](https://thetvdb.com/dashboard), opzionale) |
 | **Traduzione AI** | Traduzione automatica in italiano delle trame e dei titoli disponibili solo in inglese | Credenziali del servizio scelto (o gratis in locale con Ollama) |
+
+> **Se AnimeClick risponde 403.** Da novembre 2026 AnimeClick può rispondere alle richieste automatiche con una verifica anti-bot di Cloudflare. Il plugin non la aggira: la riconosce, sospende le richieste al sito e riprova da solo (dopo 15 minuti, poi a intervalli crescenti fino a sei ore). Nel frattempo usa le schede già lette, anche se scadute, e le altre fonti configurate completano ciò che manca; **Inizio** e **Fonti** mostrano lo stato, con **Verifica AnimeClick** per controllare subito. Per far tornare il plugin a leggere le schede, AnimeClick dovrebbe consentire il suo User-Agent (`AnimeClick-Jellyfin-Plugin/…`).
 
 **Ordine di priorità automatico:**
 - **Testi (titoli, trame, generi):** `AnimeClick` → altre fonti in italiano (`TheTVDB` / `TMDB`) → traduzione AI dei testi inglesi (`TMDB` / `TheTVDB`). I nomi propri, gli ID e i numeri non vengono mai alterati.
@@ -132,11 +137,11 @@ Il plugin unisce il meglio di più servizi **campo per campo**, dando sempre la 
 
 ## Comunità
 
-Quando correggi l'abbinamento di un anime o di una stagione, il tuo intervento può aiutare tutti gli altri utenti del plugin — **senza creare account e senza esporre alcun dato del tuo server**.
+Quando correggi l'abbinamento di un anime o di una stagione, il tuo intervento può aiutare tutti gli altri utenti del plugin — **senza creare account e senza inviare titoli, file o dati del tuo server**.
 
 - **Ricevere gli abbinamenti approvati:** attivando **Usa gli abbinamenti della comunità**, il plugin scarica una volta al giorno la lista curata degli abbinamenti. Viene usata **solo** per gli anime o le stagioni che non hanno ancora un ID AnimeClick e non sovrascrive mai le tue scelte. Per le stagioni, l'abbinamento viene applicato solo se sia il numero di stagione sia il numero di episodi nella tua libreria coincidono esattamente con quelli registrati.
 - **Condividere una correzione:** dopo aver corretto un abbinamento, il plugin ti mostra in trasparenza i soli codici numerici che verrebbero inviati e ti lascia scegliere tra **Condividi**, **Non ora** o **Non chiedere più** (puoi cambiare la preferenza in ogni momento nella scheda **Comunità**).
-- **Privacy garantita:** partono **esclusivamente ID numerici pubblici** (ID AnimeClick, TMDB, TheTVDB o AniList, più numero di stagione e conteggio episodi). Non vengono mai inviati titoli, nomi di file, cartelle, indirizzi IP, utenti, trame o immagini. Ogni proposta supera verifiche automatiche e la revisione del curatore prima di entrare nella lista comune. Per tutti i dettagli tecnici consulta [community/README.md](community/README.md).
+- **Privacy garantita:** partono **solo ID pubblici** (tipo dell'opera, ID AnimeClick e ID TMDB, TheTVDB o AniList, più numero di stagione e conteggio episodi), la versione del plugin e un **codice casuale dell'installazione**, che serve solo a limitare gli abusi e non viene pubblicato. Non vengono mai inviati titoli, nomi di file, cartelle, l'indirizzo del server, utenti, trame o immagini. Come per ogni servizio web, chi riceve la proposta vede l'indirizzo IP da cui arriva: il servizio non lo salva e non tiene registri delle richieste. Ogni proposta supera verifiche automatiche e la revisione del curatore prima di entrare nella lista comune. Per tutti i dettagli tecnici consulta [community/README.md](community/README.md).
 
 ---
 

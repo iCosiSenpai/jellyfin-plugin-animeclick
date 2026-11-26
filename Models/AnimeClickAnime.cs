@@ -15,7 +15,6 @@ public class AnimeClickAnime
     public DateTimeOffset? PremiereDate { get; set; }
     public float? CommunityRating { get; set; }
     public int? ProductionYear { get; set; }
-    public int? RatingCount { get; set; }
     public int? EpisodeCount { get; set; }
 
     /// <summary>

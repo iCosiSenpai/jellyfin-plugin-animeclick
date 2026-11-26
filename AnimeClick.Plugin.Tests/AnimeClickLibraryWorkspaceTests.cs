@@ -195,7 +195,7 @@ public sealed class AnimeClickLibraryWorkspaceTests
     public void ExistingTitlesAreNotReportedAsRepairableWhenTheyDifferFromAnimeClick()
     {
         var catalog = AnimeClickEpisodeCatalog.Create([new AnimeClickEpisode { ProviderId = "123", Number = 3, Title = "Altro titolo" }], 1, 1);
-        Assert.Equal(AnimeClickAuditReason.Ok, AnimeClickLibraryAudit.ClassifyEpisode("123", "Titolo scelto da me", false, catalog));
+        Assert.Equal(AnimeClickAuditReason.Ok, AnimeClickLibraryAudit.ClassifyEpisode("123", titleNeedsRepair: false, catalog));
     }
 
     [Fact]

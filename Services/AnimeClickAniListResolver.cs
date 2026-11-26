@@ -137,7 +137,7 @@ public class AnimeClickAniListResolver
             var allQueriesCompleted = true;
             foreach (var queryTitle in requestedTitles)
             {
-                var lookup = await QueryAsync(queryTitle, cancellationToken).ConfigureAwait(false);
+                var lookup = await QueryAsync(queryTitle, configuration, cancellationToken).ConfigureAwait(false);
                 allQueriesCompleted &= lookup.Completed;
                 if (!lookup.Completed)
                 {
@@ -217,7 +217,7 @@ public class AnimeClickAniListResolver
         if (cached is not null) return cached;
         if (string.Equals(await _cache.GetAsync<string>(cacheKey + "::miss", configuration.NegativeCacheHours, cancellationToken).ConfigureAwait(false), "miss", StringComparison.Ordinal))
             return null;
-        if (!Breaker.TryEnter()) return null;
+        if (!Breaker.TryEnter(out var isProbe)) return null;
 
         try
         {
@@ -235,7 +235,7 @@ public class AnimeClickAniListResolver
             var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             if (RequestThrottle.IsRateLimited(response.StatusCode))
             {
-                Breaker.RecordIndeterminate();
+                if (isProbe) Breaker.RecordIndeterminate();
                 Throttle.NoticeRateLimit(response);
                 return null;
             }
@@ -264,7 +264,7 @@ public class AnimeClickAniListResolver
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            Breaker.RecordIndeterminate();
+            if (isProbe) Breaker.RecordIndeterminate();
             throw;
         }
         catch (Exception ex)
@@ -277,9 +277,10 @@ public class AnimeClickAniListResolver
 
     private async Task<AniListQueryResult> QueryAsync(
         string title,
+        PluginConfiguration configuration,
         CancellationToken cancellationToken)
     {
-        if (!Breaker.TryEnter())
+        if (!Breaker.TryEnter(out var isProbe))
         {
             // Nessuna cache negativa viene scritta a valle di questo: quando AniList torna,
             // il primo aggiornamento deve poter risolvere l'identità senza aspettare una
@@ -321,6 +322,10 @@ public class AnimeClickAniListResolver
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
             };
+            // Come GetMediaAsync: AniList sta dietro Cloudflare, e una richiesta senza User-Agent
+            // ha più probabilità di essere respinta, aprendo l'interruttore per tutte le ricerche.
+            request.Headers.TryAddWithoutValidation("User-Agent", AnimeClickClient.GetEffectiveUserAgent(configuration));
+            request.Headers.TryAddWithoutValidation("Accept", "application/json");
             await Throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -329,7 +334,7 @@ public class AnimeClickAniListResolver
                 {
                     // «Più piano», non «sono giù»: ha già la sua pausa, e non deve contare
                     // come fallimento per l'interruttore.
-                    Breaker.RecordIndeterminate();
+                    if (isProbe) Breaker.RecordIndeterminate();
                     var pause = Throttle.NoticeRateLimit(response);
                     _logger.LogWarning(
                         "AniListResolver: AniList ha risposto {Status} per {Title}; pausa di {Pause} prima della prossima richiesta",
@@ -372,7 +377,7 @@ public class AnimeClickAniListResolver
         {
             // L'annullamento non dice niente su AniList: restituisce il tentativo di prova
             // invece di lasciarlo appeso, e non conta come fallimento.
-            Breaker.RecordIndeterminate();
+            if (isProbe) Breaker.RecordIndeterminate();
             throw;
         }
         catch (Exception ex)

@@ -18,7 +18,6 @@ public class AnimeClickSeriesExternalId : IExternalId
     public string ProviderName => "AnimeClick";
     public string Key => "AnimeClick";
     public ExternalIdMediaType? Type => ExternalIdMediaType.Series;
-    public string UrlFormatString => "https://www.animeclick.it/anime/{0}";
     public bool Supports(IHasProviderIds item) => item is Series;
 }
 
@@ -30,7 +29,6 @@ public class AnimeClickMovieExternalId : IExternalId
     public string ProviderName => "AnimeClick";
     public string Key => "AnimeClick";
     public ExternalIdMediaType? Type => ExternalIdMediaType.Movie;
-    public string UrlFormatString => "https://www.animeclick.it/anime/{0}";
     public bool Supports(IHasProviderIds item) => item is Movie;
 }
 
@@ -49,6 +47,5 @@ public class AnimeClickSeasonExternalId : IExternalId
     public string ProviderName => "AnimeClick";
     public string Key => "AnimeClick";
     public ExternalIdMediaType? Type => ExternalIdMediaType.Season;
-    public string UrlFormatString => "https://www.animeclick.it/anime/{0}";
     public bool Supports(IHasProviderIds item) => item is Season;
 }

@@ -24,6 +24,7 @@ namespace AnimeClick.Plugin.Api;
 
 [ApiController]
 [Authorize(Policy = Policies.RequiresElevation)]
+[AnimeClickUnavailableResult]
 [Route("Plugins/AnimeClick")]
 public class AnimeClickDiagnosticsController : ControllerBase
 {
@@ -98,7 +99,12 @@ public class AnimeClickDiagnosticsController : ControllerBase
         }
 
         var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        var results = await _searchProvider.SearchAsync(name, config, cancellationToken, year, seriesRequest: true);
+        var results = (await _searchProvider.SearchAsync(name, config, cancellationToken, year, seriesRequest: true)).ToList();
+        if (results.Count == 0 && AnimeClickAvailability.Shared.IsSuspended)
+        {
+            // La ricerca assorbe il blocco per i provider; qui chi prova deve sapere perché è vuota.
+            return StatusCode(503, new { error = AnimeClickSourceStatus.BlockedMessage, blocked = true });
+        }
 
         return Ok(results.Select(r => new LookupDiagnosticResponse
         {
@@ -107,81 +113,6 @@ public class AnimeClickDiagnosticsController : ControllerBase
             ImageUrl = r.ImageUrl,
             AnimeClickId = r.ProviderIds.TryGetValue("AnimeClick", out var id) ? id : null
         }).ToList());
-    }
-
-    [HttpGet("TestEpisodes")]
-    public async Task<ActionResult<EpisodesDiagnosticResponse>> TestEpisodes(
-        [FromQuery] string animeClickId,
-        [FromQuery] int? season,
-        [FromQuery] int? episode,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(animeClickId))
-        {
-            return BadRequest(new { error = "animeClickId is required" });
-        }
-
-        var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
-        if (!AnimeClickClient.TryBuildAnimeUrl(config.BaseUrl, animeClickId, out var animeUrl))
-        {
-            return BadRequest(new { error = "animeClickId or configured BaseUrl is invalid" });
-        }
-
-        var episodesUrl = animeUrl + "/episodi";
-
-        // Reuse the production loader so diagnostics sees the same complete, deduplicated
-        // list and applies synthetic seasons only after pagination.
-        int? seasonsCount = null;
-        int? declaredEpisodeCount = null;
-        var seriesCacheKey = $"anime::{animeUrl}";
-        var series = await _cache
-            .GetAsync<AnimeClickAnime>(seriesCacheKey, config.CacheHours, cancellationToken)
-            .ConfigureAwait(false);
-        if (series is not null)
-        {
-            seasonsCount = series.SeasonsCount > 0 ? series.SeasonsCount : null;
-            declaredEpisodeCount = series.EpisodeCount;
-        }
-
-        var loaded = await _episodeListLoader.LoadAsync(
-            episodesUrl,
-            config.BaseUrl,
-            seasonsCount,
-            declaredEpisodeCount,
-            config,
-            cancellationToken);
-        var episodes = loaded.Episodes;
-
-        AnimeClickEpisodeMatch? match = null;
-        if (episode.HasValue)
-        {
-            match = AnimeClickEpisodeMatcher.Match(
-                episodes,
-                new AnimeClickEpisodeMatchContext(season, episode.Value)
-                {
-                    LayoutOverride = AnimeClickEpisodeLayoutOverrideParser.ParseFor(
-                        config.EpisodeLayoutOverrides,
-                        animeClickId),
-                    DeclaredSeasonsCount = loaded.Catalog.DeclaredSeasonsCount > 0
-                        ? loaded.Catalog.DeclaredSeasonsCount
-                        : null
-                });
-        }
-
-        return Ok(new EpisodesDiagnosticResponse
-        {
-            AnimeClickId = animeClickId,
-            EpisodeCount = episodes.Count,
-            DeclaredEpisodeCount = loaded.Catalog.DeclaredEpisodeCount,
-            DeclaredSeasonsCount = loaded.Catalog.DeclaredSeasonsCount,
-            LayoutFingerprint = loaded.Catalog.LayoutFingerprint,
-            PaginationComplete = loaded.PaginationComplete,
-            Episodes = episodes.Select(EpisodeDiagnosticItem.From).ToList(),
-            MatchStrategy = match?.Strategy,
-            MatchConfidence = match?.Confidence,
-            MatchReason = match?.Reason,
-            MatchedEpisode = match?.Episode is null ? null : EpisodeDiagnosticItem.From(match.Episode)
-        });
     }
 
     /// <summary>
@@ -492,7 +423,6 @@ public class AnimeClickDiagnosticsController : ControllerBase
                     ? needsTitle ? AnimeClickAuditReason.NotIdentified : AnimeClickAuditReason.Ok
                     : AnimeClickLibraryAudit.ClassifyEpisode(
                         episode.GetProviderId("AnimeClick"),
-                        episode.Name,
                         needsTitle,
                         catalog);
                 return AnimeClickLibraryAudit.ApplyNameLock(
@@ -546,7 +476,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         }
 
         var summary = await _cache
-            .GetAsync<AnimeClickAnime>($"anime::{animeUrl}", config.CacheHours, cancellationToken)
+            .GetAsync<AnimeClickAnime>(AnimeClickAnimeCards.CacheKey(animeUrl), config.CacheHours, cancellationToken)
             .ConfigureAwait(false);
         var cached = await _cache
             .GetAsync<AnimeClickEpisodeCatalog>(
@@ -562,15 +492,36 @@ public class AnimeClickDiagnosticsController : ControllerBase
             return cached;
         }
 
-        var loaded = await _episodeListLoader.LoadAsync(
-                animeUrl + "/episodi",
-                config.BaseUrl,
-                summary?.SeasonsCount > 0 ? summary.SeasonsCount : null,
-                summary?.EpisodeCount,
-                config,
-                cancellationToken)
-            .ConfigureAwait(false);
-        return loaded.Catalog;
+        try
+        {
+            var loaded = await _episodeListLoader.LoadAsync(
+                    animeUrl + "/episodi",
+                    config.BaseUrl,
+                    summary?.SeasonsCount > 0 ? summary.SeasonsCount : null,
+                    summary?.EpisodeCount,
+                    config,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return loaded.Catalog;
+        }
+        catch (AnimeClickUnavailableException)
+        {
+            // L'analisi non deve far perdere ciò che una riparazione appena fatta ha scritto:
+            // senza l'elenco la stagione risulta "non in cache", con l'elenco scaduto se c'è. La
+            // chiave dipende dai conteggi della scheda, che il provider ha letto anche scaduta.
+            summary ??= await _cache
+                .GetAsync<AnimeClickAnime>(AnimeClickAnimeCards.CacheKey(animeUrl), cancellationToken)
+                .ConfigureAwait(false);
+            var stale = await _cache
+                .GetAsync<AnimeClickEpisodeCatalog>(
+                    AnimeClickEpisodeProvider.BuildCatalogCacheKey(
+                        animeClickId,
+                        summary?.EpisodeCount,
+                        summary?.SeasonsCount ?? 0),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return stale is { Episodes.Count: > 0 } ? stale : null;
+        }
     }
 
     /// <summary>
@@ -899,7 +850,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
         if (AnimeClickClient.TryBuildAnimeUrl(config.BaseUrl, animeClickId, out var animeUrl))
         {
             var summary = await _cache
-                .GetAsync<AnimeClickAnime>($"anime::{animeUrl}", config.CacheHours, cancellationToken)
+                .GetAsync<AnimeClickAnime>(AnimeClickAnimeCards.CacheKey(animeUrl), config.CacheHours, cancellationToken)
                 .ConfigureAwait(false);
             var key = AnimeClickEpisodeProvider.BuildCatalogCacheKey(
                 animeClickId,
@@ -1064,13 +1015,15 @@ public class AnimeClickDiagnosticsController : ControllerBase
 
             if (normalizedId.Contains('/', StringComparison.Ordinal))
             {
-                removed += _cache.ClearKey("anime::" + canonicalAnimeUrl);
+                removed += _cache.ClearKey(AnimeClickAnimeCards.CacheKey(canonicalAnimeUrl));
+                removed += _cache.ClearKey(AnimeClickSeasonResolver.RelationsCacheKey(canonicalAnimeUrl));
             }
             else
             {
                 var lastSlash = canonicalAnimeUrl.LastIndexOf('/');
                 var numericAnimePrefix = canonicalAnimeUrl[..(lastSlash + 1)];
-                removed += _cache.ClearByPrefix("anime::" + numericAnimePrefix);
+                removed += _cache.ClearByPrefix(AnimeClickAnimeCards.CacheKey(numericAnimePrefix));
+                removed += _cache.ClearByPrefix(AnimeClickSeasonResolver.RelationsCacheKey(numericAnimePrefix));
             }
 
             ForgetLedgerForCard(stableAnimeClickId);
@@ -1181,7 +1134,6 @@ public class AnimeClickDiagnosticsController : ControllerBase
     /// too, so anything scripted against it keeps working.
     /// </summary>
     [HttpPost("TestAi")]
-    [HttpPost("TestOllama")]
     public async Task<ActionResult<AnimeClickAiTestResult>> TestAi(
         [FromBody] TestAiRequest request,
         CancellationToken cancellationToken)
@@ -1480,7 +1432,7 @@ public class AnimeClickDiagnosticsController : ControllerBase
             return null;
         }
 
-        var seriesCacheKey = $"anime::{animeUrl}";
+        var seriesCacheKey = AnimeClickAnimeCards.CacheKey(animeUrl);
         var series = await _cache
             .GetAsync<AnimeClickAnime>(seriesCacheKey, configuration.CacheHours, cancellationToken)
             .ConfigureAwait(false);

@@ -159,6 +159,67 @@ public sealed class AnimeClickSeasonResolver
         }
     }
 
+    internal static string RelationsCacheKey(string animeUrl) => "relations:v1::" + animeUrl;
+
+    /// <summary>
+    /// The relations of one card: from the card itself when the series provider already read them,
+    /// then from their own cache, then from AnimeClick.
+    /// </summary>
+    /// <remarks>
+    /// Without a cache, resolving season k read k-1 relation pages again, and the season and
+    /// episode providers resolved the same season separately: a five-season series cost ten
+    /// requests where four are enough. While AnimeClick does not answer, the expired copy is used.
+    /// An empty list is never cached: it cannot prove that a card has no sequel.
+    /// </remarks>
+    private async Task<List<AnimeClickRelation>> GetRelationsAsync(
+        string animeUrl,
+        PluginConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        var card = await _cache
+            .GetAsync<AnimeClickAnime>(AnimeClickAnimeCards.CacheKey(animeUrl), configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (card is { RelationsLoaded: true, Relations.Count: > 0 })
+        {
+            return card.Relations;
+        }
+
+        var key = RelationsCacheKey(animeUrl);
+        var cached = await _cache
+            .GetAsync<List<AnimeClickRelation>>(key, configuration.CacheHours, cancellationToken)
+            .ConfigureAwait(false);
+        if (cached is { Count: > 0 })
+        {
+            return cached;
+        }
+
+        string html;
+        try
+        {
+            html = await _client
+                .GetStringAsync(animeUrl + "/relazioni", configuration, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is not System.Net.HttpStatusCode.NotFound)
+        {
+            var stale = await _cache.GetAsync<List<AnimeClickRelation>>(key, cancellationToken).ConfigureAwait(false);
+            if (stale is { Count: > 0 })
+            {
+                return stale;
+            }
+
+            throw;
+        }
+
+        var relations = _parser.ParseRelationsPage(html, configuration.BaseUrl);
+        if (relations.Count > 0)
+        {
+            await _cache.SetAsync(key, relations, cancellationToken).ConfigureAwait(false);
+        }
+
+        return relations;
+    }
+
     private async Task<SeasonResolutionOutcome> ResolveCoreAsync(
         string mainId,
         int seasonNumber,
@@ -171,24 +232,9 @@ public sealed class AnimeClickSeasonResolver
             return SeasonResolutionOutcome.Incomplete;
         }
 
-        var animeCacheKey = $"anime::{mainUrl}";
-        var mainAnime = await _cache
-            .GetAsync<AnimeClickAnime>(animeCacheKey, configuration.CacheHours, cancellationToken)
+        var mainAnime = await AnimeClickAnimeCards
+            .GetAsync(_client, _cache, _parser, mainUrl, configuration, cancellationToken)
             .ConfigureAwait(false);
-        if (mainAnime is null)
-        {
-            var mainHtml = await _client
-                .GetStringAsync(mainUrl, configuration, cancellationToken)
-                .ConfigureAwait(false);
-            mainAnime = _parser.ParseAnimePage(mainUrl, mainHtml);
-            if (string.IsNullOrWhiteSpace(mainAnime.Title))
-            {
-                return SeasonResolutionOutcome.Incomplete;
-            }
-
-            await _cache.SetAsync(animeCacheKey, mainAnime, cancellationToken).ConfigureAwait(false);
-        }
-
         if (string.IsNullOrWhiteSpace(mainAnime.Title))
         {
             return SeasonResolutionOutcome.Incomplete;
@@ -210,10 +256,8 @@ public sealed class AnimeClickSeasonResolver
                 return SeasonResolutionOutcome.Incomplete;
             }
 
-            var relationsHtml = await _client
-                .GetStringAsync(currentUrl + "/relazioni", configuration, cancellationToken)
+            var relations = await GetRelationsAsync(currentUrl, configuration, cancellationToken)
                 .ConfigureAwait(false);
-            var relations = _parser.ParseRelationsPage(relationsHtml, configuration.BaseUrl);
 
             // An empty parse cannot prove that AnimeClick has no sequel: it may
             // be a valid empty page, an interstitial, or selector drift. Do not

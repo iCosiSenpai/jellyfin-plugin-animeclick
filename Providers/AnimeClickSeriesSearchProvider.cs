@@ -46,8 +46,10 @@ public partial class AnimeClickSeriesSearchProvider
         // ── Direct ID lookup ──
         // If the query looks like an AnimeClick ID (e.g. "72", "72/naruto"),
         // skip text search and fetch the anime page directly.
-        if ((explicitId || trimmed.Contains('/'))
-            && AnimeClickClient.TryNormalizeAnimeClickId(trimmed, out var normalizedId))
+        // Un nome con una barra è un ID solo se dopo la barra c'è uno slug: "22/7" è il titolo di
+        // una serie del 2020, non la scheda 22, e va cercato come testo.
+        if (AnimeClickClient.TryNormalizeAnimeClickId(trimmed, out var normalizedId)
+            && (explicitId || LooksLikeIdWithSlug(normalizedId)))
         {
             return await DirectLookupAsync(normalizedId, configuration, cancellationToken);
         }
@@ -73,24 +75,29 @@ public partial class AnimeClickSeriesSearchProvider
         }
 
         var attemptsHadErrors = false;
+        // Con AnimeClick bloccato ogni variante successiva fallirebbe allo stesso modo: la
+        // scala si ferma al primo tentativo che lo scopre invece di provarne una dozzina.
+        var unavailable = false;
 
         // Try original cleaned query first
         var attempt = await ExecuteSearchAsync(cleanedQuery, configuration, cancellationToken, productionYear, seriesRequest);
         attemptsHadErrors |= attempt.HadError;
+        unavailable |= attempt.Unavailable;
         var results = attempt.Results;
 
         // If no results, try the (deaccented) original form
-        if (results.Count == 0 && cleanedQuery != useForSearch)
+        if (results.Count == 0 && !unavailable && cleanedQuery != useForSearch)
         {
             _logger.LogInformation("AnimeClick: No results for '{Clean}', retrying with original '{Original}'",
                 cleanedQuery, useForSearch);
             attempt = await ExecuteSearchAsync(useForSearch, configuration, cancellationToken, productionYear, seriesRequest);
             attemptsHadErrors |= attempt.HadError;
+            unavailable |= attempt.Unavailable;
             results = attempt.Results;
         }
 
         // If still no results, try removing colons, special chars
-        if (results.Count == 0)
+        if (results.Count == 0 && !unavailable)
         {
             var simplified = SimplifyQuery(cleanedQuery);
             if (simplified != cleanedQuery)
@@ -98,6 +105,7 @@ public partial class AnimeClickSeriesSearchProvider
                 _logger.LogInformation("AnimeClick: Retrying with simplified '{Simplified}'", simplified);
                 attempt = await ExecuteSearchAsync(simplified, configuration, cancellationToken, productionYear, seriesRequest);
                 attemptsHadErrors |= attempt.HadError;
+                unavailable |= attempt.Unavailable;
                 results = attempt.Results;
             }
         }
@@ -105,7 +113,7 @@ public partial class AnimeClickSeriesSearchProvider
         // If the full Japanese/romaji title only matched an OVA or another
         // incompatible format, retry with the distinctive suffix (for example
         // "Toaru Kagaku no Railgun S" → "Railgun S").
-        if (results.Count == 0)
+        if (results.Count == 0 && !unavailable)
         {
             var suffixQuery = GetSuffixQuery(useForSearch);
             if (suffixQuery is not null
@@ -114,12 +122,13 @@ public partial class AnimeClickSeriesSearchProvider
                 _logger.LogInformation("AnimeClick: Retrying with distinctive suffix '{Suffix}'", suffixQuery);
                 attempt = await ExecuteSearchAsync(suffixQuery, configuration, cancellationToken, productionYear, seriesRequest, AnimeClickSearchScorer.SearchStage.Prefix);
                 attemptsHadErrors |= attempt.HadError;
+                unavailable |= attempt.Unavailable;
                 results = attempt.Results;
             }
         }
 
         // If still no results, try just the first 2-3 significant words
-        if (results.Count == 0)
+        if (results.Count == 0 && !unavailable)
         {
             var shortQuery = GetShortQuery(cleanedQuery);
             if (shortQuery is not null)
@@ -127,6 +136,7 @@ public partial class AnimeClickSeriesSearchProvider
                 _logger.LogInformation("AnimeClick: Retrying with short query '{Short}'", shortQuery);
                 attempt = await ExecuteSearchAsync(shortQuery, configuration, cancellationToken, productionYear, seriesRequest, AnimeClickSearchScorer.SearchStage.Prefix);
                 attemptsHadErrors |= attempt.HadError;
+                unavailable |= attempt.Unavailable;
                 results = attempt.Results;
             }
         }
@@ -143,7 +153,7 @@ public partial class AnimeClickSeriesSearchProvider
         if (GetSuffixQuery(useForSearch) is { } triedSuffix) alreadyTried.Add(triedSuffix);
         if (GetShortQuery(cleanedQuery) is { } triedShort) alreadyTried.Add(triedShort);
 
-        if (results.Count == 0)
+        if (results.Count == 0 && !unavailable)
         {
             foreach (var prefix in GetPrefixQueries(cleanedQuery))
             {
@@ -155,8 +165,9 @@ public partial class AnimeClickSeriesSearchProvider
                 _logger.LogInformation("AnimeClick: Retrying with prefix '{Prefix}'", prefix);
                 attempt = await ExecuteSearchAsync(prefix, configuration, cancellationToken, productionYear, seriesRequest, AnimeClickSearchScorer.SearchStage.Prefix);
                 attemptsHadErrors |= attempt.HadError;
+                unavailable |= attempt.Unavailable;
                 results = attempt.Results;
-                if (results.Count > 0)
+                if (results.Count > 0 || unavailable)
                 {
                     break;
                 }
@@ -166,7 +177,7 @@ public partial class AnimeClickSeriesSearchProvider
         // Ultima spiaggia: le parole che da sole identificano l'opera, per i titoli in cui
         // quella che conta sta in mezzo e nessun prefisso la raggiunge (Fate/Grand Order …
         // Camelot …, slug fate-grand-order-camelot, si trova solo con "Camelot").
-        if (results.Count == 0)
+        if (results.Count == 0 && !unavailable)
         {
             foreach (var token in GetDistinctiveTokens(cleanedQuery))
             {
@@ -178,8 +189,9 @@ public partial class AnimeClickSeriesSearchProvider
                 _logger.LogInformation("AnimeClick: Retrying with distinctive token '{Token}'", token);
                 attempt = await ExecuteSearchAsync(token, configuration, cancellationToken, productionYear, seriesRequest, AnimeClickSearchScorer.SearchStage.DistinctiveToken);
                 attemptsHadErrors |= attempt.HadError;
+                unavailable |= attempt.Unavailable;
                 results = attempt.Results;
-                if (results.Count > 0)
+                if (results.Count > 0 || unavailable)
                 {
                     break;
                 }
@@ -188,7 +200,24 @@ public partial class AnimeClickSeriesSearchProvider
 
         if (results.Count > 0)
         {
-            await _cache.SetAsync(cacheKey, results, cancellationToken);
+            // Un risultato trovato dopo che un tentativo precedente è fallito per un errore (un
+            // timeout sulla query completa) viene da una variante più debole: vale per adesso, ma
+            // in cache per 48 ore nasconderebbe quello giusto che la query completa avrebbe dato.
+            if (!attemptsHadErrors)
+            {
+                await _cache.SetAsync(cacheKey, results, cancellationToken);
+            }
+        }
+        else if (unavailable)
+        {
+            // La ricerca già fatta prima del blocco, anche se scaduta: è la stessa che il sito
+            // darebbe oggi molto più spesso di quanto non cambi.
+            var stale = await _cache.GetAsync<List<RemoteSearchResult>>(cacheKey, cancellationToken);
+            if (stale is { Count: > 0 })
+            {
+                _logger.LogDebug("AnimeClick unavailable: using the expired search cache for {Key}", cacheKey);
+                return stale;
+            }
         }
         else if (!attemptsHadErrors)
         {
@@ -196,6 +225,12 @@ public partial class AnimeClickSeriesSearchProvider
         }
 
         return results;
+    }
+
+    private static bool LooksLikeIdWithSlug(string normalizedId)
+    {
+        var slash = normalizedId.IndexOf('/', StringComparison.Ordinal);
+        return slash > 0 && normalizedId[(slash + 1)..].Any(char.IsLetter);
     }
 
     /// <summary>
@@ -208,12 +243,15 @@ public partial class AnimeClickSeriesSearchProvider
             var url = AnimeClickClient.BuildAnimeUrl(configuration.BaseUrl, idOrSlug);
             _logger.LogInformation("AnimeClick: Direct ID lookup → {Url}", url);
 
-            var html = await _client.GetStringAsync(url, configuration, cancellationToken);
-            var anime = _parser.ParseAnimePage(url, html);
-
-            // Cache the full anime data since we already have it
-            var cacheKey = $"anime::{url}";
-            await _cache.SetAsync(cacheKey, anime, cancellationToken);
+            // La scheda ancora valida in cache basta a mostrare il risultato, e non va sovrascritta:
+            // porta cast, relazioni e sigle già letti, che una copia nuova costringerebbe il
+            // provider a richiedere (quattro pagine). Scaduta o assente, si legge dal sito.
+            var anime = await AnimeClickAnimeCards.GetAsync(_client, _cache, _parser, url, configuration, cancellationToken)
+                .ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(anime.Title))
+            {
+                return [];
+            }
 
             return
             [
@@ -234,6 +272,11 @@ public partial class AnimeClickSeriesSearchProvider
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (AnimeClickUnavailableException ex)
+        {
+            _logger.LogDebug("AnimeClick: direct lookup of '{Id}' skipped: {Reason}", idOrSlug, ex.Message);
+            return [];
         }
         catch (Exception ex)
         {
@@ -324,6 +367,11 @@ public partial class AnimeClickSeriesSearchProvider
         {
             throw;
         }
+        catch (AnimeClickUnavailableException ex)
+        {
+            _logger.LogDebug("AnimeClick: search for '{Query}' skipped: {Reason}", query, ex.Message);
+            return SearchAttempt.Blocked();
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "AnimeClick: Search failed for '{Query}'", query);
@@ -356,7 +404,7 @@ public partial class AnimeClickSeriesSearchProvider
             RegexOptions.IgnoreCase);
 
         // Remove season indicators: S01, Season 1, 2nd Season, Part 2, etc.
-        cleaned = Regex.Replace(cleaned, @"\s+(?:S\d+|Season\s*\d+|Stagione\s*\d+|2nd Season|Second Season|Part \d+|II|III)\s*$", "",
+        cleaned = Regex.Replace(cleaned, @"\s+(?:S\d+|Season\s*\d+|Stagione\s*\d+|\d+(?:st|nd|rd|th)\s+Season|(?:Second|Third|Fourth|Fifth)\s+Season|Part\s*\d+|Parte\s*\d+|II|III|IV)\s*$", "",
             RegexOptions.IgnoreCase);
 
         // Collapse & / and variants, quotes
@@ -451,8 +499,10 @@ public partial class AnimeClickSeriesSearchProvider
         {
             "a", "an", "the", "of", "no", "to", "and"
         };
+        // Season markers are not a distinctive suffix: "Kingdom 3rd Season" searched as "3rd
+        // Season" finds any third season on the site, and one of them passed the threshold.
         var words = Regex.Split(query, @"[^\p{L}\p{Nd}]+")
-            .Where(word => word.Length > 0 && !stopWords.Contains(word))
+            .Where(word => word.Length > 0 && !stopWords.Contains(word) && !IsSeasonMarkerWord(word))
             .ToArray();
 
         if (words.Length < 2)
@@ -463,6 +513,16 @@ public partial class AnimeClickSeriesSearchProvider
         var suffix = string.Join(' ', words.TakeLast(2));
         return string.Equals(suffix, query, StringComparison.OrdinalIgnoreCase) ? null : suffix;
     }
+
+    private static bool IsSeasonMarkerWord(string word)
+        => word.Equals("season", StringComparison.OrdinalIgnoreCase)
+           || word.Equals("stagione", StringComparison.OrdinalIgnoreCase)
+           || word.Equals("part", StringComparison.OrdinalIgnoreCase)
+           || word.Equals("parte", StringComparison.OrdinalIgnoreCase)
+           || OrdinalWordRegex().IsMatch(word);
+
+    [GeneratedRegex(@"^\d+(?:st|nd|rd|th)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex OrdinalWordRegex();
 
     /// <summary>
     /// Extracts the first 2-3 meaningful words for a "fuzzy" search fallback.
@@ -552,18 +612,24 @@ public partial class AnimeClickSeriesSearchProvider
 
     private sealed class SearchAttempt
     {
-        private SearchAttempt(List<RemoteSearchResult> results, bool hadError)
+        private SearchAttempt(List<RemoteSearchResult> results, bool hadError, bool unavailable)
         {
             Results = results;
             HadError = hadError;
+            Unavailable = unavailable;
         }
 
         public List<RemoteSearchResult> Results { get; }
 
         public bool HadError { get; }
 
-        public static SearchAttempt Success(List<RemoteSearchResult> results) => new(results, false);
+        /// <summary>AnimeClick non risponde: nessuna altra variante della ricerca può andare meglio.</summary>
+        public bool Unavailable { get; }
 
-        public static SearchAttempt Error() => new([], true);
+        public static SearchAttempt Success(List<RemoteSearchResult> results) => new(results, false, false);
+
+        public static SearchAttempt Error() => new([], true, false);
+
+        public static SearchAttempt Blocked() => new([], true, true);
     }
 }
